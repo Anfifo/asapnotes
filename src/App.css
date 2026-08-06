@@ -1,0 +1,36 @@
+:root {
+  font-family: Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  color: #0f0f0f;
+  background-color: #f6f6f6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.container {
+  margin: 0;
+  padding: 20vh 1rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+}
+
+.muted {
+  color: #7a7a7a;
+  font-size: 0.9rem;
+  max-width: 32rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f6f6f6;
+    background-color: #2f2f2f;
+  }
+
+  .muted {
+    color: #9a9a9a;
+  }
+}
