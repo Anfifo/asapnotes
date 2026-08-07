@@ -39,7 +39,21 @@ The AI (or anyone) working on this repo keeps this file current while working:
       for. Polish candidate: empty untitled drafts accumulate in the drafts folder.
 - [ ] **Ctrl+K command palette, phase 2** (2026-08-07) — grow the note switcher into a
       command palette (commands, then AI-assisted navigation/actions). Phase 1 ships as
-      a fuzzy note switcher with the editor.
+      a fuzzy note switcher with the editor. 2026-08-07 implemented after looking at the
+      Claude app's Ctrl+K (unified search + commands): **Ctrl+P** = VS Code-style fuzzy
+      note switcher (subsequence match with consecutive/word-start bonuses in
+      `src/fuzzy.ts`, amber-highlighted matched chars); **Ctrl+K** = command palette —
+      opens on the command list (New note first, then save/rename/preview/move-to-project/
+      format/hide), recent notes below, typing fuzzy-searches both. Commands reuse the
+      existing callbacks; `Palette.tsx` is now presentational + generic. 2026-08-07
+      hands-on feedback round: arrow-key selection now auto-scrolls into view
+      (scrollIntoView nearest; list resets to top on query change), and the panel was
+      restyled Claude-floaty (narrower, 14px radius, border + deep shadow, blurred
+      backdrop) with "Commands"/"Notes" section headers while the query is empty.
+      2026-08-07 second feedback round: taller (74vh), footer hint bar below a divider
+      (↑↓ / ↵ / Esc, Claude-style), and slim inset scrollbars — applied app-wide
+      (::-webkit-scrollbar), not just in the palette. Remaining: hands-on check;
+      AI-assisted actions still future.
 - [ ] **Editor round 2: projects, preview, formatting, images** (2026-08-07) — agreed
       design, implemented pending hands-on check: folders-as-projects
       ([decision](decisions/2026-08-07-folders-are-projects.md)) with note ids as
@@ -80,7 +94,54 @@ The AI (or anyone) working on this repo keeps this file current while working:
       tray icon pinned explicitly in `lib.rs`, README header added; mark verified legible
       at 16px on light and dark strips (see branding.md "Assets" for the regen recipe).
       Live-verified in `tauri dev` via screenshots: new icon on the taskbar button and in
-      the tray overflow flyout, mark legible at real tray size. Remaining: human eyeball + decide whether the tile/amber icon design deserves a decisions/ entry, then close.
+      the tray overflow flyout, mark legible at real tray size. 2026-08-07 logo redesign
+      after feedback (monoline zigzag read too Sublime-Text): now a sharp-apex paper-white
+      A + amber pencil as the N's final leg, shared ink outline instead of the dark tile
+      (outline carries taskbar contrast). Chosen from proofed variants (shape × color
+      matrix, light/dark × 16-32 px). `assets/mark.svg` replaces the light/dark pair,
+      `icon.svg` reworked, full Tauri icon set regenerated, README header simplified,
+      branding.md updated. 2026-08-07 second redesign round (feedback: A disliked, pencil
+      too small, too bland): now a hand-drawn rounded wood-yellow A leaning 8° forward +
+      full-anatomy amber pencil (pink eraser) — chosen from two proofed rounds of
+      candidates (letterform variants, then lean/swoosh speed devices; swoosh rejected as
+      busier). Masters, Tauri icons, and branding.md all regenerated/updated. Remaining:
+      human eyeball in the real tray, then close.
+- [ ] **Explorer side rail** (2026-08-07) — agreed design after weighing a titlebar-toggle
+      overlay and a palette-only variant: permanent ~36px icon rail on the left (VS Code
+      style) toggling an explorer panel (`src/Explorer.tsx`) — Recent (top 5, notes+drafts
+      merged by mtime) above a project tree (`<details>` groups, loose notes at root).
+      2026-08-07 hands-on feedback round: the `▤` icon button replaced by the whole
+      rail being the button (slim full-height strip, `›`/`‹` chevron, hover tint);
+      push-vs-overlay is no longer window-width dependent — panel floats by default
+      and a 📌 pin in its top corner docks it (pinned state in localStorage, restores
+      open+docked on restart); floating panel closes on select / Esc / click-away;
+      `Ctrl+Shift+E` toggles the explorer. Pending hands-on check. Open question
+      raised: folders inside projects — backend lists exactly two levels today;
+      belongs to the workspace/project-model design item below.
+- [ ] **Settings panel** (2026-08-07) — titlebar ⚙ button (right end, with the tool
+      buttons) + Ctrl+K "Settings" / "Keyboard shortcuts" commands open a floating
+      overlay (`src/Settings.tsx`, palette-style backdrop, Esc/click-away closes):
+      keybinds as a real table (replaces the "?" popover, which was removed) + About
+      (version via `getVersion()`, notes folder, summon latency, auto-update marked
+      "planned" — the real work stays in the installer/auto-update item below).
+      2026-08-07 feedback round: bigger ⚙ glyph; About moved above the shortcuts table;
+      About credits row (Made by Anfifo · ☕ Buy me a coffee, amber-highlighted) opening
+      externally via the new `tauri-plugin-opener` (+ `opener:default` grant); summon
+      latency moved out of settings into an always-visible muted readout in the app's
+      lower-right corner. Remaining: hands-on check.
+- [ ] **Custom title bar with menus + scan-for-projects** (2026-08-07) — implemented,
+      pending hands-on check. Window is now undecorated; a VSCode-style menubar
+      (`src/MenuBar.tsx`: File/Edit/View/Help, drag region, min/max/✕-hides-to-tray)
+      replaces the native title bar, with Settings moved under File (⚙ button removed).
+      File → "Scan folder for projects…" picks a folder, finds subfolders holding a
+      README.md/index.md, and links the chosen ones in place as **external projects**
+      ([decision](decisions/2026-08-07-external-projects-linked-in-place.md)) — notes
+      listed recursively, edited where they live; mappings in app-data
+      `external_projects.json`, removable in Settings ("Linked projects"). Known
+      trade-offs: Win11 Snap Layouts hover is lost with the custom bar; move-to-project
+      on a deep external note flattens it to the target's root; unlinking a project
+      while one of its notes is open leaves that note resolving to the notes root on
+      next save.
 - [ ] **MCP sidecar** (2026-08-06) — TypeScript stdio MCP server in this repo exposing
       list/read/write/search over the notes root, so Claude (or any MCP client) can go over
       the notes.
@@ -95,4 +156,4 @@ The AI (or anyone) working on this repo keeps this file current while working:
 - [ ] **Cloud share + live collaboration** on a group of notes — direction, not scheduled.
       Keep storage decisions compatible: files stay primary, sync layers on top.
 - [ ] **Installer polish + auto-update**; other platforms (and mobile) after Windows is
-      solid.
+      solid. The settings About section already shows auto-update as "planned".

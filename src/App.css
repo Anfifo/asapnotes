@@ -15,10 +15,293 @@ body,
   margin: 0;
 }
 
+/* Slim, quiet scrollbars everywhere (palette, editor, explorer, preview). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  background-clip: padding-box;
+  border: 3px solid transparent; /* inset the thumb from the edge */
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.35);
+}
+
 .app {
   height: 100%;
   display: flex;
+  flex-direction: column; /* menubar on top, everything else below */
+  position: relative; /* the latency readout anchors to this */
+}
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative; /* overlay-mode explorer anchors to this */
+}
+
+/* Custom title bar (the window is undecorated): menus, drag region, window
+   buttons. Kept slim — summon latency is the product, chrome is not. */
+
+.menubar {
+  display: flex;
+  align-items: stretch;
+  height: 2rem;
+  flex-shrink: 0;
+  border-bottom: 1px solid #e3e3e3;
+  font-size: 0.8rem;
+  user-select: none;
+}
+
+.menu {
+  position: relative;
+  display: flex;
+}
+
+.menu-btn {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  margin: 0.2rem 0 0.2rem 0.2rem;
+  padding: 0 0.6rem;
+  cursor: default;
+}
+
+.menu-btn:hover,
+.menu-btn.open {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.menu-drop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 40; /* above the floating explorer (20) */
+  min-width: 15rem;
+  padding: 0.3rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.25);
+}
+
+.menu-drop hr {
+  border: none;
+  border-top: 1px solid #ececec;
+  margin: 0.3rem 0.4rem;
+}
+
+.menu-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1.2rem;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 0.28rem 0.6rem;
+  cursor: default;
+}
+
+.menu-item:hover {
+  background: #e9e9f7;
+}
+
+.menu-detail {
+  color: #9a9a9a;
+  font-size: 0.72rem;
+}
+
+.menubar-drag {
+  flex: 1;
+  /* Tauri's drag-region script handles mousedown (move) + dblclick (maximize) */
+}
+
+.win-btn {
+  width: 2.8rem;
+  font: inherit;
+  font-size: 0.7rem;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: default;
+}
+
+.win-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.win-btn.win-close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
+}
+
+/* Explorer edge strip + panel. The whole strip is the toggle button. */
+
+.rail {
+  flex-shrink: 0;
+  width: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  color: #9a9a9a;
+  background: rgba(0, 0, 0, 0.03);
+  border: none;
+  border-right: 1px solid #e3e3e3;
+  cursor: pointer;
+  user-select: none;
+}
+
+.rail:hover {
+  background: rgba(0, 0, 0, 0.09);
+  color: inherit;
+}
+
+.explorer {
+  width: 14rem;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e3e3e3;
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+/* Unpinned: float over the editor instead of pushing it aside. */
+.explorer.floating {
+  position: absolute;
+  left: 1rem; /* clear of the rail — matches .rail width */
+  top: 0;
+  bottom: 0;
+  z-index: 20;
+  background: #f6f6f6;
+  box-shadow: 8px 0 30px rgba(0, 0, 0, 0.2);
+}
+
+.explorer-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0.35rem 0;
+}
+
+/* Always grayscale — pinned reads as the app's usual "active toggle" chip
+   (background tint + full strength), not a full-color badge. */
+.pin-btn {
+  font: inherit;
+  font-size: 0.72rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0.05rem 0.25rem;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+.pin-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+  opacity: 0.75;
+}
+
+.pin-btn.pinned {
+  background: rgba(0, 0, 0, 0.08);
+  opacity: 0.9;
+}
+
+.explorer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0.5rem 0.4rem;
+}
+
+.explorer h2 {
+  margin: 0.5rem 0 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a7a7a;
+}
+
+.explorer section:first-child h2 {
+  margin-top: 0;
+}
+
+.explorer ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.explorer li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.explorer li:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.explorer li.current {
+  background: #e9e9f7;
+}
+
+.explorer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-detail {
+  margin-left: auto;
+  color: #a3a3a3;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+}
+
+.explorer summary {
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #5a5a5a;
+}
+
+.explorer summary:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.explorer details ul {
+  padding-left: 0.8rem;
 }
 
 .titlebar {
@@ -31,15 +314,14 @@ body,
   user-select: none;
 }
 
-/* Name + project share a wrapping line: the name never shrinks (it ellipsizes
-   only once it is alone on a full line), the project drops below when tight. */
+/* Flexible left side of the titlebar: name + dirty dot; the project selector
+   and tool buttons sit to its right and the name ellipsizes when tight. */
 .title-line {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.1rem 0.5rem;
+  gap: 0.5rem;
 }
 
 .title {
@@ -51,10 +333,24 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  text-decoration: underline dotted #9a9a9a;
+  text-underline-offset: 3px;
+}
+
+.title::after {
+  content: "✎";
+  margin-left: 0.35rem;
+  font-size: 0.8em;
+  font-weight: 400;
+  color: #9a9a9a;
 }
 
 .title:hover {
-  text-decoration: underline dotted #9a9a9a;
+  text-decoration-color: currentColor;
+}
+
+.title:hover::after {
+  color: #6a6a6a;
 }
 
 .title-input {
@@ -77,8 +373,16 @@ body,
   flex-shrink: 0;
 }
 
+/* Summon→paint readout — the product's one number, always in the corner. */
 .latency {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.3rem;
+  z-index: 5;
+  font-size: 0.68rem;
   color: #a3a3a3;
+  pointer-events: none;
+  user-select: none;
 }
 
 .editor {
@@ -186,6 +490,12 @@ body,
   border: none;
   padding: 0;
   max-width: 12rem;
+  /* right-side titlebar item: the title does the shrinking, not this */
+  flex-shrink: 0;
+}
+
+.project-input {
+  width: 9rem;
 }
 
 .project-select {
@@ -214,43 +524,176 @@ body,
   background: rgba(0, 0, 0, 0.07);
 }
 
-/* "?" shortcuts popover */
+/* Settings overlay (File → Settings / Ctrl+K → Settings) — shares the palette backdrop */
 
-.hints {
-  position: relative;
-  flex-shrink: 0;
-  align-self: flex-start;
+.settings {
+  width: min(30rem, 88vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 1rem 1.25rem 1.25rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+  font-size: 0.85rem;
 }
 
-.hints-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 10;
-  display: grid;
-  grid-template-columns: auto auto;
-  gap: 0.3rem 0.7rem;
+.settings h1 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.settings h2 {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a7a7a;
+}
+
+.settings table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.settings td {
+  padding: 0.18rem 0;
+  vertical-align: baseline;
+}
+
+.settings td:first-child {
+  width: 42%;
+  color: #7a7a7a;
+  padding-right: 0.7rem;
+}
+
+.settings-path {
+  overflow-wrap: anywhere;
+}
+
+.settings-remove {
+  font: inherit;
+  font-size: 0.72rem;
+  color: #9a9a9a;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.25rem;
+  cursor: pointer;
+}
+
+.settings-remove:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: #c0392b;
+}
+
+/* Scan-results sheet (File → Scan folder for projects…) */
+
+.scan-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+}
+
+.scan-list li {
+  padding: 0.3rem 0.2rem;
+  border-radius: 6px;
+}
+
+.scan-list li.conflict {
+  opacity: 0.55;
+}
+
+.scan-list label {
+  display: flex;
   align-items: baseline;
-  padding: 0.6rem 0.8rem;
-  background: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
-  font-size: 0.8rem;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.scan-name {
+  font-weight: 600;
+}
+
+.scan-count {
+  margin-left: auto;
+  color: #9a9a9a;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+}
+
+.scan-path {
+  margin-left: 1.55rem;
+  color: #9a9a9a;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.hints-panel kbd {
+.scan-error {
+  color: #c0392b;
+  font-size: 0.8rem;
+}
+
+.scan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.scan-add:not(:disabled) {
+  background: #e9e9f7;
+}
+
+.scan-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Credits — the one row in About meant to stand out. */
+.settings-credits {
+  display: flex;
+  /* center, not baseline: the ☕ emoji's fallback-font metrics skew the
+     flex baseline in WebView2 and push the link off-line */
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.1rem 0 0.55rem;
+}
+
+.settings-credits a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.settings-credits a:hover {
+  text-decoration: underline;
+}
+
+.settings-credits b {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.settings-credits a:last-child {
+  color: #d99a06;
+  font-weight: 600;
+}
+
+.settings-credits span[aria-hidden] {
+  color: #c9c9c9;
+}
+
+.settings kbd {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 0.72rem;
+  color: inherit;
   background: rgba(0, 0, 0, 0.06);
   border: 1px solid #d5d5d5;
   border-radius: 4px;
   padding: 0 0.3rem;
-}
-
-.hints-panel .latency {
-  grid-column: 1 / -1;
-  font-size: 0.72rem;
 }
 
 /* Expandable formatting toolbar (Aa toggle) */
@@ -298,24 +741,26 @@ body,
   font-style: italic;
 }
 
-/* Ctrl+K switcher */
+/* Ctrl+K / Ctrl+P palette — floating Claude-style panel */
 
 .palette-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(2px);
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding-top: 12vh;
+  padding-top: 10vh;
 }
 
 .palette {
-  width: min(34rem, 90vw);
-  max-height: 55vh;
+  width: min(30rem, 88vw);
+  max-height: 74vh;
   background: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -324,10 +769,10 @@ body,
 .palette input {
   border: none;
   outline: none;
-  padding: 0.7rem 1rem;
-  font-size: 1rem;
+  padding: 0.8rem 1rem;
+  font-size: 0.95rem;
   font-family: inherit;
-  border-bottom: 1px solid #e3e3e3;
+  border-bottom: 1px solid #ececec;
   background: transparent;
   color: inherit;
 }
@@ -335,8 +780,9 @@ body,
 .palette ul {
   list-style: none;
   margin: 0;
-  padding: 0.25rem;
+  padding: 0.35rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .palette li {
@@ -344,8 +790,8 @@ body,
   justify-content: space-between;
   align-items: baseline;
   gap: 1rem;
-  padding: 0.4rem 0.75rem;
-  border-radius: 6px;
+  padding: 0.4rem 0.65rem;
+  border-radius: 8px;
   cursor: pointer;
 }
 
@@ -355,6 +801,40 @@ body,
 
 .palette li.empty {
   cursor: default;
+}
+
+.palette li.section {
+  cursor: default;
+  padding: 0.55rem 0.65rem 0.15rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9a9a9a;
+}
+
+/* Fuzzy-matched characters */
+.palette li b {
+  color: #d99a06;
+}
+
+.palette-footer {
+  display: flex;
+  gap: 1rem;
+  padding: 0.45rem 1rem;
+  border-top: 1px solid #ececec;
+  font-size: 0.72rem;
+  color: #9a9a9a;
+  user-select: none;
+}
+
+.palette-footer kbd {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.68rem;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid #d5d5d5;
+  border-radius: 4px;
+  padding: 0 0.28rem;
 }
 
 .muted {
@@ -368,8 +848,83 @@ body,
     background-color: #2f2f2f;
   }
 
-  .titlebar {
+  .titlebar,
+  .menubar {
     border-bottom-color: #444444;
+  }
+
+  .menu-btn:hover,
+  .menu-btn.open,
+  .win-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .win-btn.win-close:hover {
+    background: #e81123;
+  }
+
+  .menu-drop {
+    background: #383838;
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  }
+
+  .menu-drop hr {
+    border-top-color: #4a4a4a;
+  }
+
+  .menu-item:hover {
+    background: #4a4a5e;
+  }
+
+  .settings-remove:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #e57368;
+  }
+
+  .scan-add:not(:disabled) {
+    background: #4a4a5e;
+  }
+
+  .scan-error {
+    color: #e57368;
+  }
+
+  .rail,
+  .explorer {
+    border-right-color: #444444;
+  }
+
+  .rail {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .rail:hover,
+  .pin-btn:hover,
+  .explorer li:hover,
+  .explorer summary:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .pin-btn.pinned {
+    background: rgba(255, 255, 255, 0.14);
+  }
+
+  .explorer li.current {
+    background: #4a4a5e;
+  }
+
+  .explorer h2 {
+    color: #9a9a9a;
+  }
+
+  .explorer summary {
+    color: #b0b0b0;
+  }
+
+  .explorer.floating {
+    background: #2f2f2f;
+    box-shadow: 8px 0 30px rgba(0, 0, 0, 0.5);
   }
 
   .editor .cm-editor .cm-cursor {
@@ -378,14 +933,36 @@ body,
 
   .palette {
     background: #383838;
+    border-color: rgba(255, 255, 255, 0.08);
   }
 
   .palette input {
     border-bottom-color: #4a4a4a;
   }
 
+  .palette li.section {
+    color: #8a8a8a;
+  }
+
   .palette li.selected {
     background: #4a4a5e;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.18);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.35);
+  }
+
+  .palette-footer {
+    border-top-color: #4a4a4a;
+  }
+
+  .palette-footer kbd {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: #4a4a4a;
   }
 
   .muted {
@@ -429,6 +1006,10 @@ body,
     border-bottom-color: #4a4a4a;
   }
 
+  .title:hover::after {
+    color: #c5c5c5;
+  }
+
   .project-select option {
     background: #383838;
   }
@@ -441,11 +1022,17 @@ body,
     background: rgba(255, 255, 255, 0.1);
   }
 
-  .hints-panel {
+  .settings {
     background: #383838;
+    border-color: rgba(255, 255, 255, 0.08);
   }
 
-  .hints-panel kbd {
+  .settings h2,
+  .settings td:first-child {
+    color: #9a9a9a;
+  }
+
+  .settings kbd {
     background: rgba(255, 255, 255, 0.08);
     border-color: #4a4a4a;
   }

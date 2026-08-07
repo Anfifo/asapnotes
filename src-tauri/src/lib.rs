@@ -16,13 +16,18 @@ mod desktop {
         let Some(window) = app.get_webview_window("main") else {
             return;
         };
-        if window.is_visible().unwrap_or(false) {
+        // Focus-based toggle: hidden, minimized, or buried all count as "not on
+        // screen" — only a window the user is actually in gets hidden. On Windows a
+        // minimized window still reports is_visible(), which made the old
+        // visibility check hide it instead of restoring it.
+        if window.is_focused().unwrap_or(false) {
             let _ = window.hide();
         } else {
             let summoned_at_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as f64;
+            let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
             let _ = window.emit("summoned", summoned_at_ms);
@@ -38,10 +43,19 @@ mod desktop {
     }
 
     pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+        app.handle().plugin(tauri_plugin_dialog::init())?;
         app.handle().plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))?;
+
+        // Saved external projects: let the asset protocol serve their images
+        // (preview); newly added ones are granted in add_external_projects.
+        if let Ok(map) = crate::notes::external_map(app.handle()) {
+            for dir in map.values() {
+                let _ = app.asset_protocol_scope().allow_directory(dir, true);
+            }
+        }
         // Only a release build should register itself to run at login; in dev this
         // would point autostart at target/debug and stick around after the session.
         #[cfg(not(debug_assertions))]
@@ -101,10 +115,18 @@ mod desktop {
     }
 }
 
+/// Real exit — the ✕ button only hides to the tray, this is the menu's Quit.
+#[tauri::command]
+fn quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            quit,
             notes::list_notes,
             notes::list_projects,
             notes::notes_root_path,
@@ -117,6 +139,10 @@ pub fn run() {
             notes::delete_draft,
             notes::save_asset,
             notes::import_asset,
+            notes::scan_projects,
+            notes::add_external_projects,
+            notes::remove_external_project,
+            notes::list_external_projects,
         ])
         .setup(|app| {
             #[cfg(desktop)]

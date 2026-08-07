@@ -38,8 +38,9 @@ Deep docs, migrations, key files.
 
 ## Index
 
-| Date       | Entry                                                                      | One-liner                                                        |
-| ---------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| 2026-08-06 | [Resident tray + Tauri stack](2026-08-06-resident-tray-and-tauri-stack.md) | Always-resident tray process + hidden window; Tauri 2 + React/TS |
-| 2026-08-06 | [Markdown files are the store](2026-08-06-markdown-files-are-the-store.md) | `.md` files as source of truth; workspaces + cloud layer on top  |
-| 2026-08-07 | [Folders are projects](2026-08-07-folders-are-projects.md)                 | First-level subfolders group notes; root is the inbox            |
+| Date       | Entry                                                                                | One-liner                                                        |
+| ---------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| 2026-08-06 | [Resident tray + Tauri stack](2026-08-06-resident-tray-and-tauri-stack.md)           | Always-resident tray process + hidden window; Tauri 2 + React/TS |
+| 2026-08-06 | [Markdown files are the store](2026-08-06-markdown-files-are-the-store.md)           | `.md` files as source of truth; workspaces + cloud layer on top  |
+| 2026-08-07 | [Folders are projects](2026-08-07-folders-are-projects.md)                           | First-level subfolders group notes; root is the inbox            |
+| 2026-08-07 | [External projects linked in place](2026-08-07-external-projects-linked-in-place.md) | Scan finds README-marked folders; notes edited where they live   |

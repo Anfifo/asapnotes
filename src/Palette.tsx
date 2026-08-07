@@ -1,33 +1,60 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { fuzzyMatch } from "./fuzzy";
 
 export interface PaletteItem {
-  /** Note/draft file name (`*.md`) — the id used against the backend. */
+  /** Stable identity; note entries use the note's file name. */
   id: string;
   label: string;
-  /** e.g. "draft" / "unsaved edits" */
+  /** e.g. "draft" / "unsaved edits" / a shortcut hint */
   detail?: string;
-  /** false = untitled draft that has no saved note yet */
-  isNote: boolean;
+  /** Group header shown above this item while the query is empty. */
+  section?: string;
 }
 
-interface PaletteProps {
-  items: PaletteItem[];
-  onSelect: (item: PaletteItem) => void;
+interface PaletteProps<T extends PaletteItem> {
+  items: T[];
+  placeholder: string;
+  emptyText: string;
+  onSelect: (item: T) => void;
   onClose: () => void;
 }
 
-export function Palette({ items, onSelect, onClose }: PaletteProps) {
+function Highlight({ text, indices }: { text: string; indices: number[] }) {
+  if (indices.length === 0) return <span>{text}</span>;
+  const hit = new Set(indices);
+  return <span>{text.split("").map((ch, i) => (hit.has(i) ? <b key={i}>{ch}</b> : ch))}</span>;
+}
+
+export function Palette<T extends PaletteItem>({
+  items,
+  placeholder,
+  emptyText,
+  onSelect,
+  onClose,
+}: PaletteProps<T>) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
 
+  // Empty query keeps the caller's order; typing fuzzy-ranks (stable sort, so
+  // equal scores also keep the caller's order).
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? items.filter((i) => i.label.toLowerCase().includes(q)) : items;
+    const q = query.trim();
+    if (!q) return items.map((item) => ({ item, indices: [] as number[], score: 0 }));
+    return items
+      .flatMap((item) => {
+        const m = fuzzyMatch(q, item.label);
+        return m ? [{ item, indices: m.indices, score: m.score }] : [];
+      })
+      .sort((a, b) => b.score - a.score);
   }, [items, query]);
 
   useEffect(() => inputRef.current?.focus(), []);
-  useEffect(() => setIndex(0), [query]);
+  useEffect(() => {
+    setIndex(0);
+    listRef.current?.scrollTo(0, 0);
+  }, [query]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -38,7 +65,7 @@ export function Palette({ items, onSelect, onClose }: PaletteProps) {
       setIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (filtered[index]) onSelect(filtered[index]);
+      if (filtered[index]) onSelect(filtered[index].item);
     }
   };
 
@@ -48,24 +75,43 @@ export function Palette({ items, onSelect, onClose }: PaletteProps) {
         <input
           ref={inputRef}
           value={query}
-          placeholder="Switch to note…"
+          placeholder={placeholder}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <ul>
-          {filtered.map((item, i) => (
-            <li
-              key={item.id}
-              className={i === index ? "selected" : ""}
-              onMouseEnter={() => setIndex(i)}
-              onClick={() => onSelect(item)}
-            >
-              <span>{item.label}</span>
-              {item.detail && <span className="muted">{item.detail}</span>}
-            </li>
+        <ul ref={listRef}>
+          {filtered.map(({ item, indices }, i) => (
+            <Fragment key={item.id}>
+              {query.trim() === "" &&
+                item.section &&
+                filtered[i - 1]?.item.section !== item.section && (
+                  <li className="section">{item.section}</li>
+                )}
+              <li
+                className={i === index ? "selected" : ""}
+                // Keep the arrow-key selection in view; no-op while visible.
+                ref={i === index ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                onMouseEnter={() => setIndex(i)}
+                onClick={() => onSelect(item)}
+              >
+                <Highlight text={item.label} indices={indices} />
+                {item.detail && <span className="muted">{item.detail}</span>}
+              </li>
+            </Fragment>
           ))}
-          {filtered.length === 0 && <li className="muted empty">No matching notes</li>}
+          {filtered.length === 0 && <li className="muted empty">{emptyText}</li>}
         </ul>
+        <footer className="palette-footer">
+          <span>
+            <kbd>↑↓</kbd> navigate
+          </span>
+          <span>
+            <kbd>↵</kbd> select
+          </span>
+          <span>
+            <kbd>Esc</kbd> close
+          </span>
+        </footer>
       </div>
     </div>
   );
