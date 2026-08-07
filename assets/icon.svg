@@ -1,0 +1,10 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- App/tray icon: the asapnotes mark (docs/branding.md) on a dark rounded tile so the
+       monoline reads on both light and dark taskbars. Stroke is ~2x the wordmark weight —
+       tuned so the line survives a 16px tray render. Amber = the app's accent (#d99a06). -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="#23272f" />
+  <g fill="none" stroke="#d99a06" stroke-width="98" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="260,806 428,218 596,806 764,218" />
+    <line x1="320" y1="596" x2="536" y2="596" />
+  </g>
+</svg>

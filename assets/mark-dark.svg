@@ -1,0 +1,8 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- asapnotes mark: one monoline zigzag /\/ (italic N); the crossbar makes the
+       first peak read as an A. See docs/branding.md. This variant: for dark backgrounds. -->
+  <g fill="none" stroke="#f6f6f6" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="14,92 38,8 62,92 86,8" />
+    <line x1="22.6" y1="62" x2="53.4" y2="62" />
+  </g>
+</svg>

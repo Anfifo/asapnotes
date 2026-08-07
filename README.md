@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.svg">
+    <img src="assets/mark-light.svg" width="120" alt="asapnotes mark — one zigzag stroke that reads as both A and N">
+  </picture>
+</p>
+
 # asapnotes
 
 Instant-capture markdown notes for Windows. Hit a global keybind, the window is there, type,
