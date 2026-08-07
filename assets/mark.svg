@@ -1,0 +1,18 @@
+<svg viewBox="0 0 102 106" xmlns="http://www.w3.org/2000/svg">
+  <!-- asapnotes mark: hand-drawn wood-yellow A leaning 8° forward (speed), amber pencil
+       resting tip-down at its right foot. Ink outline is what keeps the mark readable on
+       light and dark backgrounds without a tile. See docs/branding.md. -->
+  <g transform="translate(11 0) skewX(-8)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 93 Q24 50 35 12 Q50 50 58 93 M21 66 Q37 59 53 65" stroke="#23272f" stroke-width="21"/>
+    <path d="M16 93 Q24 50 35 12 Q50 50 58 93 M21 66 Q37 59 53 65" stroke="#f2c14e" stroke-width="13"/>
+  </g>
+  <g transform="translate(61 93) rotate(17)" stroke-linejoin="round">
+    <path d="M0 0 L-9 -22 L-9 -88 Q-9 -92 -5 -92 L5 -92 Q9 -92 9 -88 L9 -22 Z" fill="#23272f" stroke="#23272f" stroke-width="6"/>
+    <rect x="-9" y="-78" width="18" height="56" fill="#d99a06"/>
+    <rect x="3" y="-78" width="6" height="56" fill="#23272f" opacity="0.14"/>
+    <path d="M0 0 L-9 -22 L9 -22 Z" fill="#f2c14e"/>
+    <path d="M0 0 L-3.6 -9 L3.6 -9 Z" fill="#23272f"/>
+    <rect x="-9" y="-84" width="18" height="6" fill="#23272f"/>
+    <path d="M-9 -84 L-9 -88 Q-9 -92 -5 -92 L5 -92 Q9 -92 9 -88 L9 -84 Z" fill="#e8917c"/>
+  </g>
+</svg>

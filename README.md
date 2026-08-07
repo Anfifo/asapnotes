@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.svg">
-    <img src="assets/mark-light.svg" width="120" alt="asapnotes mark — one zigzag stroke that reads as both A and N">
-  </picture>
+  <img src="assets/mark.svg" width="120" alt="asapnotes mark — a hand-drawn leaning A with an amber pencil at its foot">
 </p>
 
 # asapnotes
