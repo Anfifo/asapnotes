@@ -4,8 +4,10 @@ import { EditorSelection, EditorState, Prec } from "@codemirror/state";
 import { indentWithTab, redo } from "@codemirror/commands";
 import { searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { languages } from "@codemirror/language-data";
 import { minimalSetup } from "codemirror";
 import { livePreview } from "./livePreview";
+import { MentionItem, mentions } from "./mentions";
 
 export type FormatKind =
   | "h1"
@@ -36,6 +38,10 @@ interface EditorProps {
   onPasteImage: (file: File) => Promise<string | null>;
   /** Resolve an image src from the doc to a URL the webview can load. */
   resolveImage: (src: string) => string;
+  /** Notes offered by the `@`-mention dropdown. */
+  mentionItems: MentionItem[];
+  /** Markdown link inserted when a mention is accepted. */
+  mentionLink: (id: string) => string;
   /** Hide instead of unmounting (preview mode) so undo history survives. */
   hidden?: boolean;
 }
@@ -174,7 +180,7 @@ function insertAtCursor(view: EditorView, text: string) {
 }
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  { docKey, initialDoc, onChange, onPasteImage, resolveImage, hidden },
+  { docKey, initialDoc, onChange, onPasteImage, resolveImage, mentionItems, mentionLink, hidden },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -185,6 +191,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   onPasteImageRef.current = onPasteImage;
   const resolveImageRef = useRef(resolveImage);
   resolveImageRef.current = resolveImage;
+  const mentionItemsRef = useRef(mentionItems);
+  mentionItemsRef.current = mentionItems;
+  const mentionLinkRef = useRef(mentionLink);
+  mentionLinkRef.current = mentionLink;
   const initialDocRef = useRef(initialDoc);
   initialDocRef.current = initialDoc;
 
@@ -214,14 +224,31 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         doc: initialDocRef.current,
         extensions: [
           minimalSetup,
-          markdown({ base: markdownLanguage }),
+          // codeLanguages makes ```lang fences parse with the real language
+          // (lazy-loaded), so the highlight style has tokens to color.
+          markdown({ base: markdownLanguage, codeLanguages: languages }),
           livePreview((src) => resolveImageRef.current(src)),
+          mentions(
+            () => mentionItemsRef.current,
+            (id) => mentionLinkRef.current(id),
+          ),
           EditorView.lineWrapping,
           placeholder("Capture a thought…"),
           Prec.high(
             keymap.of([
               { key: "Mod-b", run: (v) => applyFormat(v, "bold") },
               { key: "Mod-i", run: (v) => applyFormat(v, "italic") },
+              { key: "Mod-1", run: (v) => applyFormat(v, "h1") },
+              { key: "Mod-2", run: (v) => applyFormat(v, "h2") },
+              { key: "Mod-3", run: (v) => applyFormat(v, "h3") },
+              { key: "Mod-Shift-c", run: (v) => applyFormat(v, "code") },
+              { key: "Mod-Shift-k", run: (v) => applyFormat(v, "codeblock") },
+              // Docs/Word convention for lists; quote continues the row.
+              { key: "Mod-Shift-8", run: (v) => applyFormat(v, "bullet") },
+              { key: "Mod-Shift-7", run: (v) => applyFormat(v, "numbered") },
+              { key: "Mod-Shift-9", run: (v) => applyFormat(v, "quote") },
+              // Ctrl+K (the usual link binding) is the command palette.
+              { key: "Mod-Shift-l", run: (v) => applyFormat(v, "link") },
             ]),
           ),
           // minimalSetup already binds undo (Mod-z) and redo (Mod-y); this adds

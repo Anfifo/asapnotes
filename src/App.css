@@ -15,6 +15,23 @@ body,
   margin: 0;
 }
 
+/* Explicit amber selection — the OS/browser default (accent color + white
+   text) was unreadable against the app's own text colors. */
+::selection {
+  background: rgba(217, 154, 6, 0.3);
+  color: inherit;
+}
+
+/* CodeMirror paints selection in its own layer (drawSelection) and ignores
+   ::selection; !important outranks its injected base theme. */
+.editor .cm-selectionBackground {
+  background: rgba(217, 154, 6, 0.16) !important;
+}
+
+.editor .cm-focused .cm-selectionBackground {
+  background: rgba(217, 154, 6, 0.3) !important;
+}
+
 /* Slim, quiet scrollbars everywhere (palette, editor, explorer, preview). */
 ::-webkit-scrollbar {
   width: 10px;
@@ -43,24 +60,38 @@ body,
   position: relative; /* the latency readout anchors to this */
 }
 
+/* The window ground is the menubar's dark chrome (VSCode-style, constant in
+   both themes); explorer / titlebar / editor float on it as separate panels. */
 .app-body {
   flex: 1;
   min-height: 0;
   display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: #1a1a1a;
   position: relative; /* overlay-mode explorer anchors to this */
 }
 
 /* Custom title bar (the window is undecorated): menus, drag region, window
-   buttons. Kept slim — summon latency is the product, chrome is not. */
+   buttons. Deliberately darker than the editor in BOTH themes — VSCode-style
+   constant dark chrome, so the window reads as a frame around the paper. */
 
 .menubar {
   display: flex;
   align-items: stretch;
-  height: 2rem;
+  height: 2.1rem;
   flex-shrink: 0;
-  border-bottom: 1px solid #e3e3e3;
+  background: #1a1a1a;
+  color: #c8c8c8;
   font-size: 0.8rem;
   user-select: none;
+}
+
+.menubar-mark {
+  width: 16px;
+  align-self: center;
+  margin-left: 0.6rem;
+  pointer-events: none;
 }
 
 .menu {
@@ -74,16 +105,18 @@ body,
   background: none;
   border: none;
   border-radius: 5px;
-  margin: 0.2rem 0 0.2rem 0.2rem;
+  margin: 0.25rem 0 0.25rem 0.25rem;
   padding: 0 0.6rem;
   cursor: default;
 }
 
 .menu-btn:hover,
 .menu-btn.open {
-  background: rgba(0, 0, 0, 0.07);
+  background: rgba(255, 255, 255, 0.09);
+  color: #f0f0f0;
 }
 
+/* Dropdowns stay dark in both themes — they hang from the dark bar. */
 .menu-drop {
   position: absolute;
   top: 100%;
@@ -91,15 +124,16 @@ body,
   z-index: 40; /* above the floating explorer (20) */
   min-width: 15rem;
   padding: 0.3rem;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: #232323;
+  color: #d6d6d6;
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 8px;
-  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.55);
 }
 
 .menu-drop hr {
   border: none;
-  border-top: 1px solid #ececec;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   margin: 0.3rem 0.4rem;
 }
 
@@ -120,11 +154,12 @@ body,
 }
 
 .menu-item:hover {
-  background: #e9e9f7;
+  background: #4a4a5e;
+  color: #ffffff;
 }
 
 .menu-detail {
-  color: #9a9a9a;
+  color: #8f8f8f;
   font-size: 0.72rem;
 }
 
@@ -134,9 +169,11 @@ body,
 }
 
 .win-btn {
-  width: 2.8rem;
-  font: inherit;
-  font-size: 0.7rem;
+  width: 2.9rem;
+  /* Native-looking caption glyphs (ChromeMinimize/Maximize/Close codepoints);
+     MDL2 is the Win10 fallback for the same codepoints. */
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
+  font-size: 10px;
   color: inherit;
   background: none;
   border: none;
@@ -144,7 +181,8 @@ body,
 }
 
 .win-btn:hover {
-  background: rgba(0, 0, 0, 0.07);
+  background: rgba(255, 255, 255, 0.09);
+  color: #f0f0f0;
 }
 
 .win-btn.win-close:hover {
@@ -157,13 +195,31 @@ body,
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 6px;
 }
 
-/* Explorer edge strip + panel. The whole strip is the toggle button. */
+.top-panel {
+  flex-shrink: 0;
+  background: #f6f6f6;
+  border-radius: 6px;
+}
+
+.content-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* clips the editor to the rounded corners */
+  background: #f6f6f6;
+  border-radius: 6px;
+}
+
+/* Collapsed sidebar slat — the whole strip is the expand button. Sits on the
+   dark chrome, so it looks the same in both themes. */
 
 .rail {
   flex-shrink: 0;
-  width: 1rem;
+  width: 1.2rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -171,43 +227,96 @@ body,
   font: inherit;
   font-size: 0.85rem;
   color: #9a9a9a;
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(255, 255, 255, 0.07);
   border: none;
-  border-right: 1px solid #e3e3e3;
+  border-radius: 6px;
   cursor: pointer;
   user-select: none;
 }
 
 .rail:hover {
-  background: rgba(0, 0, 0, 0.09);
-  color: inherit;
+  background: rgba(255, 255, 255, 0.14);
+  color: #d6d6d6;
 }
 
 .explorer {
-  width: 14rem;
+  /* width comes inline from React state (drag-resizable, persisted) */
+  position: relative; /* anchors the resize handle */
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e3e3e3;
+  background: #f6f6f6;
+  border-radius: 6px;
   font-size: 0.85rem;
   user-select: none;
+}
+
+/* Invisible grab strip straddling the explorer's right edge. */
+.explorer-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 7px;
+  z-index: 5;
+  cursor: col-resize;
+}
+
+/* VSCode-style grip: three tiny dots centered in the panel gap. Painted on a
+   pseudo-element so the handle itself adds no width. */
+.explorer-resize::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  /* The strip's right edge sits at the middle of the 6px chrome gap —
+     anchor the dots there so they float on the dark ground, not the panel. */
+  left: 100%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 24px; /* three 8px tiles, one dot each */
+  background: radial-gradient(circle, #9a9a9a 1.2px, transparent 1.3px) center / 3px 8px;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.explorer-resize:hover::after,
+.explorer-resize:active::after {
+  opacity: 1;
 }
 
 /* Unpinned: float over the editor instead of pushing it aside. */
 .explorer.floating {
   position: absolute;
-  left: 1rem; /* clear of the rail — matches .rail width */
-  top: 0;
-  bottom: 0;
+  left: calc(1.2rem + 12px); /* clear the slat: chrome padding + rail + gap */
+  top: 6px;
+  bottom: 6px;
   z-index: 20;
-  background: #f6f6f6;
-  box-shadow: 8px 0 30px rgba(0, 0, 0, 0.2);
+  box-shadow: 8px 0 30px rgba(0, 0, 0, 0.4);
 }
 
 .explorer-bar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 0.1rem;
   padding: 0.25rem 0.35rem 0;
+}
+
+.collapse-btn {
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: #7a7a7a;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+  cursor: pointer;
+}
+
+.collapse-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: inherit;
 }
 
 /* Always grayscale — pinned reads as the app's usual "active toggle" chip
@@ -241,7 +350,7 @@ body,
 }
 
 .explorer h2 {
-  margin: 0.5rem 0 0.2rem;
+  margin: 0 0 0.2rem;
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -249,8 +358,12 @@ body,
   color: #7a7a7a;
 }
 
-.explorer section:first-child h2 {
-  margin-top: 0;
+/* Top-level sections (current project / Recent / Notes) read as siblings:
+   clear gap + hairline between them, VSCode section style. */
+.explorer-body > * + * {
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
 }
 
 .explorer ul {
@@ -263,7 +376,8 @@ body,
   display: flex;
   align-items: baseline;
   gap: 0.4rem;
-  padding: 0.15rem 0.4rem;
+  /* Left padding aligns file names with folder names past the chevron. */
+  padding: 0.15rem 0.4rem 0.15rem 1.1rem;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -290,18 +404,55 @@ body,
 }
 
 .explorer summary {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  list-style: none;
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
   cursor: pointer;
   color: #5a5a5a;
+  user-select: none;
+}
+
+.explorer summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Slim VSCode-style chevron: › closed, ˅ open. */
+.explorer summary::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.65;
+  transition: transform 80ms ease;
+}
+
+.explorer details[open] > summary::before {
+  transform: rotate(45deg);
 }
 
 .explorer summary:hover {
   background: rgba(0, 0, 0, 0.06);
 }
 
-.explorer details ul {
-  padding-left: 0.8rem;
+/* Per-level indent: folders nest like the VSCode explorer. */
+.explorer details > ul,
+.explorer details > details {
+  margin-left: 0.8rem;
+}
+
+/* "Recent" is a collapsible section — its summary wears the section-header look. */
+.explorer-recent > summary {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a7a7a;
 }
 
 .titlebar {
@@ -309,7 +460,6 @@ body,
   align-items: center;
   gap: 0.75rem;
   padding: 0.45rem 0.75rem;
-  border-bottom: 1px solid #e3e3e3;
   font-size: 0.85rem;
   user-select: none;
 }
@@ -420,6 +570,12 @@ body,
   font-size: 0.9em;
 }
 
+/* Markdown syntax markers: always visible, but receding while they format. */
+.editor .cm-syntax {
+  color: #9a9a9a;
+  opacity: 0.6;
+}
+
 .editor .cm-live-image {
   max-width: 100%;
   max-height: 40vh;
@@ -463,6 +619,12 @@ body,
 
 .preview img {
   max-width: 100%;
+}
+
+/* Same calm blue as the editor's link highlight — the browser default is
+   glaring, especially in dark mode. */
+.preview a {
+  color: #4a7dc9;
 }
 
 .preview pre {
@@ -572,7 +734,8 @@ body,
   overflow-wrap: anywhere;
 }
 
-.settings-remove {
+.settings-remove,
+.settings-edit {
   font: inherit;
   font-size: 0.72rem;
   color: #9a9a9a;
@@ -586,6 +749,11 @@ body,
 .settings-remove:hover {
   background: rgba(0, 0, 0, 0.07);
   color: #c0392b;
+}
+
+.settings-edit:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: #0f0f0f;
 }
 
 /* Scan-results sheet (File → Scan folder for projects…) */
@@ -704,7 +872,7 @@ body,
   flex-wrap: wrap;
   gap: 0.6rem;
   padding: 0.25rem 0.75rem;
-  border-bottom: 1px solid #e3e3e3;
+  border-top: 1px solid #e3e3e3; /* separates it from the titlebar row above */
   user-select: none;
 }
 
@@ -842,39 +1010,49 @@ body,
   font-size: 0.85rem;
 }
 
+/* @-mention dropdown — a smaller, lighter cousin of the palette */
+
+.editor .cm-tooltip.cm-tooltip-autocomplete {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  padding: 0.2rem;
+}
+
+.editor .cm-tooltip-autocomplete > ul {
+  font-family: inherit;
+  font-size: 0.82rem;
+  max-height: 13rem;
+  min-width: 11rem;
+  max-width: 24rem;
+}
+
+.editor .cm-tooltip-autocomplete > ul > li {
+  padding: 0.18rem 0.5rem;
+  border-radius: 5px;
+  line-height: 1.45;
+}
+
+.editor .cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: #e9e9f7;
+  color: inherit;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
     background-color: #2f2f2f;
   }
 
-  .titlebar,
-  .menubar {
-    border-bottom-color: #444444;
+  .explorer,
+  .top-panel,
+  .content-panel {
+    background: #2f2f2f;
   }
 
-  .menu-btn:hover,
-  .menu-btn.open,
-  .win-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .win-btn.win-close:hover {
-    background: #e81123;
-  }
-
-  .menu-drop {
-    background: #383838;
-    border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
-  }
-
-  .menu-drop hr {
-    border-top-color: #4a4a4a;
-  }
-
-  .menu-item:hover {
-    background: #4a4a5e;
+  .toolbar {
+    border-top-color: #444444;
   }
 
   .settings-remove:hover {
@@ -890,17 +1068,8 @@ body,
     color: #e57368;
   }
 
-  .rail,
-  .explorer {
-    border-right-color: #444444;
-  }
-
-  .rail {
-    background: rgba(255, 255, 255, 0.04);
-  }
-
-  .rail:hover,
   .pin-btn:hover,
+  .collapse-btn:hover,
   .explorer li:hover,
   .explorer summary:hover {
     background: rgba(255, 255, 255, 0.1);
@@ -914,12 +1083,33 @@ body,
     background: #4a4a5e;
   }
 
-  .explorer h2 {
+  .explorer h2,
+  .collapse-btn {
     color: #9a9a9a;
+  }
+
+  .explorer-body > * + * {
+    border-top-color: rgba(255, 255, 255, 0.09);
+  }
+
+  ::selection {
+    background: rgba(217, 154, 6, 0.4);
+  }
+
+  .editor .cm-selectionBackground {
+    background: rgba(217, 154, 6, 0.22) !important;
+  }
+
+  .editor .cm-focused .cm-selectionBackground {
+    background: rgba(217, 154, 6, 0.42) !important;
   }
 
   .explorer summary {
     color: #b0b0b0;
+  }
+
+  .explorer-recent > summary {
+    color: #9a9a9a;
   }
 
   .explorer.floating {
@@ -1032,13 +1222,24 @@ body,
     color: #9a9a9a;
   }
 
+  .settings-edit:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f6f6f6;
+  }
+
+  .editor .cm-tooltip.cm-tooltip-autocomplete {
+    background: #383838;
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .editor .cm-tooltip-autocomplete > ul > li[aria-selected] {
+    background: #4a4a5e;
+  }
+
   .settings kbd {
     background: rgba(255, 255, 255, 0.08);
     border-color: #4a4a4a;
-  }
-
-  .toolbar {
-    border-bottom-color: #444444;
   }
 
   .toolbar-group + .toolbar-group {

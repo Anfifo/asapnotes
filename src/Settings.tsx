@@ -12,6 +12,13 @@ const KEYBINDS: [string, string][] = [
   ["Ctrl+Shift+E", "Explorer"],
   ["Ctrl+B", "Bold"],
   ["Ctrl+I", "Italic"],
+  ["Ctrl+1 / 2 / 3", "Heading 1 / 2 / 3"],
+  ["Ctrl+Shift+C", "Inline code"],
+  ["Ctrl+Shift+K", "Code block"],
+  ["Ctrl+Shift+8", "Bullet list"],
+  ["Ctrl+Shift+7", "Numbered list"],
+  ["Ctrl+Shift+9", "Quote"],
+  ["Ctrl+Shift+L", "Link"],
   ["Ctrl+F", "Find in note"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["Tab / Shift+Tab", "Indent / outdent list"],
@@ -38,10 +45,18 @@ interface SettingsProps {
   /** External (linked-in-place) projects: name → absolute folder path. */
   externalProjects: Record<string, string>;
   onRemoveProject: (name: string) => void;
+  /** Pick a different folder for a linked project (e.g. a repo's docs/). */
+  onChangeProjectPath: (name: string) => void;
   onClose: () => void;
 }
 
-export function Settings({ rootPath, externalProjects, onRemoveProject, onClose }: SettingsProps) {
+export function Settings({
+  rootPath,
+  externalProjects,
+  onRemoveProject,
+  onChangeProjectPath,
+  onClose,
+}: SettingsProps) {
   const [version, setVersion] = useState("");
   useEffect(() => {
     void getVersion().then(setVersion);
@@ -85,6 +100,13 @@ export function Settings({ rootPath, externalProjects, onRemoveProject, onClose 
                     <td>{name}</td>
                     <td className="settings-path">
                       {path}{" "}
+                      <button
+                        className="settings-edit"
+                        title="Change folder — new projects root at the repo's docs/"
+                        onClick={() => onChangeProjectPath(name)}
+                      >
+                        ✎
+                      </button>
                       <button
                         className="settings-remove"
                         title="Unlink — the folder and its files stay untouched"

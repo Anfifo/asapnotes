@@ -7,7 +7,7 @@ import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import Editor, { EditorHandle, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
-import { fileOf, projectOf, resolvePath, subdirOf } from "./paths";
+import { fileOf, projectOf, relativePath, resolvePath, subdirOf } from "./paths";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
 import { ScanProjects } from "./ScanProjects";
@@ -25,26 +25,29 @@ interface OpenNote {
 const AUTOSAVE_MS = 500;
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 
+const EXPLORER_DEFAULT_W = 224;
+const clampExplorerWidth = (w: number) => Math.min(480, Math.max(168, w));
+
 const FORMAT_GROUPS: { kind: FormatKind; glyph: string; title: string }[][] = [
   [
-    { kind: "h1", glyph: "H1", title: "Heading 1" },
-    { kind: "h2", glyph: "H2", title: "Heading 2" },
-    { kind: "h3", glyph: "H3", title: "Heading 3" },
+    { kind: "h1", glyph: "H1", title: "Heading 1 (Ctrl+1)" },
+    { kind: "h2", glyph: "H2", title: "Heading 2 (Ctrl+2)" },
+    { kind: "h3", glyph: "H3", title: "Heading 3 (Ctrl+3)" },
   ],
   [
     { kind: "bold", glyph: "B", title: "Bold (Ctrl+B)" },
     { kind: "italic", glyph: "I", title: "Italic (Ctrl+I)" },
   ],
   [
-    { kind: "code", glyph: "<>", title: "Inline code" },
-    { kind: "codeblock", glyph: "```", title: "Code block" },
+    { kind: "code", glyph: "<>", title: "Inline code (Ctrl+Shift+C)" },
+    { kind: "codeblock", glyph: "```", title: "Code block (Ctrl+Shift+K)" },
   ],
   [
-    { kind: "bullet", glyph: "•", title: "Bullet list" },
-    { kind: "numbered", glyph: "1.", title: "Numbered list" },
-    { kind: "quote", glyph: "❝", title: "Quote" },
+    { kind: "bullet", glyph: "•", title: "Bullet list (Ctrl+Shift+8)" },
+    { kind: "numbered", glyph: "1.", title: "Numbered list (Ctrl+Shift+7)" },
+    { kind: "quote", glyph: "❝", title: "Quote (Ctrl+Shift+9)" },
   ],
-  [{ kind: "link", glyph: "🔗", title: "Link" }],
+  [{ kind: "link", glyph: "🔗", title: "Link (Ctrl+Shift+L)" }],
 ];
 
 interface NoteEntry extends PaletteItem {
@@ -94,16 +97,49 @@ function App() {
   const [dirty, setDirty] = useState(false);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [paletteOpen, setPaletteOpen] = useState<"notes" | "commands" | null>(null);
-  // Pinned = docked beside the editor; survives restarts. Unpinned the panel
-  // floats over the editor and closes on select / Esc / click-away.
+  // Pinned = docked beside the editor; survives restarts (default on). Unpinned
+  // the panel floats over the editor and closes on select / Esc / click-away.
   const [explorerPinned, setExplorerPinnedState] = useState(
-    () => localStorage.getItem("explorerPinned") === "1",
+    () => localStorage.getItem("explorerPinned") !== "0",
   );
   const [explorerOpen, setExplorerOpen] = useState(explorerPinned);
   const setExplorerPinned = (pinned: boolean) => {
     setExplorerPinnedState(pinned);
     localStorage.setItem("explorerPinned", pinned ? "1" : "0");
   };
+  const [explorerWidth, setExplorerWidth] = useState(() => {
+    const saved = Number(localStorage.getItem("explorerWidth"));
+    return saved > 0 ? clampExplorerWidth(saved) : EXPLORER_DEFAULT_W;
+  });
+  // A pinned explorer only docks while it takes ≲40% of the window; squeezed
+  // past that it collapses to the rail, and reopening floats it over the editor.
+  const [winWidth, setWinWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWinWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const dockLimit = winWidth * 0.4;
+  const explorerNarrow = explorerWidth > dockLimit;
+  const explorerDocked = explorerPinned && !explorerNarrow;
+  // Squeezed past the limit, an open docked panel collapses to the rail — and
+  // since that wasn't the user's choice, it's remembered and undone once the
+  // window widens back. Keyed to the size signal (not `explorerDocked`) so
+  // unpinning never reads as a squeeze, and guarded on transitions so re-runs
+  // from the other deps can't fire either branch.
+  const autoCollapsedRef = useRef(false);
+  const prevNarrowRef = useRef(explorerNarrow);
+  useEffect(() => {
+    const wasNarrow = prevNarrowRef.current;
+    prevNarrowRef.current = explorerNarrow;
+    if (!wasNarrow && explorerNarrow && explorerPinned && explorerOpen) {
+      autoCollapsedRef.current = true;
+      setExplorerOpen(false);
+    } else if (wasNarrow && !explorerNarrow && autoCollapsedRef.current) {
+      autoCollapsedRef.current = false;
+      setExplorerOpen(true);
+    }
+  }, [explorerNarrow, explorerPinned, explorerOpen]);
   const [creatingProject, setCreatingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [toolbarOpen, setToolbarOpen] = useState(false);
@@ -122,6 +158,8 @@ function App() {
   modeRef.current = mode;
   const externalsRef = useRef<Record<string, string>>({});
   externalsRef.current = externals;
+  const rootPathRef = useRef("");
+  rootPathRef.current = rootPath;
   const noteDirRef = useRef("");
   const autosaveTimer = useRef<number | null>(null);
 
@@ -268,6 +306,21 @@ function App() {
     return "../".repeat(ups) + rel;
   }, []);
 
+  /** Markdown link for an `@`-mentioned note: relative to the open note's
+   * directory, falling back to the app's root-relative id when no relative
+   * path exists (target on another drive). */
+  const mentionLink = useCallback((id: string) => {
+    const label = fileOf(id).replace(/\.md$/, "");
+    const project = projectOf(id);
+    const base = project
+      ? (externalsRef.current[project] ?? `${rootPathRef.current}/${project}`)
+      : rootPathRef.current;
+    const rest = project ? id.slice(project.length + 1) : id;
+    const target = relativePath(noteDirRef.current, `${base}/${rest}`) ?? id;
+    // CommonMark: destinations with spaces (or parens) need <> wrapping.
+    return /[\s()]/.test(target) ? `[${label}](<${target}>)` : `[${label}](${target})`;
+  }, []);
+
   /** Persist a pasted image and hand back the note-relative link path. */
   const pasteImage = useCallback(
     async (file: File): Promise<string | null> => {
@@ -292,7 +345,7 @@ function App() {
   useEffect(() => {
     void (async () => {
       const [ns, ds, ps, ext, root] = await Promise.all([
-        api.listNotes(),
+        api.listNotes(false),
         api.listDrafts(),
         api.listProjects(),
         api.listExternalProjects(),
@@ -303,6 +356,8 @@ function App() {
       setProjects(ps);
       setExternals(ext);
       setRootPath(root);
+      // External projects can be big — walk them after the first paint.
+      void api.listNotes().then(setNotes);
       if (ds.length > 0) {
         const draft = ds[0];
         const isNamed = ns.some((n) => n.name === draft.name);
@@ -363,7 +418,8 @@ function App() {
 
   const addScannedProjects = useCallback(
     async (chosen: { name: string; path: string }[]) => {
-      await api.addExternalProjects(chosen);
+      // Scanned repos root at their docs folder — notes, not the whole tree.
+      await api.addExternalProjects(chosen.map((c) => ({ ...c, ensure_docs: true })));
       setScanResults(null);
       await refreshProjects();
     },
@@ -374,6 +430,21 @@ function App() {
     async (name: string) => {
       await api.removeExternalProject(name);
       await refreshProjects();
+    },
+    [refreshProjects],
+  );
+
+  /** Settings → Linked projects: repoint a project at a different folder. */
+  const changeProjectPath = useCallback(
+    async (name: string) => {
+      const dir = await openFolderDialog({ directory: true, title: `Folder for ${name}` });
+      if (typeof dir !== "string") return;
+      try {
+        await api.setExternalPath(name, dir);
+        await refreshProjects();
+      } catch (err) {
+        console.error("change folder failed:", err);
+      }
     },
     [refreshProjects],
   );
@@ -422,8 +493,8 @@ function App() {
       } else if (paletteOpen) {
         setPaletteOpen(null);
         editorRef.current?.focus();
-      } else if (explorerOpen && !explorerPinned) {
-        // Only when floating — pinned, the explorer is furniture and Esc
+      } else if (explorerOpen && !explorerDocked) {
+        // Only when floating — docked, the explorer is furniture and Esc
         // keeps meaning "hide the window".
         setExplorerOpen(false);
         editorRef.current?.focus();
@@ -448,14 +519,14 @@ function App() {
   // A floating (unpinned) explorer closes on any click outside it; the rail is
   // excluded so its own click can toggle instead of fighting this.
   useEffect(() => {
-    if (!explorerOpen || explorerPinned) return;
+    if (!explorerOpen || explorerDocked) return;
     const onDown = (e: PointerEvent) => {
       const t = e.target as Element;
       if (!t.closest(".explorer") && !t.closest(".rail")) setExplorerOpen(false);
     };
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
-  }, [explorerOpen, explorerPinned]);
+  }, [explorerOpen, explorerDocked]);
 
   // `summoned` carries the hotkey-press epoch ms from Rust; the next animation
   // frame approximates when the shown window actually painted.
@@ -475,6 +546,10 @@ function App() {
 
   const draftIds = new Set(drafts.map((d) => d.name));
   const noteNames = new Set(notes.map((n) => n.name));
+  // `@`-mention candidates: saved notes, minus the one being edited.
+  const mentionItems = notes
+    .filter((n) => n.name !== open?.name)
+    .map((n) => ({ id: n.name, label: n.name.replace(/\.md$/, "") }));
   const noteEntries: NoteEntry[] = [
     ...notes.map((n) => ({
       kind: "note" as const,
@@ -697,7 +772,7 @@ function App() {
 
   const openFromExplorer = (id: string, isNote: boolean) => {
     void openItem({ id, isNote }, draftIds);
-    if (!explorerPinned) setExplorerOpen(false);
+    if (!explorerDocked) setExplorerOpen(false);
   };
 
   const runEntry = (entry: Entry) => {
@@ -716,122 +791,151 @@ function App() {
     <div className="app">
       <MenuBar menus={menus} onHide={hideWindow} />
       <div className="app-body">
-        <button
-          className="rail"
-          title={explorerOpen ? "Close explorer (Ctrl+Shift+E)" : "Open explorer (Ctrl+Shift+E)"}
-          onClick={() => setExplorerOpen((o) => !o)}
-        >
-          {explorerOpen ? "‹" : "›"}
-        </button>
+        {/* Collapsed sidebar slat — the whole strip is the expand button. It
+            stays as the anchor while the unpinned explorer floats over it. */}
+        {(!explorerOpen || !explorerDocked) && (
+          <button
+            className="rail"
+            title={explorerOpen ? "Close explorer (Ctrl+Shift+E)" : "Open explorer (Ctrl+Shift+E)"}
+            onClick={() => setExplorerOpen((o) => !o)}
+          >
+            {explorerOpen ? "«" : "»"}
+          </button>
+        )}
         {explorerOpen && (
           <Explorer
             notes={notes}
             drafts={drafts}
             projects={projects}
+            currentProject={currentProject}
             openId={open?.id ?? null}
             onSelect={openFromExplorer}
-            pinned={explorerPinned}
+            pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
+            onCollapse={() => setExplorerOpen(false)}
+            width={explorerWidth}
+            // Docked, the drag stops at the dock limit instead of collapsing
+            // the panel out from under the pointer; floating is unrestricted.
+            onResize={(w) =>
+              setExplorerWidth(clampExplorerWidth(explorerDocked ? Math.min(w, dockLimit) : w))
+            }
+            onResizeEnd={() => localStorage.setItem("explorerWidth", String(explorerWidth))}
           />
         )}
         <div className="main">
-          <header className="titlebar">
-            <div className="title-line">
-              {renaming ? (
+          <div className="top-panel">
+            <header className="titlebar">
+              <div className="title-line">
+                {renaming ? (
+                  <input
+                    className="title-input"
+                    autoFocus
+                    value={renameValue}
+                    placeholder="note name…"
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitRename();
+                    }}
+                    onBlur={() => setRenaming(false)}
+                  />
+                ) : (
+                  <span className="title" title="Click to rename" onClick={startRename}>
+                    {open?.name ? fileOf(open.name).replace(/\.md$/, "") : "Untitled"}
+                  </span>
+                )}
+                {dirty && (
+                  <span className="dirty" title="Unsaved — autosaved as draft. Ctrl+S to save.">
+                    ●
+                  </span>
+                )}
+              </div>
+              {creatingProject ? (
                 <input
-                  className="title-input"
+                  className="project-input"
                   autoFocus
-                  value={renameValue}
-                  placeholder="note name…"
-                  onChange={(e) => setRenameValue(e.target.value)}
+                  value={newProjectName}
+                  placeholder="project name…"
+                  onChange={(e) => setNewProjectName(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") submitRename();
+                    if (e.key === "Enter") submitNewProject();
                   }}
-                  onBlur={() => setRenaming(false)}
+                  onBlur={() => setCreatingProject(false)}
                 />
               ) : (
-                <span className="title" title="Click to rename" onClick={startRename}>
-                  {open?.name ? fileOf(open.name).replace(/\.md$/, "") : "Untitled"}
-                </span>
-              )}
-              {dirty && (
-                <span className="dirty" title="Unsaved — autosaved as draft. Ctrl+S to save.">
-                  ●
-                </span>
-              )}
-            </div>
-            {creatingProject ? (
-              <input
-                className="project-input"
-                autoFocus
-                value={newProjectName}
-                placeholder="project name…"
-                onChange={(e) => setNewProjectName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitNewProject();
-                }}
-                onBlur={() => setCreatingProject(false)}
-              />
-            ) : (
-              <select
-                className="project-select"
-                value={currentProject ?? ""}
-                onChange={(e) => {
-                  if (e.target.value === "__new") setCreatingProject(true);
-                  else void changeProject(e.target.value === "" ? null : e.target.value);
-                }}
-              >
-                <option value="">No project</option>
-                {projects.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-                <option value="__new">+ New project…</option>
-              </select>
-            )}
-            {mode === "edit" && (
-              <button
-                className={toolbarOpen ? "tool-btn open" : "tool-btn"}
-                title="Formatting"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setToolbarOpen((o) => !o)}
-              >
-                Aa
-              </button>
-            )}
-          </header>
-          {mode === "edit" && toolbarOpen && (
-            <div className="toolbar">
-              {FORMAT_GROUPS.map((group, i) => (
-                <div className="toolbar-group" key={i}>
-                  {group.map((f) => (
-                    <button
-                      key={f.kind}
-                      className={`fmt-${f.kind}`}
-                      title={f.title}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => editorRef.current?.applyFormat(f.kind)}
-                    >
-                      {f.glyph}
-                    </button>
+                <select
+                  className="project-select"
+                  value={currentProject ?? ""}
+                  onChange={(e) => {
+                    if (e.target.value === "__new") setCreatingProject(true);
+                    else void changeProject(e.target.value === "" ? null : e.target.value);
+                  }}
+                >
+                  <option value="">No project</option>
+                  {projects.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
                   ))}
-                </div>
-              ))}
-            </div>
-          )}
-          {open && (
-            <Editor
-              ref={editorRef}
-              docKey={docKey}
-              initialDoc={initialDoc}
-              onChange={handleChange}
-              onPasteImage={pasteImage}
-              resolveImage={resolveImage}
-              hidden={mode === "preview"}
-            />
-          )}
-          {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
+                  <option value="__new">+ New project…</option>
+                </select>
+              )}
+              <button
+                className={mode === "preview" ? "tool-btn open" : "tool-btn"}
+                title={
+                  mode === "edit" ? "Open reading preview (Ctrl+E)" : "Back to editor (Ctrl+E)"
+                }
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={togglePreview}
+              >
+                {mode === "edit" ? "👁" : "✎"}
+              </button>
+              {mode === "edit" && (
+                <button
+                  className={toolbarOpen ? "tool-btn open" : "tool-btn"}
+                  title="Formatting"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setToolbarOpen((o) => !o)}
+                >
+                  Aa
+                </button>
+              )}
+            </header>
+            {mode === "edit" && toolbarOpen && (
+              <div className="toolbar">
+                {FORMAT_GROUPS.map((group, i) => (
+                  <div className="toolbar-group" key={i}>
+                    {group.map((f) => (
+                      <button
+                        key={f.kind}
+                        className={`fmt-${f.kind}`}
+                        title={f.title}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => editorRef.current?.applyFormat(f.kind)}
+                      >
+                        {f.glyph}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="content-panel">
+            {open && (
+              <Editor
+                ref={editorRef}
+                docKey={docKey}
+                initialDoc={initialDoc}
+                onChange={handleChange}
+                onPasteImage={pasteImage}
+                resolveImage={resolveImage}
+                mentionItems={mentionItems}
+                mentionLink={mentionLink}
+                hidden={mode === "preview"}
+              />
+            )}
+            {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
+          </div>
         </div>
       </div>
       {paletteOpen && (
@@ -859,6 +963,7 @@ function App() {
           rootPath={rootPath}
           externalProjects={externals}
           onRemoveProject={(name) => void removeExternalProject(name)}
+          onChangeProjectPath={(name) => void changeProjectPath(name)}
           onClose={() => {
             setSettingsOpen(false);
             editorRef.current?.focus();

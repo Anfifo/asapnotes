@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import mark from "../assets/mark.svg";
 
 export type MenuEntry = { label: string; detail?: string; run: () => void } | "sep";
 
@@ -41,6 +42,7 @@ export function MenuBar({ menus, onHide }: MenuBarProps) {
 
   return (
     <div className="menubar">
+      <img className="menubar-mark" src={mark} alt="" draggable={false} />
       {menus.map((menu) => (
         <div className="menu" key={menu.label}>
           <button
@@ -77,14 +79,15 @@ export function MenuBar({ menus, onHide }: MenuBarProps) {
         </div>
       ))}
       <div className="menubar-drag" data-tauri-drag-region />
+      {/* Segoe Fluent Icons caption glyphs: minimize / maximize / close */}
       <button className="win-btn" title="Minimize" onClick={() => void win.minimize()}>
-        &#x2500;
+        {"\uE921"}
       </button>
       <button className="win-btn" title="Maximize" onClick={() => void win.toggleMaximize()}>
-        &#x25A1;
+        {"\uE922"}
       </button>
       <button className="win-btn win-close" title="Hide to tray (Esc)" onClick={onHide}>
-        &#x2715;
+        {"\uE8BB"}
       </button>
     </div>
   );

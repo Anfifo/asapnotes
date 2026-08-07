@@ -12,6 +12,21 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Tomorrow (2026-08-09)
+
+- [ ] **Hands-on check of today's work** — (a) `@`-mention dropdown: trigger at line
+      start/after space, cancel keys (Esc/Backspace suppress, ←/→/space close), inserted
+      relative links resolve from deep/external notes; (b) explorer third feedback round
+      (chevrons, sectioned levels, lazy project trees, shallow-first startup list);
+      (c) scan flow rooting a new project at `docs/`; (d) Settings ✎ change-folder.
+- [ ] **Repoint existing linked projects at docs/** if wanted — the docs-root rule only
+      applies to newly scanned projects; already-linked ones (e.g. this repo) keep their
+      old root until changed via Settings ✎.
+- [ ] **Finish the per-project settings thought** — the spec for "configurable in the
+      settings for each project somehow **and** …" was cut off mid-sentence during
+      design; whatever followed the "and" is still unstated. Also decide: should the
+      scan sheet's note counts reflect the docs/ subtree instead of the whole repo?
+
 ## Next
 
 - [ ] **Global hotkey summon + tray residency** (2026-08-06) — the defining feature. Close
@@ -118,6 +133,30 @@ The AI (or anyone) working on this repo keeps this file current while working:
       `Ctrl+Shift+E` toggles the explorer. Pending hands-on check. Open question
       raised: folders inside projects — backend lists exactly two levels today;
       belongs to the workspace/project-model design item below.
+      2026-08-07 second feedback round: explorer is now drag-resizable on its right
+      edge (width in localStorage, clamped 168–480px); rail widened to 1.2rem;
+      Recent collapsed by default; the open note's project is hoisted to the top as
+      its own section; projects render a nested folder tree (VSCode-style
+      `<details>` per subfolder) from the note paths the backend already returns.
+      Text selection restyled to translucent brand amber (app-wide `::selection` +
+      CodeMirror selection layer, both themes) — the unstyled default was OS-accent
+      purple with unreadable contrast. VSCode-style paneling: candidate sheet
+      (3 variants × light/dark) → **A picked**: menubar-dark chrome is the window
+      ground (constant in both themes), explorer / titlebar+toolbar / editor float
+      as three rounded panels with 6px gaps. Rail reworked with it: no more strip
+      beside the open panel — collapsed, the whole slat is the expand button («/»
+      centered); expanded, a « collapse button sits right of the pin in the
+      explorer header. Implemented, pending hands-on check; candidate for a
+      decisions/ entry once eyeballed.
+      2026-08-08 third feedback round (thick expanders / Recent blends into the
+      project / other projects too eager): native `<details>` markers replaced by
+      slim VSCode-style CSS chevrons; top-level sections (current project / Recent /
+      Notes) separated by hairline + gap so levels read distinctly; non-current
+      projects now start collapsed and their tree only renders on first expand;
+      startup paints from a shallow root-only `list_notes(deep:false)` with the
+      deep external-project walk following right after (deferred-scan option chosen
+      over frontend-only collapse and true scan-on-expand — keeps Ctrl+P palette
+      and Recent covering everything). Pending hands-on check.
 - [ ] **Settings panel** (2026-08-07) — titlebar ⚙ button (right end, with the tool
       buttons) + Ctrl+K "Settings" / "Keyboard shortcuts" commands open a floating
       overlay (`src/Settings.tsx`, palette-style backdrop, Esc/click-away closes):
@@ -142,6 +181,21 @@ The AI (or anyone) working on this repo keeps this file current while working:
       on a deep external note flattens it to the target's root; unlinking a project
       while one of its notes is open leaves that note resolving to the notes root on
       next save.
+- [ ] **@-mention note links + docs-rooted external projects** (2026-08-08) — agreed
+      design, implemented pending hands-on check. Typing `@` at a line start or after a
+      space opens a small dropdown (CM `@codemirror/autocomplete` wired in
+      `src/mentions.ts`, ranked by the palette's `fuzzy.ts`, styled as a lighter palette
+      cousin): ↑↓ navigate, Enter/Tab accept, Esc/Backspace cancel-and-suppress (typing
+      won't reopen until a fresh `@`), ←/→/space close. Accepting inserts a standard
+      markdown link `[name](path)` **relative to the open note's real directory**
+      (`relativePath` in `src/paths.ts`), computed across trees for external projects;
+      falls back to the app's root-relative id when cross-drive; `<>`-wrapped when the
+      path has spaces. Newly scanned external projects now root at the repo's `docs/`
+      (else `documentation/`, else `docs/` is created) — `ensure_docs` in
+      `add_external_projects`; existing mappings untouched; Settings → Linked projects
+      gained a ✎ change-folder button (`set_external_path`). Known trade-offs: scan
+      sheet still shows whole-repo note counts; repo-root README/CHANGELOG invisible
+      once a project roots at docs/ (chosen deliberately).
 - [ ] **MCP sidecar** (2026-08-06) — TypeScript stdio MCP server in this repo exposing
       list/read/write/search over the notes root, so Claude (or any MCP client) can go over
       the notes.

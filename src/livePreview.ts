@@ -11,9 +11,9 @@ import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/lang
 import { tags as t } from "@lezer/highlight";
 
 /**
- * Obsidian-style live preview: markdown renders in place (sized headings, real
- * bold/italic, bullets, inline images) and the raw syntax only shows on lines
- * the cursor touches.
+ * Live preview: markdown renders in place (sized headings, real bold/italic,
+ * bullets, inline images). Syntax markers are never hidden — they stay visible
+ * but dimmed (.cm-syntax) so it's always clear where formatting starts/ends.
  */
 
 const MONO = 'ui-monospace, "Cascadia Code", Consolas, monospace';
@@ -42,6 +42,15 @@ const markdownStyle = HighlightStyle.define([
   { tag: t.quote, color: "#8a8a8a" },
   { tag: t.processingInstruction, color: "#9a9a9a" },
   { tag: t.contentSeparator, color: "#9a9a9a" },
+  // Code-block tokens (nested ```lang parses) — same both-theme constraint,
+  // so every color sits at mid lightness.
+  { tag: t.keyword, color: "#b05ccc" },
+  { tag: [t.string, t.special(t.string)], color: "#54a054" },
+  { tag: t.comment, color: "#8a8a8a", fontStyle: "italic" },
+  { tag: [t.number, t.bool, t.atom, t.null], color: "#c9822d" },
+  { tag: [t.typeName, t.className, t.tagName], color: "#2f9c95" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "#4a7dc9" },
+  { tag: [t.definition(t.variableName), t.propertyName], color: "#8f6fd0" },
 ]);
 
 class BulletWidget extends WidgetType {
@@ -75,7 +84,7 @@ class ImageWidget extends WidgetType {
   }
 }
 
-const hide = Decoration.replace({});
+const dim = Decoration.mark({ class: "cm-syntax" });
 const quoteLine = Decoration.line({ class: "cm-blockquote" });
 const codeLine = Decoration.line({ class: "cm-codeline" });
 
@@ -93,10 +102,8 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
     }
     return false;
   };
-  const hideMark = (from: number, to: number, eatSpace = false) => {
-    let end = to;
-    if (eatSpace && doc.sliceString(end, end + 1) === " ") end++;
-    if (end > from) decos.push(hide.range(from, end));
+  const dimMark = (from: number, to: number) => {
+    if (to > from) decos.push(dim.range(from, to));
   };
 
   for (const { from, to } of view.visibleRanges) {
@@ -106,16 +113,14 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
       enter: (node) => {
         switch (node.name) {
           case "HeaderMark":
-            if (!onCursorLine(node.from, node.to)) hideMark(node.from, node.to, true);
-            break;
           case "EmphasisMark":
           case "CodeMark":
           case "StrikethroughMark":
-            if (!onCursorLine(node.from, node.to)) hideMark(node.from, node.to);
+            dimMark(node.from, node.to);
             break;
           case "QuoteMark":
             decos.push(quoteLine.range(doc.lineAt(node.from).from));
-            if (!onCursorLine(node.from, node.to)) hideMark(node.from, node.to, true);
+            dimMark(node.from, node.to);
             break;
           case "ListMark": {
             const mark = doc.sliceString(node.from, node.to);
@@ -127,10 +132,9 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
             break;
           }
           case "Link": {
-            if (onCursorLine(node.from, node.to)) break;
             for (let c = node.node.firstChild; c; c = c.nextSibling) {
               if (c.name === "LinkMark" || c.name === "URL" || c.name === "LinkTitle") {
-                hideMark(c.from, c.to);
+                dimMark(c.from, c.to);
               }
             }
             return false;

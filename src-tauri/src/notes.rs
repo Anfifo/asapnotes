@@ -208,13 +208,17 @@ fn collect_md_deep(dir: &Path, prefix: &str, depth: u32, out: &mut Vec<FileInfo>
     }
 }
 
+/// `deep: false` skips the external-project walk (can be slow on big folders)
+/// so the first paint after launch isn't held up by it; a deep call follows.
 #[tauri::command]
-pub fn list_notes(app: AppHandle) -> Result<Vec<FileInfo>, String> {
+pub fn list_notes(app: AppHandle, deep: Option<bool>) -> Result<Vec<FileInfo>, String> {
     let mut out = list_tree(&notes_root(&app)?)?;
-    for (name, dir) in external_map(&app)? {
-        collect_md_deep(Path::new(&dir), &format!("{name}/"), 0, &mut out);
+    if deep.unwrap_or(true) {
+        for (name, dir) in external_map(&app)? {
+            collect_md_deep(Path::new(&dir), &format!("{name}/"), 0, &mut out);
+        }
+        out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
     }
-    out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
     Ok(out)
 }
 
@@ -480,6 +484,23 @@ pub fn scan_projects(dir: String) -> Result<Vec<ProjectCandidate>, String> {
 pub struct NewExternalProject {
     pub name: String,
     pub path: String,
+    /// Root the project at its docs folder instead of the folder itself.
+    #[serde(default)]
+    pub ensure_docs: bool,
+}
+
+/// A repo's notes root: `docs/` if present, else `documentation/`, else a
+/// freshly created `docs/`.
+fn docs_root(base: &Path) -> Result<PathBuf, String> {
+    for sub in ["docs", "documentation"] {
+        let dir = base.join(sub);
+        if dir.is_dir() {
+            return Ok(dir);
+        }
+    }
+    let dir = base.join("docs");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
 }
 
 #[tauri::command]
@@ -499,11 +520,34 @@ pub fn add_external_projects(
         if !Path::new(&p.path).is_dir() {
             return Err(format!("not a folder: {}", p.path));
         }
+        let path = if p.ensure_docs {
+            docs_root(Path::new(&p.path))?
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            p.path.clone()
+        };
         // Preview must be able to load this folder's images via the asset
-        // protocol; the static scope only covers the root assets dir.
+        // protocol; the static scope only covers the root assets dir. Scoped
+        // to the scanned folder, not just docs/ — links may climb out of it.
         let _ = app.asset_protocol_scope().allow_directory(&p.path, true);
-        map.insert(p.name, p.path);
+        map.insert(p.name, path);
     }
+    save_external_map(&app, &map)
+}
+
+/// Repoint an external project at a different folder (Settings).
+#[tauri::command]
+pub fn set_external_path(app: AppHandle, name: String, path: String) -> Result<(), String> {
+    let mut map = external_map(&app)?;
+    if !map.contains_key(&name) {
+        return Err(format!("no linked project named {name}"));
+    }
+    if !Path::new(&path).is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    let _ = app.asset_protocol_scope().allow_directory(&path, true);
+    map.insert(name, path);
     save_external_map(&app, &map)
 }
 

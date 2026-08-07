@@ -142,6 +142,7 @@ pub fn run() {
             notes::scan_projects,
             notes::add_external_projects,
             notes::remove_external_project,
+            notes::set_external_path,
             notes::list_external_projects,
         ])
         .setup(|app| {
