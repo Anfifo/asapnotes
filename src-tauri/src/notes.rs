@@ -222,6 +222,125 @@ pub fn list_notes(app: AppHandle, deep: Option<bool>) -> Result<Vec<FileInfo>, S
     Ok(out)
 }
 
+/// One matching line. Deliberately no match offsets: the frontend re-finds the
+/// needle in `text` with JS string indices, which is the only indexing that
+/// agrees with how it will slice the string for highlighting.
+#[derive(Serialize)]
+pub struct SearchHit {
+    /// Note id, same shape `list_notes` returns.
+    pub note: String,
+    /// 1-based line number, for the jump-to on click.
+    pub line: u32,
+    pub text: String,
+}
+
+/// Every note id paired with its absolute path — the same corpus `list_notes`
+/// enumerates, but resolved once instead of per note (`resolve_note` re-reads
+/// the external-project mapping on every call).
+fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
+    let root = notes_root(app)?;
+    let mut out: Vec<(String, PathBuf)> = list_tree(&root)?
+        .into_iter()
+        .map(|f| {
+            let path = root.join(&f.name);
+            (f.name, path)
+        })
+        .collect();
+    for (project, dir) in external_map(app)? {
+        let dir = Path::new(&dir);
+        let mut found = Vec::new();
+        collect_md_deep(dir, "", 0, &mut found);
+        out.extend(
+            found
+                .into_iter()
+                .map(|f| (format!("{project}/{}", f.name), dir.join(&f.name))),
+        );
+    }
+    Ok(out)
+}
+
+/// Longest line kept whole; past this a window around the match is returned so
+/// one minified file can't push megabytes through the IPC boundary.
+const MAX_HIT_CHARS: usize = 300;
+/// Files above this are assumed not to be prose and skipped.
+const MAX_SEARCH_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Case-insensitive literal search over every note's contents.
+///
+/// A plain scan, no index: the corpus is a few hundred small markdown files,
+/// so reading them costs less than keeping a derived index honest against the
+/// other tools that edit these files.
+#[tauri::command]
+pub fn search_notes(
+    app: AppHandle,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<SearchHit>, String> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.unwrap_or(500);
+    let mut out = Vec::new();
+    for (note, path) in note_paths(&app)? {
+        if out.len() >= limit {
+            break;
+        }
+        if fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > MAX_SEARCH_BYTES {
+            continue;
+        }
+        // Unreadable file: skip, same tolerance as the listing walk.
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for (i, line) in content.lines().enumerate() {
+            if out.len() >= limit {
+                break;
+            }
+            let Some(at) = line.to_lowercase().find(&needle) else {
+                continue;
+            };
+            out.push(SearchHit {
+                note: note.clone(),
+                line: i as u32 + 1,
+                text: excerpt(line, at),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Trim a long line down to a window around `at` (a byte offset into `line`),
+/// always cutting on a char boundary.
+fn excerpt(line: &str, at: usize) -> String {
+    let line = line.trim_end();
+    if line.chars().count() <= MAX_HIT_CHARS {
+        return line.to_string();
+    }
+    // Keep a little context before the match so it doesn't hug the left edge.
+    let start = line[..at]
+        .char_indices()
+        .rev()
+        .nth(40)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let tail = &line[start..];
+    let end = tail
+        .char_indices()
+        .nth(MAX_HIT_CHARS)
+        .map(|(i, _)| i)
+        .unwrap_or(tail.len());
+    let mut s = String::new();
+    if start > 0 {
+        s.push('…');
+    }
+    s.push_str(&tail[..end]);
+    if end < tail.len() {
+        s.push('…');
+    }
+    s
+}
+
 #[tauri::command]
 pub fn list_projects(app: AppHandle) -> Result<Vec<String>, String> {
     let mut out = project_dirs(&notes_root(&app)?)?;
@@ -241,6 +360,18 @@ pub fn read_note(app: AppHandle, name: String) -> Result<String, String> {
     fs::read_to_string(resolve_note(&app, &name)?).map_err(|e| e.to_string())
 }
 
+/// Modification time of a note's file (ms), `None` if it doesn't exist —
+/// the frontend's external-change detection compares this against the mtime
+/// it saw at load.
+#[tauri::command]
+pub fn note_mtime(app: AppHandle, name: String) -> Result<Option<u64>, String> {
+    Ok(fs::metadata(resolve_note(&app, &name)?)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64))
+}
+
 #[tauri::command]
 pub fn save_note(app: AppHandle, name: String, content: String) -> Result<(), String> {
     let path = resolve_note(&app, &name)?;
@@ -248,6 +379,28 @@ pub fn save_note(app: AppHandle, name: String, content: String) -> Result<(), St
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::write(path, content).map_err(|e| e.to_string())
+}
+
+/// Move a note to the recycle bin (recoverable — notes are user-owned files,
+/// never hard-deleted) and discard its shadow draft.
+#[tauri::command]
+pub fn delete_note(app: AppHandle, name: String) -> Result<(), String> {
+    trash::delete(resolve_note(&app, &name)?).map_err(|e| e.to_string())?;
+    let draft = drafts_dir(&app)?.join(checked_name(&name)?);
+    if draft.exists() {
+        let _ = fs::remove_file(draft);
+    }
+    Ok(())
+}
+
+/// Show a note in File Explorer (context menu "Reveal").
+#[tauri::command]
+pub fn reveal_note(app: AppHandle, name: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = resolve_note(&app, &name)?;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
 }
 
 /// Move/rename a note between projects (or to/from the inbox); its shadow

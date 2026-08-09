@@ -3,15 +3,19 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
-import Editor, { EditorHandle, FormatKind } from "./Editor";
+import { confirm as confirmDialog, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { ContextMenu, ContextMenuState } from "./ContextMenu";
+import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
 import { fileOf, projectOf, relativePath, resolvePath, subdirOf } from "./paths";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
 import { ScanProjects } from "./ScanProjects";
+import { SearchView } from "./Search";
 import { Settings } from "./Settings";
+import { StatusBar } from "./StatusBar";
 import * as api from "./notes";
 import "./App.css";
 
@@ -28,6 +32,8 @@ const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 const EXPLORER_DEFAULT_W = 224;
 const clampExplorerWidth = (w: number) => Math.min(480, Math.max(168, w));
 
+const clampZoom = (z: number) => Math.min(3, Math.max(0.5, Math.round(z * 10) / 10));
+
 const FORMAT_GROUPS: { kind: FormatKind; glyph: string; title: string }[][] = [
   [
     { kind: "h1", glyph: "H1", title: "Heading 1 (Ctrl+1)" },
@@ -40,7 +46,7 @@ const FORMAT_GROUPS: { kind: FormatKind; glyph: string; title: string }[][] = [
   ],
   [
     { kind: "code", glyph: "<>", title: "Inline code (Ctrl+Shift+C)" },
-    { kind: "codeblock", glyph: "```", title: "Code block (Ctrl+Shift+K)" },
+    { kind: "codeblock", glyph: "```", title: "Code block" },
   ],
   [
     { kind: "bullet", glyph: "•", title: "Bullet list (Ctrl+Shift+8)" },
@@ -68,6 +74,11 @@ const validFileName = (name: string) =>
 
 const validProjectName = (name: string) => validFileName(name) && name !== "assets";
 
+/** The name a draft id carries: null only for app-generated `untitled-<ts>` ids.
+ * A named draft keeps its name even when the backing file is gone (deleted
+ * externally) — the titlebar stays honest and Ctrl+S recreates the file. */
+const draftName = (id: string) => (/^untitled-\d+\.md$/.test(fileOf(id)) ? null : id);
+
 /** File name for an untitled note, derived from its first non-empty line. */
 function deriveName(doc: string, prefix: string, taken: Set<string>): string {
   const firstLine = doc.split("\n").find((l) => l.trim().length > 0) ?? "";
@@ -92,6 +103,16 @@ function App() {
   const [scanResults, setScanResults] = useState<api.ProjectCandidate[] | null>(null);
   const [rootPath, setRootPath] = useState("");
   const [open, setOpen] = useState<OpenNote | null>(null);
+  // Open tabs, restored across restarts (ids only — content loads on activation
+  // so summon latency is untouched). The active tab is the one matching `open`.
+  const [tabs, setTabs] = useState<OpenNote[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("tabs") ?? "[]") as OpenNote[];
+      return Array.isArray(stored) ? stored.filter((t) => t && typeof t.id === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const [docKey, setDocKey] = useState("");
   const [initialDoc, setInitialDoc] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -103,6 +124,12 @@ function App() {
     () => localStorage.getItem("explorerPinned") !== "0",
   );
   const [explorerOpen, setExplorerOpen] = useState(explorerPinned);
+  // The explorer panel hosts two views; search is deliberately not persisted —
+  // reopening the app should land on the file tree, not a stale query.
+  const [explorerView, setExplorerView] = useState<"files" | "search">("files");
+  // Bumped on every Ctrl+Shift+F so a repeat press refocuses and selects the
+  // query box even when the search view is already showing.
+  const [searchFocus, setSearchFocus] = useState(0);
   const setExplorerPinned = (pinned: boolean) => {
     setExplorerPinnedState(pinned);
     localStorage.setItem("explorerPinned", pinned ? "1" : "0");
@@ -142,16 +169,22 @@ function App() {
   }, [explorerNarrow, explorerPinned, explorerOpen]);
   const [creatingProject, setCreatingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [toolbarOpen, setToolbarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [summonMs, setSummonMs] = useState<number | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [zoom, setZoomState] = useState(() => {
+    const saved = Number(localStorage.getItem("zoom"));
+    return saved > 0 ? clampZoom(saved) : 1;
+  });
 
   const editorRef = useRef<EditorHandle>(null);
   const contentRef = useRef("");
   const openRef = useRef<OpenNote | null>(null);
   openRef.current = open;
+  const tabsRef = useRef<OpenNote[]>([]);
+  tabsRef.current = tabs;
   const notesRef = useRef<api.FileInfo[]>([]);
   notesRef.current = notes;
   const modeRef = useRef(mode);
@@ -162,6 +195,43 @@ function App() {
   rootPathRef.current = rootPath;
   const noteDirRef = useRef("");
   const autosaveTimer = useRef<number | null>(null);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  // Disk mtime of the open note when its content was loaded (null while
+  // untitled/unknown) — the reference point for external-change detection.
+  const openMtimeRef = useRef<number | null>(null);
+
+  /** Remember the open note's on-disk mtime; a stale async result (another
+   * track started meanwhile) is dropped via the token. */
+  const mtimeTokenRef = useRef(0);
+  const trackMtime = useCallback((name: string | null) => {
+    const token = ++mtimeTokenRef.current;
+    openMtimeRef.current = null;
+    if (!name) return;
+    void api
+      .noteMtime(name)
+      .then((m) => {
+        if (mtimeTokenRef.current === token) openMtimeRef.current = m;
+      })
+      .catch(() => {});
+  }, []);
+
+  const setZoom = useCallback((z: number) => {
+    const next = clampZoom(z);
+    setZoomState(next);
+    localStorage.setItem("zoom", String(next));
+    void getCurrentWebview().setZoom(next);
+  }, []);
+
+  // Editor status flows straight to the StatusBar through this ref — routing
+  // it through App state would re-render the whole tree on every keystroke.
+  const statusCb = useRef<((s: EditorStatus) => void) | null>(null);
+  const registerStatus = useCallback((cb: ((s: EditorStatus) => void) | null) => {
+    statusCb.current = cb;
+  }, []);
+  const handleStatus = useCallback((s: EditorStatus) => statusCb.current?.(s), []);
 
   const upsertDraft = (id: string) =>
     setDrafts((d) => [{ name: id, modified_ms: Date.now() }, ...d.filter((x) => x.name !== id)]);
@@ -204,77 +274,142 @@ function App() {
     }, AUTOSAVE_MS);
   }, []);
 
-  const showDoc = useCallback((note: OpenNote, content: string, isDirty: boolean) => {
-    contentRef.current = content;
+  const showDoc = useCallback(
+    (note: OpenNote, content: string, isDirty: boolean) => {
+      contentRef.current = content;
+      setOpen(note);
+      setTabs((ts) =>
+        ts.some((t) => t.id === note.id)
+          ? ts.map((t) => (t.id === note.id ? note : t))
+          : [...ts, note],
+      );
+      setInitialDoc(content);
+      setDocKey(note.id);
+      setDirty(isDirty);
+      setMode("edit");
+      setPaletteOpen(null);
+      trackMtime(note.name);
+    },
+    [trackMtime],
+  );
+
+  /** Point the open note (and its tab) at a new identity — save/rename/move. */
+  const retagOpen = useCallback((oldId: string, note: OpenNote) => {
     setOpen(note);
-    setInitialDoc(content);
-    setDocKey(note.id);
-    setDirty(isDirty);
-    setMode("edit");
-    setPaletteOpen(null);
+    setTabs((ts) => ts.map((t) => (t.id === oldId ? note : t)));
   }, []);
 
-  const newNote = useCallback(async () => {
-    await flushDraft();
-    showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
-  }, [flushDraft, showDoc]);
+  const newNote = useCallback(
+    async (project?: string | null) => {
+      await flushDraft();
+      const prefix = project ? `${project}/` : "";
+      showDoc({ id: `${prefix}untitled-${Date.now()}.md`, name: null }, "", false);
+    },
+    [flushDraft, showDoc],
+  );
 
   const openItem = useCallback(
     async (item: { id: string; isNote: boolean }, draftIds: Set<string>) => {
       await flushDraft();
       const hasDraft = draftIds.has(item.id);
-      const content = hasDraft ? await api.readDraft(item.id) : await api.readNote(item.id);
-      showDoc({ id: item.id, name: item.isNote ? item.id : null }, content, hasDraft);
+      // No draft and no saved file (an untouched untitled tab) — nothing on disk to read.
+      const content = hasDraft
+        ? await api.readDraft(item.id)
+        : item.isNote
+          ? await api.readNote(item.id)
+          : "";
+      showDoc({ id: item.id, name: item.isNote ? item.id : draftName(item.id) }, content, hasDraft);
       editorRef.current?.focus();
     },
     [flushDraft, showDoc],
   );
 
-  const save = useCallback(async (asName?: string) => {
-    const cur = openRef.current;
-    if (!cur) return;
-    cancelAutosave();
-    const doc = contentRef.current;
-    if (!cur.name && !asName && doc.trim() === "") return;
-    let name = cur.name ?? asName ?? null;
-    if (!name) {
-      const project = projectOf(cur.id);
-      const taken = new Set(notesRef.current.map((n) => n.name.toLowerCase()));
-      name = deriveName(doc, project ? `${project}/` : "", taken);
-    }
-    await api.saveNote(name, doc);
-    await api.deleteDraft(cur.id);
-    setDrafts((d) => d.filter((x) => x.name !== cur.id));
-    setOpen({ id: name, name });
-    setDirty(false);
-    setNotes(await api.listNotes());
+  const openSearchView = useCallback(() => {
+    setExplorerOpen(true);
+    setExplorerView("search");
+    setSearchFocus((n) => n + 1);
   }, []);
 
-  /** Move the open note (or retarget the open untitled draft) to a project. */
-  const changeProject = useCallback(async (target: string | null) => {
-    const cur = openRef.current;
-    if (!cur || target === projectOf(cur.id)) return;
-    const newId = (target ? `${target}/` : "") + fileOf(cur.id);
-    if (cur.name) {
-      try {
-        await api.moveNote(cur.name, newId);
-      } catch (err) {
-        console.error("move failed:", err);
-        return;
-      }
-      setOpen({ id: newId, name: newId });
-      setNotes(await api.listNotes());
-      setDrafts(await api.listDrafts());
-    } else {
+  /** Line to jump to once the note a search hit belongs to has loaded. */
+  const pendingLine = useRef<number | null>(null);
+
+  // The editor is rebuilt when docKey changes and child effects run before
+  // parent ones, so the new view exists by the time this fires. Line numbers
+  // come from the file on disk — a note with an unsaved draft opens from the
+  // draft, so the jump can land a few lines off until it's saved.
+  useEffect(() => {
+    const line = pendingLine.current;
+    if (line === null) return;
+    pendingLine.current = null;
+    editorRef.current?.revealLine(line);
+  }, [docKey]);
+
+  const save = useCallback(
+    async (asName?: string) => {
+      const cur = openRef.current;
+      if (!cur) return;
       cancelAutosave();
+      const doc = contentRef.current;
+      if (!cur.name && !asName && doc.trim() === "") return;
+      let name = cur.name ?? asName ?? null;
+      if (!name) {
+        const project = projectOf(cur.id);
+        const taken = new Set(notesRef.current.map((n) => n.name.toLowerCase()));
+        name = deriveName(doc, project ? `${project}/` : "", taken);
+      }
+      // External-change guard: the file is shared with other tools by design —
+      // if it changed on disk since this buffer loaded, never overwrite silently.
+      if (cur.name && openMtimeRef.current !== null) {
+        const now = await api.noteMtime(cur.name).catch(() => null);
+        if (now !== null && now !== openMtimeRef.current) {
+          const ok = await confirmDialog(
+            `"${fileOf(cur.name)}" changed on disk since you opened it. Overwrite those changes?`,
+            { title: "Note changed on disk", kind: "warning" },
+          );
+          if (!ok) return;
+        }
+      }
+      await api.saveNote(name, doc);
+      mtimeTokenRef.current++; // invalidate any in-flight track
+      openMtimeRef.current = (await api.noteMtime(name).catch(() => null)) ?? null;
       await api.deleteDraft(cur.id);
-      setOpen({ id: newId, name: null });
-      if (contentRef.current.trim() !== "") await api.writeDraft(newId, contentRef.current);
-      setDrafts(await api.listDrafts());
-    }
-    if (target) setProjects((ps) => (ps.includes(target) ? ps : [...ps, target].sort()));
-    editorRef.current?.focus();
-  }, []);
+      setDrafts((d) => d.filter((x) => x.name !== cur.id));
+      retagOpen(cur.id, { id: name, name });
+      setDirty(false);
+      setNotes(await api.listNotes());
+    },
+    [retagOpen],
+  );
+
+  /** Move the open note (or retarget the open untitled draft) to a project. */
+  const changeProject = useCallback(
+    async (target: string | null) => {
+      const cur = openRef.current;
+      if (!cur || target === projectOf(cur.id)) return;
+      const newId = (target ? `${target}/` : "") + fileOf(cur.id);
+      if (cur.name) {
+        try {
+          await api.moveNote(cur.name, newId);
+        } catch (err) {
+          console.error("move failed:", err);
+          return;
+        }
+        retagOpen(cur.id, { id: newId, name: newId });
+        trackMtime(newId);
+        setNotes(await api.listNotes());
+        setDrafts(await api.listDrafts());
+      } else {
+        cancelAutosave();
+        await api.deleteDraft(cur.id);
+        retagOpen(cur.id, { id: newId, name: null });
+        if (contentRef.current.trim() !== "") await api.writeDraft(newId, contentRef.current);
+        setDrafts(await api.listDrafts());
+      }
+      if (target) setProjects((ps) => (ps.includes(target) ? ps : [...ps, target].sort()));
+      editorRef.current?.focus();
+    },
+    [retagOpen, trackMtime],
+  );
 
   const togglePreview = useCallback(() => {
     if (!openRef.current) return;
@@ -358,11 +493,29 @@ function App() {
       setRootPath(root);
       // External projects can be big — walk them after the first paint.
       void api.listNotes().then(setNotes);
+      // Restored tabs win: reopen the last active one (content loads here, the
+      // rest stay lazy). A tab whose note vanished is dropped and we fall back.
+      const restored = tabsRef.current;
+      if (restored.length > 0) {
+        const activeId = localStorage.getItem("activeTab");
+        const target = restored.find((t) => t.id === activeId) ?? restored[0];
+        try {
+          const hasDraft = ds.some((d) => d.name === target.id);
+          const content = hasDraft ? await api.readDraft(target.id) : await api.readNote(target.id);
+          showDoc(
+            { id: target.id, name: hasDraft ? draftName(target.id) : target.id },
+            content,
+            hasDraft,
+          );
+          return;
+        } catch {
+          setTabs((ts) => ts.filter((t) => t.id !== target.id));
+        }
+      }
       if (ds.length > 0) {
         const draft = ds[0];
-        const isNamed = ns.some((n) => n.name === draft.name);
         const content = await api.readDraft(draft.name);
-        showDoc({ id: draft.name, name: isNamed ? draft.name : null }, content, true);
+        showDoc({ id: draft.name, name: draftName(draft.name) }, content, true);
       } else if (ns.length > 0) {
         const content = await api.readNote(ns[0].name);
         showDoc({ id: ns[0].name, name: ns[0].name }, content, false);
@@ -371,6 +524,23 @@ function App() {
       }
     })();
   }, [showDoc]);
+
+  // Tabs (and which one is active) survive restarts.
+  useEffect(() => {
+    localStorage.setItem("tabs", JSON.stringify(tabs));
+  }, [tabs]);
+  useEffect(() => {
+    if (open) localStorage.setItem("activeTab", open.id);
+  }, [open]);
+
+  // Tabs shrink to fit rather than scroll; when even minimum widths overflow,
+  // the strip pans with a hidden scrollbar — keep the active tab revealed.
+  const tabbarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tabbarRef.current
+      ?.querySelector(".tab.active")
+      ?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [open]);
 
   // Dropped image files are intercepted by Tauri (we get paths, not File
   // objects): copy them into assets/ and insert the link at the cursor.
@@ -458,9 +628,15 @@ function App() {
     if (mod && key === "s") {
       e.preventDefault();
       void save();
-    } else if (mod && key === "n") {
+    } else if (mod && (key === "n" || key === "t")) {
       e.preventDefault();
       void newNote();
+    } else if (mod && key === "w") {
+      e.preventDefault();
+      if (openRef.current) closeTab(openRef.current.id);
+    } else if (e.ctrlKey && e.key === "Tab") {
+      e.preventDefault();
+      cycleTab(e.shiftKey);
     } else if (mod && key === "k") {
       e.preventDefault();
       setPaletteOpen((o) => (o === "commands" ? null : "commands"));
@@ -472,12 +648,24 @@ function App() {
     } else if (mod && e.shiftKey && key === "e") {
       e.preventDefault();
       setExplorerOpen((o) => !o);
+    } else if (mod && e.shiftKey && key === "f") {
+      e.preventDefault();
+      openSearchView();
     } else if (mod && key === "e") {
       e.preventDefault();
       togglePreview();
+    } else if (mod && (key === "=" || key === "+")) {
+      e.preventDefault();
+      setZoom(zoomRef.current + 0.1);
+    } else if (mod && key === "-") {
+      e.preventDefault();
+      setZoom(zoomRef.current - 0.1);
+    } else if (mod && key === "0") {
+      e.preventDefault();
+      setZoom(1);
     } else if (e.key === "Escape") {
       if (document.querySelector(".menu-drop")) {
-        // An open menubar dropdown owns Esc (MenuBar closes it).
+        // An open menubar dropdown or context menu owns Esc.
       } else if (renaming) {
         setRenaming(false);
         editorRef.current?.focus();
@@ -527,6 +715,50 @@ function App() {
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [explorerOpen, explorerDocked]);
+
+  // Zoom: persisted factor is re-applied at startup; Ctrl+scroll adjusts it
+  // (Ctrl+± / Ctrl+0 live in the app keydown handler).
+  useEffect(() => {
+    if (zoomRef.current !== 1) void getCurrentWebview().setZoom(zoomRef.current);
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setZoom(zoomRef.current + (e.deltaY < 0 ? 0.1 : -0.1));
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, [setZoom]);
+
+  // External-change detection (files are shared with other tools by design):
+  // whenever the window regains focus — a summon included — re-list notes and
+  // drafts, and re-sync the open note against its file. VSCode's model: a
+  // clean buffer reloads silently (in place, cursor kept); a dirty one keeps
+  // editing and the stale mtime makes Ctrl+S raise the overwrite confirm.
+  useEffect(() => {
+    const onFocus = () => {
+      void api.listNotes().then(setNotes);
+      void api.listDrafts().then(setDrafts);
+      const name = openRef.current?.name;
+      if (!name) return;
+      void (async () => {
+        const mtime = await api.noteMtime(name).catch(() => null);
+        if (mtime === null || openRef.current?.name !== name) return;
+        if (openMtimeRef.current === null) {
+          openMtimeRef.current = mtime; // adopt — no reference point yet
+        } else if (mtime !== openMtimeRef.current && !dirtyRef.current) {
+          const content = await api.readNote(name);
+          if (openRef.current?.name !== name) return;
+          contentRef.current = content;
+          setInitialDoc(content);
+          editorRef.current?.setDoc(content);
+          openMtimeRef.current = mtime;
+        }
+        // Dirty + changed: leave the stale mtime so the save guard fires.
+      })();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   // `summoned` carries the hotkey-press epoch ms from Rust; the next animation
   // frame approximates when the shown window actually painted.
@@ -614,7 +846,8 @@ function App() {
           console.error("rename failed:", err);
           return;
         }
-        setOpen({ id: newId, name: newId });
+        retagOpen(cur.id, { id: newId, name: newId });
+        trackMtime(newId);
         setNotes(await api.listNotes());
         setDrafts(await api.listDrafts());
       } else {
@@ -622,6 +855,10 @@ function App() {
       }
     })();
   };
+
+  // Saved name of the open note (null while untitled) — const so closures
+  // below keep the narrowed string type.
+  const openName = open?.name ?? null;
 
   // Ctrl+K: Claude-style palette — commands first (New note on top), recent
   // notes below; typing fuzzy-searches across both.
@@ -641,6 +878,23 @@ function App() {
       run: () => void save(),
     },
     { kind: "command", id: "cmd:rename", label: "Rename note", run: startRename },
+    {
+      kind: "command",
+      id: "cmd:search",
+      label: "Search in notes",
+      detail: "Ctrl+Shift+F",
+      run: openSearchView,
+    },
+    ...(openName
+      ? [
+          {
+            kind: "command" as const,
+            id: "cmd:delete",
+            label: "Delete note",
+            run: () => void deleteNote(openName),
+          },
+        ]
+      : []),
     {
       kind: "command",
       id: "cmd:preview",
@@ -707,8 +961,21 @@ function App() {
   ];
 
   // Menubar (custom title bar) — thin discoverability layer over the same
-  // actions the palette exposes.
-  const editMenuItems: MenuEntry[] = FORMAT_GROUPS.flatMap((group, i) => [
+  // actions the palette exposes. Edit doubles as the editor's context menu.
+  const editEntries: MenuEntry[] = [
+    { label: "Undo", detail: "Ctrl+Z", run: () => editorRef.current?.exec("undo") },
+    { label: "Redo", detail: "Ctrl+Y", run: () => editorRef.current?.exec("redo") },
+    "sep",
+    { label: "Cut", detail: "Ctrl+X", run: () => editorRef.current?.exec("cut") },
+    { label: "Copy", detail: "Ctrl+C", run: () => editorRef.current?.exec("copy") },
+    { label: "Paste", detail: "Ctrl+V", run: () => editorRef.current?.exec("paste") },
+    { label: "Select all", detail: "Ctrl+A", run: () => editorRef.current?.exec("selectAll") },
+    "sep",
+    { label: "Find", detail: "Ctrl+F", run: () => editorRef.current?.exec("find") },
+    { label: "Replace", detail: "Ctrl+H", run: () => editorRef.current?.exec("replace") },
+    { label: "Go to line", detail: "Ctrl+G", run: () => editorRef.current?.exec("gotoLine") },
+  ];
+  const formatMenuItems: MenuEntry[] = FORMAT_GROUPS.flatMap((group, i) => [
     ...(i > 0 ? ["sep" as const] : []),
     ...group.map((f) => ({
       label: f.title.replace(/ \(.+\)$/, ""),
@@ -723,6 +990,7 @@ function App() {
         { label: "New note", detail: "Ctrl+N", run: () => void newNote() },
         { label: "Save note", detail: "Ctrl+S", run: () => void save() },
         { label: "Rename note", run: startRename },
+        ...(openName ? [{ label: "Delete note", run: () => void deleteNote(openName) }] : []),
         "sep",
         { label: "New project…", run: () => setCreatingProject(true) },
         { label: "Scan folder for projects…", run: () => void scanForProjects() },
@@ -733,7 +1001,9 @@ function App() {
         { label: "Quit", run: () => void api.quit() },
       ],
     },
-    { label: "Edit", items: editMenuItems },
+    { label: "Edit", items: editEntries },
+    // "O" mnemonic (Notepad/WordPad convention) — "F" belongs to File.
+    { label: "Format", mnemonic: "o", items: formatMenuItems },
     {
       label: "View",
       items: [
@@ -748,12 +1018,17 @@ function App() {
           run: () => setExplorerOpen((o) => !o),
         },
         {
-          label: toolbarOpen ? "Hide formatting toolbar" : "Show formatting toolbar",
-          run: () => setToolbarOpen((o) => !o),
+          label: "Search in notes",
+          detail: "Ctrl+Shift+F",
+          run: openSearchView,
         },
         "sep",
         { label: "Command palette", detail: "Ctrl+K", run: () => setPaletteOpen("commands") },
         { label: "Switch note", detail: "Ctrl+P", run: () => setPaletteOpen("notes") },
+        "sep",
+        { label: "Zoom in", detail: "Ctrl+=", run: () => setZoom(zoomRef.current + 0.1) },
+        { label: "Zoom out", detail: "Ctrl+-", run: () => setZoom(zoomRef.current - 0.1) },
+        { label: "Reset zoom", detail: "Ctrl+0", run: () => setZoom(1) },
       ],
     },
     {
@@ -775,6 +1050,151 @@ function App() {
     if (!explorerDocked) setExplorerOpen(false);
   };
 
+  /** Open the note a search hit belongs to and jump to its line. Unlike the
+   * file tree, a floating panel stays open — clicking through several results
+   * in a row is the whole point of the view. */
+  const openHit = (note: string, line: number) => {
+    if (openRef.current?.id === note) {
+      editorRef.current?.revealLine(line);
+      return;
+    }
+    pendingLine.current = line;
+    void openItem({ id: note, isNote: true }, draftIds);
+  };
+
+  /** Activate a tab — reload from draft/file so its name self-corrects. */
+  const openTabItem = (id: string) => openItem({ id, isNote: noteNames.has(id) }, draftIds);
+
+  /** Close a tab; closing the active one activates its neighbor (or a fresh
+   * note when it was the last). Unsaved edits stay behind as a draft. */
+  const closeTab = (id: string) => {
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const rest = tabs.filter((t) => t.id !== id);
+    setTabs(rest);
+    if (openRef.current?.id === id) {
+      if (rest.length > 0) void openTabItem(rest[Math.min(idx, rest.length - 1)].id);
+      else void newNote();
+    }
+  };
+
+  const cycleTab = (backwards: boolean) => {
+    const cur = openRef.current;
+    if (!cur || tabs.length < 2) return;
+    const i = tabs.findIndex((t) => t.id === cur.id);
+    const next = tabs[(i + (backwards ? tabs.length - 1 : 1)) % tabs.length];
+    void openTabItem(next.id);
+  };
+
+  const closeOtherTabs = (id: string) => {
+    setTabs((ts) => ts.filter((t) => t.id === id));
+    if (openRef.current?.id !== id) void openTabItem(id);
+  };
+
+  const closeAllTabs = () => {
+    setTabs([]);
+    void newNote();
+  };
+
+  /** Close every tab whose content is safe on disk (saved, no pending draft). */
+  const closeSavedTabs = () => {
+    const cur = openRef.current;
+    const keep = tabs.filter((t) => draftIds.has(t.id) || (cur?.id === t.id && dirty));
+    setTabs(keep);
+    if (cur && !keep.some((t) => t.id === cur.id)) {
+      if (keep.length > 0) void openTabItem(keep[0].id);
+      else void newNote();
+    }
+  };
+
+  /** Absolute filesystem path of a note id (Windows separators). */
+  const absPathOf = (id: string) => {
+    const project = projectOf(id);
+    const base = project ? (externals[project] ?? `${rootPath}/${project}`) : rootPath;
+    const rest = project ? id.slice(project.length + 1) : id;
+    return `${base}/${rest}`.replace(/\//g, "\\");
+  };
+
+  /** Recycle-bin delete (after a native confirm); the note's draft and open
+   * tab go with it. Never a hard delete — notes are user-owned files. */
+  const deleteNote = async (id: string) => {
+    const ok = await confirmDialog(`Move "${fileOf(id)}" to the Recycle Bin?`, {
+      title: "Delete note",
+      kind: "warning",
+    });
+    if (!ok) return;
+    if (openRef.current?.id === id) cancelAutosave();
+    try {
+      await api.deleteNote(id);
+    } catch (err) {
+      console.error("delete failed:", err);
+      return;
+    }
+    closeTab(id);
+    setNotes(await api.listNotes());
+    setDrafts(await api.listDrafts());
+  };
+
+  /** Throw away an unsaved untitled draft — unlike deleteNote, this content
+   * exists nowhere else, hence its own sterner confirm. */
+  const discardDraft = async (id: string) => {
+    const ok = await confirmDialog(
+      `Discard draft "${fileOf(id).replace(/\.md$/, "")}"? Its content is not saved anywhere.`,
+      { title: "Discard draft", kind: "warning" },
+    );
+    if (!ok) return;
+    if (openRef.current?.id === id) cancelAutosave();
+    await api.deleteDraft(id);
+    setDrafts((d) => d.filter((x) => x.name !== id));
+    closeTab(id);
+  };
+
+  const openContextMenu = (e: React.MouseEvent, entries: MenuEntry[]) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, entries });
+  };
+
+  /** File operations shared by the tab-strip and explorer context menus. */
+  const noteOps = (id: string): MenuEntry[] => [
+    { label: "Copy path", run: () => void writeText(absPathOf(id)) },
+    {
+      label: "Reveal in File Explorer",
+      run: () =>
+        void api.revealNote(id).catch((err: unknown) => console.error("reveal failed:", err)),
+    },
+    "sep",
+    { label: "Delete note", run: () => void deleteNote(id) },
+  ];
+
+  const tabContextMenu = (e: React.MouseEvent, t: OpenNote) =>
+    openContextMenu(e, [
+      { label: "Close", detail: "Ctrl+W", run: () => closeTab(t.id) },
+      { label: "Close others", run: () => closeOtherTabs(t.id) },
+      { label: "Close saved", run: closeSavedTabs },
+      { label: "Close all", run: closeAllTabs },
+      ...(t.name ? ["sep" as const, ...noteOps(t.name)] : []),
+    ]);
+
+  /** Rename from the explorer: open the note, then edit its name in the tab. */
+  const renameFromExplorer = async (id: string) => {
+    await openItem({ id, isNote: true }, draftIds);
+    setRenameValue(fileOf(id).replace(/\.md$/, ""));
+    setRenaming(true);
+  };
+
+  const explorerContextMenu = (e: React.MouseEvent, id: string, isNote: boolean) =>
+    openContextMenu(e, [
+      { label: "Open", run: () => openFromExplorer(id, isNote) },
+      { label: "New note here", run: () => void newNote(projectOf(id)) },
+      ...(isNote
+        ? [
+            { label: "Rename", run: () => void renameFromExplorer(id) },
+            "sep" as const,
+            ...noteOps(id),
+          ]
+        : ["sep" as const, { label: "Discard draft", run: () => void discardDraft(id) }]),
+    ]);
+
   const runEntry = (entry: Entry) => {
     setPaletteOpen(null);
     if (entry.kind === "command") {
@@ -789,7 +1209,14 @@ function App() {
 
   return (
     <div className="app">
-      <MenuBar menus={menus} onHide={hideWindow} />
+      <MenuBar
+        menus={menus}
+        searchLabel={
+          open ? (open.name ? fileOf(open.name).replace(/\.md$/, "") : "Untitled") : "Search"
+        }
+        onSearch={() => setPaletteOpen("commands")}
+        onHide={hideWindow}
+      />
       <div className="app-body">
         {/* Collapsed sidebar slat — the whole strip is the expand button. It
             stays as the anchor while the unpinned explorer floats over it. */}
@@ -810,6 +1237,10 @@ function App() {
             currentProject={currentProject}
             openId={open?.id ?? null}
             onSelect={openFromExplorer}
+            onContext={explorerContextMenu}
+            view={explorerView}
+            onViewChange={setExplorerView}
+            searchSlot={<SearchView focusToken={searchFocus} onOpenHit={openHit} />}
             pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
             onCollapse={() => setExplorerOpen(false)}
@@ -824,61 +1255,65 @@ function App() {
         )}
         <div className="main">
           <div className="top-panel">
-            <header className="titlebar">
-              <div className="title-line">
-                {renaming ? (
-                  <input
-                    className="title-input"
-                    autoFocus
-                    value={renameValue}
-                    placeholder="note name…"
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") submitRename();
+            <div className="tabbar" ref={tabbarRef}>
+              {tabs.map((t) => {
+                const active = open?.id === t.id;
+                return (
+                  <div
+                    key={t.id}
+                    className={active ? "tab active" : "tab"}
+                    title={t.name ?? "Unsaved note — double-click to name"}
+                    onClick={() => {
+                      if (!active) void openTabItem(t.id);
                     }}
-                    onBlur={() => setRenaming(false)}
-                  />
-                ) : (
-                  <span className="title" title="Click to rename" onClick={startRename}>
-                    {open?.name ? fileOf(open.name).replace(/\.md$/, "") : "Untitled"}
-                  </span>
-                )}
-                {dirty && (
-                  <span className="dirty" title="Unsaved — autosaved as draft. Ctrl+S to save.">
-                    ●
-                  </span>
-                )}
-              </div>
-              {creatingProject ? (
-                <input
-                  className="project-input"
-                  autoFocus
-                  value={newProjectName}
-                  placeholder="project name…"
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submitNewProject();
-                  }}
-                  onBlur={() => setCreatingProject(false)}
-                />
-              ) : (
-                <select
-                  className="project-select"
-                  value={currentProject ?? ""}
-                  onChange={(e) => {
-                    if (e.target.value === "__new") setCreatingProject(true);
-                    else void changeProject(e.target.value === "" ? null : e.target.value);
-                  }}
-                >
-                  <option value="">No project</option>
-                  {projects.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                  <option value="__new">+ New project…</option>
-                </select>
-              )}
+                    onDoubleClick={() => {
+                      if (active) startRename();
+                    }}
+                    onAuxClick={(e) => {
+                      if (e.button === 1) closeTab(t.id);
+                    }}
+                    onContextMenu={(e) => tabContextMenu(e, t)}
+                  >
+                    {renaming && active ? (
+                      <input
+                        className="title-input"
+                        autoFocus
+                        value={renameValue}
+                        placeholder="note name…"
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") submitRename();
+                        }}
+                        onBlur={() => setRenaming(false)}
+                      />
+                    ) : (
+                      <span className="tab-label">
+                        {t.name ? fileOf(t.name).replace(/\.md$/, "") : "Untitled"}
+                      </span>
+                    )}
+                    {(active ? dirty : draftIds.has(t.id)) && (
+                      <span className="dirty" title="Unsaved — autosaved as draft. Ctrl+S to save.">
+                        ●
+                      </span>
+                    )}
+                    <button
+                      className="tab-close"
+                      title="Close tab (Ctrl+W)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(t.id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+              <button className="tab-new" title="New note (Ctrl+T)" onClick={() => void newNote()}>
+                +
+              </button>
+            </div>
+            <header className="titlebar">
               <button
                 className={mode === "preview" ? "tool-btn open" : "tool-btn"}
                 title={
@@ -890,37 +1325,45 @@ function App() {
                 {mode === "edit" ? "👁" : "✎"}
               </button>
               {mode === "edit" && (
-                <button
-                  className={toolbarOpen ? "tool-btn open" : "tool-btn"}
-                  title="Formatting"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setToolbarOpen((o) => !o)}
-                >
-                  Aa
-                </button>
+                <div className="fmt-inline">
+                  {FORMAT_GROUPS.map((group, i) => (
+                    <div className="toolbar-group" key={i}>
+                      {group.map((f) => (
+                        <button
+                          key={f.kind}
+                          className={`fmt-${f.kind}`}
+                          title={f.title}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => editorRef.current?.applyFormat(f.kind)}
+                        >
+                          {f.glyph}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {creatingProject && (
+                <input
+                  className="project-input"
+                  autoFocus
+                  value={newProjectName}
+                  placeholder="project name…"
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitNewProject();
+                  }}
+                  onBlur={() => setCreatingProject(false)}
+                />
               )}
             </header>
-            {mode === "edit" && toolbarOpen && (
-              <div className="toolbar">
-                {FORMAT_GROUPS.map((group, i) => (
-                  <div className="toolbar-group" key={i}>
-                    {group.map((f) => (
-                      <button
-                        key={f.kind}
-                        className={`fmt-${f.kind}`}
-                        title={f.title}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => editorRef.current?.applyFormat(f.kind)}
-                      >
-                        {f.glyph}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
-          <div className="content-panel">
+          <div
+            className="content-panel"
+            onContextMenu={(e) => {
+              if (mode === "edit") openContextMenu(e, editEntries);
+            }}
+          >
             {open && (
               <Editor
                 ref={editorRef}
@@ -931,6 +1374,7 @@ function App() {
                 resolveImage={resolveImage}
                 mentionItems={mentionItems}
                 mentionLink={mentionLink}
+                onStatus={handleStatus}
                 hidden={mode === "preview"}
               />
             )}
@@ -970,11 +1414,8 @@ function App() {
           }}
         />
       )}
-      {summonMs !== null && (
-        <span className="latency" title="summon → paint">
-          {summonMs} ms
-        </span>
-      )}
+      {ctxMenu && <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} />}
+      <StatusBar register={registerStatus} summonMs={summonMs} zoom={zoom} />
     </div>
   );
 }

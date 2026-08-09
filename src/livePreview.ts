@@ -43,14 +43,18 @@ const markdownStyle = HighlightStyle.define([
   { tag: t.processingInstruction, color: "#9a9a9a" },
   { tag: t.contentSeparator, color: "#9a9a9a" },
   // Code-block tokens (nested ```lang parses) — same both-theme constraint,
-  // so every color sits at mid lightness.
+  // so every color sits at mid lightness. Plain variableName gets a color too:
+  // shell-ish languages (powershell, bash) tag bare commands as variables, so
+  // without it whole command blocks render uncolored.
   { tag: t.keyword, color: "#b05ccc" },
   { tag: [t.string, t.special(t.string)], color: "#54a054" },
   { tag: t.comment, color: "#8a8a8a", fontStyle: "italic" },
-  { tag: [t.number, t.bool, t.atom, t.null], color: "#c9822d" },
+  { tag: [t.number, t.bool, t.atom, t.null, t.regexp, t.escape], color: "#c9822d" },
   { tag: [t.typeName, t.className, t.tagName], color: "#2f9c95" },
   { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "#4a7dc9" },
   { tag: [t.definition(t.variableName), t.propertyName], color: "#8f6fd0" },
+  { tag: t.variableName, color: "#5b8bd0" },
+  { tag: [t.operator, t.punctuation, t.meta, t.labelName], color: "#8a8a8a" },
 ]);
 
 class BulletWidget extends WidgetType {

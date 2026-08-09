@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import mark from "../assets/mark.svg";
 
@@ -6,19 +6,141 @@ export type MenuEntry = { label: string; detail?: string; run: () => void } | "s
 
 export interface MenuDef {
   label: string;
+  /** Alt-shortcut letter; defaults to the label's first letter. */
+  mnemonic?: string;
   items: MenuEntry[];
+}
+
+/** Label with the Alt-mnemonic letter underlined. */
+function MnemonicLabel({ label, letter }: { label: string; letter: string }) {
+  const i = label.toLowerCase().indexOf(letter.toLowerCase());
+  if (i < 0) return <>{label}</>;
+  return (
+    <>
+      {label.slice(0, i)}
+      <u>{label[i]}</u>
+      {label.slice(i + 1)}
+    </>
+  );
 }
 
 interface MenuBarProps {
   menus: MenuDef[];
+  /** Text in the centered search pill — the open note doubles as the window title. */
+  searchLabel: string;
+  /** Click on the search pill (opens the combined command/note palette). */
+  onSearch: () => void;
   /** ✕ hides to the tray (residency invariant) — never exits the app. */
   onHide: () => void;
 }
 
 /** Custom title bar: dropdown menus, drag region, window buttons. The window
- * is undecorated (VSCode-style), so this row *is* the OS title bar. */
-export function MenuBar({ menus, onHide }: MenuBarProps) {
+ * is undecorated (VSCode-style), so this row *is* the OS title bar.
+ * Keyboard-reachable: Alt toggles the first menu, Alt+letter opens one by
+ * mnemonic, arrows navigate, Enter runs, Esc closes. */
+export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  // Keyboard highlight within the open dropdown (-1 = mouse only).
+  const [selIdx, setSelIdx] = useState(-1);
+
+  const menusRef = useRef(menus);
+  menusRef.current = menus;
+  const openRef = useRef(openMenu);
+  openRef.current = openMenu;
+  const selRef = useRef(selIdx);
+  selRef.current = selIdx;
+  // Alt pressed alone arms the menubar toggle for keyup (Windows convention);
+  // any other key while it's held (Alt+Tab, Alt+F4…) disarms it.
+  const altPending = useRef(false);
+
+  useEffect(() => {
+    const mnemonicOf = (m: MenuDef) => (m.mnemonic ?? m.label[0]).toLowerCase();
+    const openViaKeyboard = (label: string) => {
+      setOpenMenu(label);
+      setSelIdx(0);
+    };
+    const close = () => {
+      setOpenMenu(null);
+      setSelIdx(-1);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const all = menusRef.current;
+      if (e.key === "Alt") {
+        if (!e.repeat) altPending.current = true;
+        e.preventDefault(); // suppress the webview's own Alt handling
+        return;
+      }
+      // AltGr (Ctrl+Alt) types characters on many layouts — leave it alone.
+      if (e.altKey && !e.ctrlKey && e.key.length === 1) {
+        altPending.current = false;
+        const menu = all.find((m) => mnemonicOf(m) === e.key.toLowerCase());
+        if (menu) {
+          e.preventDefault();
+          openViaKeyboard(menu.label);
+        }
+        return;
+      }
+      altPending.current = false;
+      const open = openRef.current;
+      if (!open) return;
+      const idx = all.findIndex((m) => m.label === open);
+      const items = all[idx]?.items ?? [];
+      const steps = items.flatMap((it, i) => (it === "sep" ? [] : [i]));
+      const move = (dir: 1 | -1) => {
+        if (steps.length === 0) return;
+        const pos = steps.indexOf(selRef.current);
+        if (pos < 0) setSelIdx(dir > 0 ? steps[0] : steps[steps.length - 1]);
+        else setSelIdx(steps[(pos + dir + steps.length) % steps.length]);
+      };
+      switch (e.key) {
+        case "ArrowRight":
+          openViaKeyboard(all[(idx + 1) % all.length].label);
+          break;
+        case "ArrowLeft":
+          openViaKeyboard(all[(idx + all.length - 1) % all.length].label);
+          break;
+        case "ArrowDown":
+          move(1);
+          break;
+        case "ArrowUp":
+          move(-1);
+          break;
+        case "Home":
+          setSelIdx(steps[0] ?? -1);
+          break;
+        case "End":
+          setSelIdx(steps[steps.length - 1] ?? -1);
+          break;
+        case "Enter": {
+          const item = items[selRef.current];
+          if (item && item !== "sep") {
+            close();
+            item.run();
+          }
+          break;
+        }
+        default:
+          return; // anything else falls through to the editor
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Alt" && altPending.current) {
+        altPending.current = false;
+        e.preventDefault();
+        if (openRef.current) close();
+        else if (menusRef.current.length > 0) openViaKeyboard(menusRef.current[0].label);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, []);
 
   // While a menu is open: click-away or Esc closes it. App's global Esc
   // handler sees the open dropdown and leaves Esc to us.
@@ -28,7 +150,10 @@ export function MenuBar({ menus, onHide }: MenuBarProps) {
       if (!(e.target as Element).closest(".menubar")) setOpenMenu(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpenMenu(null);
+      if (e.key === "Escape") {
+        setOpenMenu(null);
+        setSelIdx(-1);
+      }
     };
     document.addEventListener("pointerdown", onDown);
     window.addEventListener("keydown", onKey, true);
@@ -49,10 +174,19 @@ export function MenuBar({ menus, onHide }: MenuBarProps) {
             className={openMenu === menu.label ? "menu-btn open" : "menu-btn"}
             // preventDefault keeps editor focus/selection — formatting items need it
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setOpenMenu((o) => (o === menu.label ? null : menu.label))}
-            onPointerEnter={() => setOpenMenu((o) => (o !== null ? menu.label : o))}
+            onClick={() => {
+              setSelIdx(-1);
+              setOpenMenu((o) => (o === menu.label ? null : menu.label));
+            }}
+            onPointerEnter={() => {
+              setOpenMenu((o) => {
+                if (o === null || o === menu.label) return o;
+                setSelIdx(-1);
+                return menu.label;
+              });
+            }}
           >
-            {menu.label}
+            <MnemonicLabel label={menu.label} letter={menu.mnemonic ?? menu.label[0]} />
           </button>
           {openMenu === menu.label && (
             <div className="menu-drop">
@@ -62,10 +196,11 @@ export function MenuBar({ menus, onHide }: MenuBarProps) {
                 ) : (
                   <button
                     key={item.label}
-                    className="menu-item"
+                    className={i === selIdx ? "menu-item selected" : "menu-item"}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       setOpenMenu(null);
+                      setSelIdx(-1);
                       item.run();
                     }}
                   >
@@ -78,16 +213,29 @@ export function MenuBar({ menus, onHide }: MenuBarProps) {
           )}
         </div>
       ))}
+      {/* VSCode-style command center: the search pill sits IN the flex row
+          between two drag regions, so it can never cross the menus — it
+          centers in the leftover space and shrinks (label ellipsizes) first. */}
+      <div className="menubar-drag" data-tauri-drag-region />
+      <button
+        className="menubar-search"
+        title="Search notes and commands (Ctrl+K)"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onSearch}
+      >
+        <span className="search-glyph">{""}</span>
+        <span className="search-label">{searchLabel}</span>
+      </button>
       <div className="menubar-drag" data-tauri-drag-region />
       {/* Segoe Fluent Icons caption glyphs: minimize / maximize / close */}
       <button className="win-btn" title="Minimize" onClick={() => void win.minimize()}>
-        {"\uE921"}
+        {""}
       </button>
       <button className="win-btn" title="Maximize" onClick={() => void win.toggleMaximize()}>
-        {"\uE922"}
+        {""}
       </button>
       <button className="win-btn win-close" title="Hide to tray (Esc)" onClick={onHide}>
-        {"\uE8BB"}
+        {""}
       </button>
     </div>
   );

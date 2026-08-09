@@ -67,7 +67,10 @@ mod desktop {
             }
         }
 
-        let summon = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
+        // Ctrl+Alt+A ("asapnotes", one-handed): Ctrl+Alt+Space went to Claude's
+        // quick prompts, Ctrl/Shift+Space chords collide with editor completion,
+        // and Win-modifier chords proved laggy under repeat (shell intercepts Win).
+        let summon = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyA);
         app.handle().plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -80,7 +83,7 @@ mod desktop {
         // A failed registration (hotkey taken by another app) shouldn't kill the
         // app — the tray still works. Configurable hotkey comes later.
         if let Err(e) = app.global_shortcut().register(summon) {
-            eprintln!("failed to register Ctrl+Alt+Space: {e}");
+            eprintln!("failed to register Ctrl+Alt+A: {e}");
         }
 
         let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
@@ -91,7 +94,7 @@ mod desktop {
         let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
         TrayIconBuilder::with_id("main")
             .icon(tray_icon)
-            .tooltip("asapnotes (Ctrl+Alt+Space)")
+            .tooltip("asapnotes (Ctrl+Alt+A)")
             .menu(&menu)
             .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id().as_ref() {
@@ -125,14 +128,19 @@ fn quit(app: tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             quit,
             notes::list_notes,
             notes::list_projects,
+            notes::search_notes,
             notes::notes_root_path,
             notes::read_note,
+            notes::note_mtime,
             notes::save_note,
             notes::move_note,
+            notes::delete_note,
+            notes::reveal_note,
             notes::list_drafts,
             notes::read_draft,
             notes::write_draft,

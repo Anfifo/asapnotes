@@ -12,16 +12,40 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
-## Tomorrow (2026-08-09)
+## Today (2026-08-09)
 
-- [ ] **Hands-on check of today's work** — (a) `@`-mention dropdown: trigger at line
+- [x] **Quality gates + smoke check of the uncommitted slice** (2026-08-09) — `npm run
+build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launches,
+      summons on Ctrl+Alt+A, and paints the whole new chrome correctly: menubar with
+      mnemonics, centered search pill showing the note name, Chrome-style shrinking tab
+      strip, one-row toolbar with the preview eye pinned left, sectioned explorer
+      (current project / Recent / Notes), status bar (Ln/Col, word count, latency 35 ms
+      dev). Live preview renders sized headings, dim `##` markers, links, inline code,
+      `•` bullets. Screenshot tooling note: capture window bounds via DWM
+      `DWMWA_EXTENDED_FRAME_BOUNDS` (attr 9), **not** `GetWindowRect` — the latter
+      includes Win11's ~7px invisible resize border, so a crop grabs pixels from the
+      window behind and reads as a phantom overflow bug.
+- [ ] **Hands-on check of today's work** — the items below still need a human at the
+      keyboard (feel, dialogs, cancel keys); the smoke check above covers layout only.
+      (a) `@`-mention dropdown: trigger at line
       start/after space, cancel keys (Esc/Backspace suppress, ←/→/space close), inserted
       relative links resolve from deep/external notes; (b) explorer third feedback round
       (chevrons, sectioned levels, lazy project trees, shallow-first startup list);
-      (c) scan flow rooting a new project at `docs/`; (d) Settings ✎ change-folder.
+      (c) scan flow rooting a new project at `docs/`; (d) Settings ✎ change-folder;
+      (e) tier-1 reflex pack: right-click menus (editor/tab/explorer), delete →
+      recycle bin, Alt/mnemonic menubar, Ctrl+H/G, zoom, status bar; (f) titlebar
+      search pill (click → mixed command/note palette, hides when narrow);
+      (g) external-change detection: edit a note in another tool, refocus → clean
+      buffer reloads in place; make it dirty first → Ctrl+S asks before overwriting.
 - [ ] **Repoint existing linked projects at docs/** if wanted — the docs-root rule only
       applies to newly scanned projects; already-linked ones (e.g. this repo) keep their
       old root until changed via Settings ✎.
+- [ ] **Titlebar rename affordance polish** — flip the name-edit pencil to lean the
+      other way, and close the gap so the dotted underline runs continuously under
+      both the note name and the pencil icon. 2026-08-08 implemented: pencil mirrored
+      via `scaleX(-1)`; underline switched from `text-decoration` to a dotted
+      `border-bottom` on `.title` so it spans name + pencil unbroken (hover still
+      darkens both). Pending hands-on check.
 - [ ] **Finish the per-project settings thought** — the spec for "configurable in the
       settings for each project somehow **and** …" was cut off mid-sentence during
       design; whatever followed the "and" is still unstated. Also decide: should the
@@ -29,15 +53,136 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Next
 
+- [ ] **UI conventions review — what VSCode/Notepad have and we don't** (2026-08-08) —
+      backlog from a read-through of the whole UI layer. Deliberately **not** copied:
+      line-number gutter and active-line highlight (code-editor furniture that works
+      against a prose capture surface).
+
+  _Tier 1 ("reflex pack") — implemented 2026-08-08 in one pass, pending hands-on check:_
+
+  - **Context menus** on the editor (undo/redo, cut/copy/paste/select all,
+    find/replace/go-to-line — same list as the new Edit menu), tabs (close / close
+    others / close saved / close all, plus copy path / reveal / delete for saved
+    notes), and explorer rows (open, new note here, rename, copy path, reveal,
+    delete; unsaved drafts get discard-with-confirm instead). Generic
+    `ContextMenu.tsx` reuses the menubar-dropdown look; cut/copy/paste go through
+    the official `clipboard-manager` plugin (native Ctrl+X/C/V untouched).
+  - **Delete note** — new Rust `delete_note`: **recycle bin** (`trash` crate),
+    deliberately never a hard delete; the draft goes with it, the open tab closes,
+    a native confirm runs first. Also reachable from File menu + Ctrl+K palette.
+    `reveal_note` (opener plugin's `reveal_item_in_dir`) backs the Reveal entries.
+  - **Real Edit menu** (undo/redo, clipboard, select all, find/replace/go-to-line);
+    formatting moved to a new **Format** menu (mnemonic O, Notepad-style).
+  - **Ctrl+H** opens find/replace, **Ctrl+G** go-to-line (F3 keeps find-next).
+    **Ctrl+Shift+K went back to VSCode's delete-line** — decision: the muscle-memory
+    reflex beats a rarely-chorded format; code block keeps toolbar/menu/palette.
+  - **Zoom** — Ctrl+scroll / Ctrl+± / Ctrl+0 via `webview.setZoom` (0.5–3.0,
+    persisted in localStorage, reapplied at startup); View menu entries; % readout
+    in the status bar when ≠100.
+  - **Status bar** — Ln/Col, selection size, word count, zoom, and the
+    summon-latency readout's new home (the absolute-positioned corner badge is
+    gone). Editor status flows through a subscription ref, not App state, so
+    keystrokes don't re-render the whole tree.
+  - **Keyboard menubar** — Alt toggles it (on keyup, Windows-style: any other key
+    while Alt is held disarms, so Alt+Tab stays clean), Alt+F/E/O/V/H open menus by
+    underlined mnemonic, arrows navigate across menus and items, Enter runs, Esc
+    closes. AltGr excluded so accented-layout typing is unaffected.
+
+  _Tier 2 — real features, need design:_
+
+  - **Search across all notes** (VSCode Ctrl+Shift+F) — was the biggest capability
+    gap (Ctrl+P fuzzy-matches _filenames_ only). Design agreed and implemented
+    2026-08-09. **Engine: a plain Rust scan, no new dependencies** — chosen over
+    the ripgrep crates (`grep-searcher`/`grep-regex`: real regex and speed on huge
+    trees, but ~40 transitive crates and a slower cold build for power this corpus
+    never needs) and over a persistent index (tantivy/SQLite FTS: rejected — derived
+    state that must be reconciled against the other tools editing these files, which
+    cuts against "markdown files are the contract", plus idle footprint). New
+    `search_notes` reuses the exact corpus `list_notes` walks via a new `note_paths`
+    helper — resolved once instead of per note, since `resolve_note` re-reads the
+    external-project mapping on every call. Case-insensitive literal match, 500-hit
+    cap, files >2 MB skipped, long lines windowed around the match (`excerpt`).
+    **UI: a second view inside the explorer panel** (chosen over a palette mode: a
+    one-line palette row can't show many matches per note). `src/Search.tsx` —
+    debounced 180 ms, ≥2 chars, grouped by note, amber-highlighted matches, results
+    strictly one line each with the full text in the tooltip. Two small buttons
+    (▤ / ⌕) in the explorer header switch views; the tree keeps its expansion state
+    (`hidden`, not unmounted). Ctrl+Shift+F, Ctrl+K "Search in notes", and View menu
+    all reach it; new `EditorHandle.revealLine` does the jump-to-line.
+    Verified live: query runs, counts/grouping/highlighting/one-line rows all
+    correct ("recycle" → 2 results in 1 note). **Not yet eyeballed: click-a-hit →
+    jump to the line** (the machine got busy mid-check). It relies on App's
+    `docKey` effect running after Editor's — child-before-parent ordering, which
+    holds in React 18, but it is reasoning, not an observation.
+    Known limits, all deliberate: literal-only (no regex/whole-word/case toggles
+    yet); a match late in a long line can sit past the ellipsis at narrow panel
+    widths (VSCode has the same behavior — the panel is resizable and the tooltip
+    has the text); a note with an unsaved draft opens from the draft, so a jump can
+    land a few lines off until it's saved.
+  - **External file-change detection** — implemented 2026-08-09, pending hands-on
+    check. Focus-based re-sync (chosen over a filesystem watcher: no idle
+    footprint, and the core flow is "other tool edits while the window is
+    hidden"): new Rust `note_mtime`; the mtime seen at load is remembered per
+    open note. On window focus (summon included) notes/drafts re-list and the
+    open note re-stats — clean buffer + changed file reloads **in place**
+    (`Editor.setDoc`: editor stays mounted, cursor kept, no dirty/draft side
+    effects); dirty buffer keeps editing and Ctrl+S raises a native "changed on
+    disk — overwrite?" confirm (the mtime is also re-checked at every save, so
+    conflicts are caught even without a focus bounce). Known gaps: deletion on
+    disk isn't announced — the named-draft orphan behavior covers it. Two narrow
+    races found in a 2026-08-09 read-through, both one IPC round-trip wide, both
+    unfixed (deliberate — the fix costs more than the exposure until proven
+    otherwise): (1) `trackMtime` nulls `openMtimeRef` synchronously and fills it
+    async, so a Ctrl+S landing in that gap skips the overwrite guard entirely;
+    (2) the focus handler samples `dirtyRef` _before_ `await readNote`, so
+    keystrokes typed during that await are clobbered by the in-place reload.
+    Fix sketch if it ever bites: have both paths re-check the guard condition
+    after the await, not before.
+  - [ ] **Multi-cursor + column select** — `minimalSetup` omits `allowMultipleSelections`,
+        `rectangularSelection`, `crosshairCursor`, so Alt+Click and Alt+Shift+drag do
+        nothing. Ctrl+D works (via `searchKeymap`) but only ever yields one cursor, which
+        is arguably worse than not having it.
+  - [ ] **Tab drag-to-reorder + Ctrl+Shift+T** reopen last closed tab.
+  - [ ] **Split view** — side-by-side notes, or edit ⇄ preview. Low rank: live preview in
+        the buffer already covers most of the need.
+
+  _Tier 3 — polish, mostly cheap:_
+
+  - [ ] **Toasts** — failed moves, rename collisions, failed image pastes and scans are all
+        `console.error` only today, i.e. invisible. One toast surface fixes all of them.
+  - [ ] **Spellcheck** — Win11 Notepad has it; CM's content is contenteditable, so
+        `EditorView.contentAttributes.of({ spellcheck: "true" })` gets native squiggles.
+  - [ ] **Theme selector** (light/dark/system) instead of `prefers-color-scheme` only.
+        Real payoff beyond preference: the note at the top of `livePreview.ts` explains
+        every syntax color had to sit at mid-lightness because a `HighlightStyle` can't
+        follow a media query — a theme class on the root removes that constraint and lets
+        both themes get properly tuned colors.
+  - [ ] **Breadcrumb path** for deep external notes — the tab shows the basename only, so
+        two `README` tabs are indistinguishable.
+  - [ ] **Explorer**: F2 inline rename, drag notes between projects, filter box, keyboard
+        tree navigation, reveal-active-note.
+  - [ ] **Scrollbar search-match markers** + `highlightSelectionMatches`.
+  - [ ] **Ctrl+Shift+P palette alias** + `>` prefix support in Ctrl+P (VSCode muscle memory).
+
+  Suggested next slice: both of the above have landed — the remaining Tier 2
+  items (multi-cursor, tab reorder, split view) are all optional polish, so the
+  next real slice is Tier 3's **toasts**: failed moves, rename collisions,
+  failed image pastes and scans are `console.error` only today, and search now
+  adds another silent failure path.
+
 - [ ] **Global hotkey summon + tray residency** (2026-08-06) — the defining feature. Close
       hides to tray instead of exiting; window pre-created and hidden; global hotkey toggles
       show/hide with focus in the editor; autostart at login. Official plugins:
       `global-shortcut`, `tray-icon`, `autostart`. Measure summon latency — it's the product's
       one number. 2026-08-07: implemented and verified in `tauri dev` — hidden-at-start
-      window, Ctrl+Alt+Space toggle (default; configurable later), tray with Open/Quit +
+      window, global summon toggle (default; configurable later), tray with Open/Quit +
       left-click toggle, close-hides-to-tray, autostart enabled in release builds only.
       Measured summon→paint: **9 ms** (dev build). Remaining: hands-on feel check + a
-      release-build latency number, then promote/close this item.
+      release-build latency number, then promote/close this item. 2026-08-08: hotkey
+      switched Ctrl+Alt+Space → **Ctrl+Alt+A** (via Win+Alt+Space and Ctrl+Alt+N) —
+      Claude's quick prompts took Ctrl+Alt+Space, Ctrl/Shift+Space steal editor
+      completion chords, Win+Alt+Space was laggy under rapid toggling (shell
+      intercepts Win), and N sat too far from the modifiers for one hand.
 - [ ] **Quick-capture editor + notes root** (2026-08-06) — a minimal editor that writes one
       `.md` per note into a configurable notes folder. Capture must work before any
       organization exists. 2026-08-07 design agreed: CodeMirror 6 (markdown mode) as the
@@ -157,6 +302,15 @@ The AI (or anyone) working on this repo keeps this file current while working:
       deep external-project walk following right after (deferred-scan option chosen
       over frontend-only collapse and true scan-on-expand — keeps Ctrl+P palette
       and Recent covering everything). Pending hands-on check.
+      2026-08-08 regression found & fixed: a draft restored (or clicked in Recent)
+      before the deep walk landed was misclassified untitled — the shallow list
+      misses external-project notes, so e.g. a linked CLAUDE.md opened nameless
+      and Ctrl+S would have written a duplicate under a derived name. Fix:
+      `draftName()` — a draft id names its note unless it's an app-generated
+      `untitled-<ts>` id; list membership no longer decides. Deliberate side
+      effect: an orphaned named draft (file deleted externally, e.g. the stray
+      repo-root test.md) keeps its name and Ctrl+S recreates the file, instead
+      of showing "untitled" and saving under a derived name.
 - [ ] **Settings panel** (2026-08-07) — titlebar ⚙ button (right end, with the tool
       buttons) + Ctrl+K "Settings" / "Keyboard shortcuts" commands open a floating
       overlay (`src/Settings.tsx`, palette-style backdrop, Esc/click-away closes):
@@ -196,6 +350,48 @@ The AI (or anyone) working on this repo keeps this file current while working:
       gained a ✎ change-folder button (`set_external_path`). Known trade-offs: scan
       sheet still shows whole-repo note counts; repo-root README/CHANGELOG invisible
       once a project roots at docs/ (chosen deliberately).
+- [ ] **Tabs + consolidated top bar** (2026-08-08) — agreed design (consolidated
+      option chosen over tabs-above-existing-titlebar): tab strip under the menubar
+      (dirty dot, ×, `+`; Ctrl+T new, Ctrl+W close, Ctrl+Tab cycle — Ctrl+T's
+      reservation finally spent); the old titlebar collapsed into one slim
+      always-visible bar (project selector, format buttons inline — the Aa toggle
+      and expandable toolbar row are gone — preview eye right). Note name lives in
+      the tab; rename = double-click the active tab. Tabs persist in localStorage
+      (ids only — the active note loads at startup, others on click, so summon
+      latency is untouched; a tab whose note vanished is dropped at restore).
+      Implemented, pending hands-on check. 2026-08-08 feedback round (bar wrapped
+      to two rows on small windows): the bar is now strictly one row — format
+      buttons scroll sideways behind a 4px scrollbar instead of wrapping — the
+      preview eye moved to the far left so it never scrolls away, and the
+      titlebar project selector was removed (move-to-project lives in Ctrl+K;
+      the "+ New project" input still appears in the bar when invoked).
+      Follow-up idea from the same feedback: make the explorer's current-project
+      header the project selector. Second feedback round: tab strip is now a
+      darker band with the active tab filled in the panel color (VSCode-style)
+      so tabs read distinctly from the toolbar row; and ```lang fences finally
+      look highlighted — the nested parse always worked, but shell-ish modes
+      tag bare commands as plain variableName which had no color, so the code
+      palette in `livePreview.ts` gained variableName/operator/punctuation/
+      meta/regexp entries. (Inline HTML outside fences colors by design —
+      HTML is valid markdown.) Third feedback round: Chrome-style tab sizing —
+      inactive tabs flex-shrink to a 2.6rem sliver before the strip ever pans,
+      the active tab never shrinks, the strip's scrollbar is hidden (pans only
+      when even minimums overflow) with the active tab kept in view via
+      scrollIntoView; hairline separators between adjacent tabs, suppressed
+      next to the active one.
+- [ ] **Titlebar search pill (command center)** (2026-08-09) — requested: a clean
+      VSCode-style search bar centered in the window's top bar mixing files and
+      commands. Implemented same day, pending hands-on check: pill in the menubar's
+      flex row flanked by two drag regions — first version absolute-centered and the
+      menus overlapped it on narrow windows (feedback), so it now lives in the flow
+      where crossing is impossible: it centers in the leftover space, gives up width
+      first (label ellipsizes), the drag slivers keep a minimum grabbable width, and
+      under 560px it hides entirely. Segoe Fluent search glyph + the open note's
+      name as label (doubling as the window title the undecorated window lost);
+      click opens the existing Ctrl+K palette, which already mixes commands and
+      notes. Open question for the hands-on check: should the pill open with notes
+      ranked above commands instead?
+
 - [ ] **MCP sidecar** (2026-08-06) — TypeScript stdio MCP server in this repo exposing
       list/read/write/search over the notes root, so Claude (or any MCP client) can go over
       the notes.

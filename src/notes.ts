@@ -11,11 +11,29 @@ export interface ProjectCandidate {
   md_count: number;
 }
 
+/** Backend caps results here; a full page is the caller's cue to say "first N". */
+export const SEARCH_LIMIT = 500;
+
+/** One matching line; the caller re-finds the query in `text` to highlight it. */
+export interface SearchHit {
+  note: string;
+  /** 1-based. */
+  line: number;
+  text: string;
+}
+
 /** `deep: false` skips external projects — fast root-only list for first paint. */
 export const listNotes = (deep = true) => invoke<FileInfo[]>("list_notes", { deep });
 export const listProjects = () => invoke<string[]>("list_projects");
+/** Case-insensitive literal search over every note's contents. Results stop at
+ * `limit`, so a full result set is the caller's cue to say so. */
+export const searchNotes = (query: string, limit: number = SEARCH_LIMIT) =>
+  invoke<SearchHit[]>("search_notes", { query, limit });
 export const notesRootPath = () => invoke<string>("notes_root_path");
 export const moveNote = (from: string, to: string) => invoke<void>("move_note", { from, to });
+/** Recycle bin, not hard delete; the note's draft goes with it. */
+export const deleteNote = (name: string) => invoke<void>("delete_note", { name });
+export const revealNote = (name: string) => invoke<void>("reveal_note", { name });
 /** Returns the project-base-relative asset path, e.g. "assets/img-123.png".
  * The project rides in a header, so it must survive the ASCII-only rule. */
 export const saveAsset = (bytes: Uint8Array, ext: string, project?: string | null) =>
@@ -25,6 +43,8 @@ export const saveAsset = (bytes: Uint8Array, ext: string, project?: string | nul
 export const importAsset = (src: string, project?: string | null) =>
   invoke<string>("import_asset", { src, project: project ?? null });
 export const readNote = (name: string) => invoke<string>("read_note", { name });
+/** File mtime in ms, null if the file doesn't exist. */
+export const noteMtime = (name: string) => invoke<number | null>("note_mtime", { name });
 export const saveNote = (name: string, content: string) =>
   invoke<void>("save_note", { name, content });
 

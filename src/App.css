@@ -56,8 +56,7 @@ body,
 .app {
   height: 100%;
   display: flex;
-  flex-direction: column; /* menubar on top, everything else below */
-  position: relative; /* the latency readout anchors to this */
+  flex-direction: column; /* menubar on top, panels in the middle, status bar below */
 }
 
 /* The window ground is the menubar's dark chrome (VSCode-style, constant in
@@ -85,6 +84,54 @@ body,
   color: #c8c8c8;
   font-size: 0.8rem;
   user-select: none;
+}
+
+/* VSCode-style command center: a flex item flanked by two drag regions, so it
+   centers in the space the menus leave over and can never overlap them —
+   squeezed, it gives up width and the label ellipsizes. Shows the open note's
+   name (the window's de-facto title); opens the combined command/note palette. */
+.menubar-search {
+  flex: 0 1 24rem;
+  min-width: 0;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 1.45rem;
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 0.72rem;
+  color: #9a9a9a;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menubar-search:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #d6d6d6;
+}
+
+.menubar-search .search-glyph {
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.menubar-search .search-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Too narrow for even a squeezed pill — drop it and give the width back to
+   the drag regions; Ctrl+K and Ctrl+P still cover the function. */
+@media (max-width: 560px) {
+  .menubar-search {
+    display: none;
+  }
 }
 
 .menubar-mark {
@@ -153,9 +200,25 @@ body,
   cursor: default;
 }
 
-.menu-item:hover {
+.menu-item:hover,
+.menu-item.selected {
   background: #4a4a5e;
   color: #ffffff;
+}
+
+/* Alt-mnemonic letters (Alt+F/E/O/V/H) stay subtly underlined. */
+.menu-btn u {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* Right-click menu — the menubar dropdown look, anchored at the pointer. */
+.ctx-menu {
+  position: fixed;
+  top: auto;
+  left: auto;
+  z-index: 60; /* above every overlay, palette included */
+  min-width: 12rem;
 }
 
 .menu-detail {
@@ -164,8 +227,9 @@ body,
 }
 
 .menubar-drag {
-  flex: 1;
-  /* Tauri's drag-region script handles mousedown (move) + dblclick (maximize) */
+  /* Tauri's drag-region script handles mousedown (move) + dblclick (maximize).
+     Never shrinks below a grabbable sliver — the search pill gives way first. */
+  flex: 1 0 1.2rem;
 }
 
 .win-btn {
@@ -343,6 +407,113 @@ body,
   opacity: 0.9;
 }
 
+/* View switcher sits at the bar's left; pin/collapse keep their right end. */
+.explorer-views {
+  display: flex;
+  gap: 0.1rem;
+  margin-right: auto;
+}
+
+.view-btn {
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  color: #7a7a7a;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+}
+
+.view-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: inherit;
+}
+
+.view-btn.open {
+  background: rgba(0, 0, 0, 0.08);
+  color: inherit;
+}
+
+/* Search view — same column layout as the tree it replaces. */
+.search-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.3rem 0.5rem 0.4rem;
+}
+
+.search-input {
+  font: inherit;
+  font-size: 0.82rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.3rem 0.45rem;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 5px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: rgba(217, 154, 6, 0.75);
+}
+
+.search-count {
+  margin: 0.35rem 0 0.2rem;
+  font-size: 0.7rem;
+}
+
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* One row per matching line: line number in a fixed gutter, excerpt after it.
+   Strictly one line each (VSCode-style) — wrapped excerpts run to four or five
+   lines at this panel width, which buries the result count in scroll. The full
+   text is in the row's tooltip, and the panel is resizable. */
+.search-results li {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  padding: 0.12rem 0.25rem;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.search-results li:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.search-line {
+  flex: none;
+  min-width: 2ch;
+  text-align: right;
+  font-size: 0.66rem;
+  color: #8a8a8a;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-text {
+  font-size: 0.76rem;
+  min-width: 0; /* let the flex child shrink so the ellipsis can appear */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-results mark.hit {
+  background: rgba(217, 154, 43, 0.32);
+  color: inherit;
+  border-radius: 2px;
+}
+
 .explorer-body {
   flex: 1;
   overflow-y: auto;
@@ -464,43 +635,119 @@ body,
   user-select: none;
 }
 
-/* Flexible left side of the titlebar: name + dirty dot; the project selector
-   and tool buttons sit to its right and the name ellipsizes when tight. */
-.title-line {
-  flex: 1;
-  min-width: 0;
+/* Tab strip — each open note is a tab; the active one matches the editor.
+   Double-click the active tab to rename (the input renders in place).
+   The strip is a darker band (VSCode-style) and the active tab fills with the
+   panel color, so it visibly connects to the toolbar/editor below. */
+.tabbar {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 2px;
+  padding: 0.35rem 0.5rem 0;
+  overflow-x: auto;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 6px 6px 0 0; /* follows the top-panel rounding */
+  user-select: none;
 }
 
-.title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  flex-shrink: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.tabbar::-webkit-scrollbar {
+  display: none; /* pans invisibly; the active tab is kept in view from React */
+}
+
+.tab {
+  position: relative; /* anchors the ::before separator */
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  /* Chrome-style sizing: inactive tabs squeeze down to a sliver before the
+     strip ever pans; the active tab is exempt (flex-shrink 0 below). */
+  flex: 0 1 auto;
+  min-width: 2.6rem;
+  max-width: 11rem;
+  padding: 0.2rem 0.25rem 0.25rem 0.6rem;
+  border-radius: 5px 5px 0 0; /* flat bottom — the active tab merges downward */
+  font-size: 0.8rem;
+  color: #7a7a7a;
   white-space: nowrap;
   cursor: pointer;
-  text-decoration: underline dotted #9a9a9a;
-  text-underline-offset: 3px;
 }
 
-.title::after {
-  content: "✎";
-  margin-left: 0.35rem;
-  font-size: 0.8em;
+/* Hairline separator between adjacent tabs, hidden next to the active one
+   (Chrome-style) — the active tab's fill is its own boundary. */
+.tab + .tab::before {
+  content: "";
+  position: absolute;
+  left: -1.5px; /* centered in the 2px flex gap */
+  top: 20%;
+  height: 60%;
+  width: 1px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.tab.active::before,
+.tab.active + .tab::before {
+  display: none;
+}
+
+.tab:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.tab.active {
+  background: #f6f6f6; /* the panel color — reads as part of the section below */
+  color: inherit;
+  font-weight: 600;
+  flex-shrink: 0; /* the open note never gives up its label */
+}
+
+.tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close,
+.tab .dirty {
+  flex-shrink: 0;
+}
+
+.tab .title-input {
+  flex: none;
+  width: 8rem;
+  font-size: inherit;
   font-weight: 400;
+}
+
+.tab-close {
+  border: none;
+  background: none;
   color: #9a9a9a;
+  border-radius: 4px;
+  padding: 0 0.25rem;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  cursor: pointer;
 }
 
-.title:hover {
-  text-decoration-color: currentColor;
+.tab-close:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: inherit;
 }
 
-.title:hover::after {
-  color: #6a6a6a;
+.tab-new {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: #7a7a7a;
+  border-radius: 5px;
+  padding: 0 0.4rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.tab-new:hover {
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .title-input {
@@ -523,16 +770,24 @@ body,
   flex-shrink: 0;
 }
 
-/* Summon→paint readout — the product's one number, always in the corner. */
-.latency {
-  position: absolute;
-  right: 0.5rem;
-  bottom: 0.3rem;
-  z-index: 5;
-  font-size: 0.68rem;
-  color: #a3a3a3;
-  pointer-events: none;
+/* Status bar on the dark chrome below the panels: cursor / selection / word
+   count, zoom, and the summon→paint readout (the product's one number). */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  height: 1.4rem;
+  flex-shrink: 0;
+  padding: 0 0.75rem 2px;
+  background: #1a1a1a;
+  color: #9a9a9a;
+  font-size: 0.7rem;
   user-select: none;
+  white-space: nowrap;
+}
+
+.statusbar-spacer {
+  flex: 1;
 }
 
 .editor {
@@ -643,30 +898,17 @@ body,
 
 /* Titlebar controls */
 
-.project-select,
 .project-input {
   font: inherit;
   font-size: 0.72rem;
   color: #7a7a7a;
   background: transparent;
   border: none;
-  padding: 0;
-  max-width: 12rem;
-  /* right-side titlebar item: the title does the shrinking, not this */
-  flex-shrink: 0;
-}
-
-.project-input {
-  width: 9rem;
-}
-
-.project-select {
-  cursor: pointer;
-}
-
-.project-input {
   border-bottom: 1px solid #d5d5d5;
   outline: none;
+  padding: 0;
+  width: 9rem;
+  flex-shrink: 0;
 }
 
 .tool-btn {
@@ -684,6 +926,10 @@ body,
 
 .tool-btn.open {
   background: rgba(0, 0, 0, 0.07);
+}
+
+.titlebar .tool-btn {
+  align-self: center;
 }
 
 /* Settings overlay (File → Settings / Ctrl+K → Settings) — shares the palette backdrop */
@@ -864,20 +1110,27 @@ body,
   padding: 0 0.3rem;
 }
 
-/* Expandable formatting toolbar (Aa toggle) */
+/* Always-on formatting bar — strictly one row; overflow scrolls sideways
+   behind a hairline scrollbar instead of wrapping the bar taller. */
 
-.toolbar {
+.fmt-inline {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.6rem;
-  padding: 0.25rem 0.75rem;
-  border-top: 1px solid #e3e3e3; /* separates it from the titlebar row above */
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
   user-select: none;
+}
+
+.fmt-inline::-webkit-scrollbar {
+  height: 4px;
 }
 
 .toolbar-group {
   display: flex;
+  flex-shrink: 0;
   gap: 0.15rem;
 }
 
@@ -886,7 +1139,7 @@ body,
   padding-left: 0.6rem;
 }
 
-.toolbar button {
+.fmt-inline button {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 0.8rem;
   color: inherit;
@@ -897,15 +1150,15 @@ body,
   cursor: pointer;
 }
 
-.toolbar button:hover {
+.fmt-inline button:hover {
   background: rgba(0, 0, 0, 0.07);
 }
 
-.toolbar .fmt-bold {
+.fmt-inline .fmt-bold {
   font-weight: 700;
 }
 
-.toolbar .fmt-italic {
+.fmt-inline .fmt-italic {
   font-style: italic;
 }
 
@@ -914,6 +1167,7 @@ body,
 .palette-backdrop {
   position: fixed;
   inset: 0;
+  z-index: 30; /* above the explorer resize handle (5) and floating explorer (20) */
   background: rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(2px);
   display: flex;
@@ -1051,8 +1305,32 @@ body,
     background: #2f2f2f;
   }
 
-  .toolbar {
-    border-top-color: #444444;
+  .tabbar {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .tab {
+    color: #9a9a9a;
+  }
+
+  .tab + .tab::before {
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  .tab:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  .tab.active {
+    background: #2f2f2f; /* dark panel color */
+  }
+
+  .tab-close:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .tab-new:hover {
+    background: rgba(255, 255, 255, 0.1);
   }
 
   .settings-remove:hover {
@@ -1070,9 +1348,32 @@ body,
 
   .pin-btn:hover,
   .collapse-btn:hover,
+  .view-btn:hover,
+  .search-results li:hover,
   .explorer li:hover,
   .explorer summary:hover {
     background: rgba(255, 255, 255, 0.1);
+  }
+
+  .view-btn {
+    color: #9a9a9a;
+  }
+
+  .view-btn.open {
+    background: rgba(255, 255, 255, 0.14);
+  }
+
+  .search-input {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .search-line {
+    color: #7d7d7d;
+  }
+
+  .search-results mark.hit {
+    background: rgba(217, 154, 6, 0.42);
   }
 
   .pin-btn.pinned {
@@ -1186,7 +1487,6 @@ body,
     color: #b0b0b0;
   }
 
-  .project-select,
   .project-input {
     color: #9a9a9a;
   }
@@ -1194,14 +1494,6 @@ body,
   .project-input,
   .title-input {
     border-bottom-color: #4a4a4a;
-  }
-
-  .title:hover::after {
-    color: #c5c5c5;
-  }
-
-  .project-select option {
-    background: #383838;
   }
 
   .tool-btn {
@@ -1246,7 +1538,7 @@ body,
     border-left-color: #444444;
   }
 
-  .toolbar button:hover {
+  .fmt-inline button:hover {
     background: rgba(255, 255, 255, 0.1);
   }
 }

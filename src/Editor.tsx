@@ -1,8 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { EditorSelection, EditorState, Prec } from "@codemirror/state";
-import { indentWithTab, redo } from "@codemirror/commands";
-import { searchKeymap } from "@codemirror/search";
+import { indentWithTab, redo, selectAll, undo } from "@codemirror/commands";
+import { gotoLine, openSearchPanel, searchKeymap } from "@codemirror/search";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { minimalSetup } from "codemirror";
@@ -22,11 +23,31 @@ export type FormatKind =
   | "quote"
   | "link";
 
+/** Editing verbs the menus and context menus drive from outside. */
+export type EditorCommand =
+  "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll" | "find" | "replace" | "gotoLine";
+
+export interface EditorStatus {
+  line: number;
+  col: number;
+  /** Characters covered by the selection (0 = plain cursor). */
+  selected: number;
+  words: number;
+}
+
 export interface EditorHandle {
   focus: () => void;
   applyFormat: (kind: FormatKind) => void;
+  exec: (cmd: EditorCommand) => void;
   /** Insert text at the cursor (used for image links from drag-drop). */
   insertText: (text: string) => void;
+  /** Replace the whole document in place (external-change reload): keeps the
+   * editor mounted, clamps the cursor, and does NOT fire onChange — a reload
+   * must not mark the buffer dirty or spawn a draft. */
+  setDoc: (text: string) => void;
+  /** Put the cursor at the start of `line` (1-based) and scroll it into view —
+   * the jump-to behind a search result. */
+  revealLine: (line: number) => void;
 }
 
 interface EditorProps {
@@ -42,6 +63,8 @@ interface EditorProps {
   mentionItems: MentionItem[];
   /** Markdown link inserted when a mention is accepted. */
   mentionLink: (id: string) => string;
+  /** Cursor / selection / word-count updates for the status bar. */
+  onStatus?: (status: EditorStatus) => void;
   /** Hide instead of unmounting (preview mode) so undo history survives. */
   hidden?: boolean;
 }
@@ -169,6 +192,73 @@ function applyFormat(view: EditorView, kind: FormatKind): boolean {
   }
 }
 
+/** Copy the selected text (multi-range joins with newlines); empty selection
+ * copies nothing. Returns the text so `cut` can reuse it. */
+async function copySelection(view: EditorView): Promise<string | null> {
+  const { state } = view;
+  const text = state.selection.ranges
+    .filter((r) => !r.empty)
+    .map((r) => state.sliceDoc(r.from, r.to))
+    .join("\n");
+  if (!text) return null;
+  await writeText(text);
+  return text;
+}
+
+async function cutSelection(view: EditorView) {
+  if ((await copySelection(view)) === null) return;
+  view.dispatch(view.state.replaceSelection(""), {
+    scrollIntoView: true,
+    userEvent: "delete.cut",
+  });
+}
+
+/** Menu-driven paste — native Ctrl+V never reaches this path. */
+async function pasteClipboard(view: EditorView) {
+  try {
+    const text = await readText();
+    if (!text) return;
+    view.dispatch(view.state.replaceSelection(text), {
+      scrollIntoView: true,
+      userEvent: "input.paste",
+    });
+  } catch {
+    // Empty or non-text clipboard rejects — nothing to paste.
+  }
+}
+
+function execCommand(view: EditorView, cmd: EditorCommand) {
+  switch (cmd) {
+    case "undo":
+      return void undo(view);
+    case "redo":
+      return void redo(view);
+    case "cut":
+      return void cutSelection(view);
+    case "copy":
+      return void copySelection(view);
+    case "paste":
+      return void pasteClipboard(view);
+    case "selectAll":
+      return void selectAll(view);
+    // The search panel carries the replace row too, so both verbs open it.
+    case "find":
+    case "replace":
+      return void openSearchPanel(view);
+    case "gotoLine":
+      return void gotoLine(view);
+  }
+}
+
+const WORD = /\S+/g;
+
+function editorStatus(state: EditorState, words: number): EditorStatus {
+  const head = state.selection.main.head;
+  const line = state.doc.lineAt(head);
+  const selected = state.selection.ranges.reduce((n, r) => n + (r.to - r.from), 0);
+  return { line: line.number, col: head - line.from + 1, selected, words };
+}
+
 function insertAtCursor(view: EditorView, text: string) {
   const { to } = view.state.selection.main;
   view.dispatch({
@@ -180,11 +270,23 @@ function insertAtCursor(view: EditorView, text: string) {
 }
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  { docKey, initialDoc, onChange, onPasteImage, resolveImage, mentionItems, mentionLink, hidden },
+  {
+    docKey,
+    initialDoc,
+    onChange,
+    onPasteImage,
+    resolveImage,
+    mentionItems,
+    mentionLink,
+    onStatus,
+    hidden,
+  },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // True while setDoc rewrites the buffer — the update listener skips onChange.
+  const syncingRef = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onPasteImageRef = useRef(onPasteImage);
@@ -195,6 +297,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   mentionItemsRef.current = mentionItems;
   const mentionLinkRef = useRef(mentionLink);
   mentionLinkRef.current = mentionLink;
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
   const initialDocRef = useRef(initialDoc);
   initialDocRef.current = initialDoc;
 
@@ -208,10 +312,36 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         applyFormat(view, kind);
         view.focus();
       },
+      exec: (cmd: EditorCommand) => {
+        const view = viewRef.current;
+        if (!view) return;
+        execCommand(view, cmd);
+        view.focus();
+      },
       insertText: (text: string) => {
         const view = viewRef.current;
         if (!view) return;
         insertAtCursor(view, text);
+        view.focus();
+      },
+      setDoc: (text: string) => {
+        const view = viewRef.current;
+        if (!view || view.state.doc.toString() === text) return;
+        syncingRef.current = true;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: text },
+          selection: { anchor: Math.min(view.state.selection.main.head, text.length) },
+        });
+        syncingRef.current = false;
+      },
+      revealLine: (line: number) => {
+        const view = viewRef.current;
+        if (!view) return;
+        const { from } = view.state.doc.line(Math.min(Math.max(line, 1), view.state.doc.lines));
+        view.dispatch({
+          selection: { anchor: from },
+          effects: EditorView.scrollIntoView(from, { y: "center" }),
+        });
         view.focus();
       },
     }),
@@ -219,6 +349,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   );
 
   useEffect(() => {
+    const wordsRef = { current: (initialDocRef.current.match(WORD) ?? []).length };
     const view = new EditorView({
       state: EditorState.create({
         doc: initialDocRef.current,
@@ -242,13 +373,18 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               { key: "Mod-2", run: (v) => applyFormat(v, "h2") },
               { key: "Mod-3", run: (v) => applyFormat(v, "h3") },
               { key: "Mod-Shift-c", run: (v) => applyFormat(v, "code") },
-              { key: "Mod-Shift-k", run: (v) => applyFormat(v, "codeblock") },
+              // Ctrl+Shift+K stays VSCode's delete-line (defaultKeymap); the
+              // code-block format lives on the toolbar / menu / palette only.
               // Docs/Word convention for lists; quote continues the row.
               { key: "Mod-Shift-8", run: (v) => applyFormat(v, "bullet") },
               { key: "Mod-Shift-7", run: (v) => applyFormat(v, "numbered") },
               { key: "Mod-Shift-9", run: (v) => applyFormat(v, "quote") },
               // Ctrl+K (the usual link binding) is the command palette.
               { key: "Mod-Shift-l", run: (v) => applyFormat(v, "link") },
+              // Windows-standard replace / go-to-line; searchKeymap's own
+              // Mod-g (find next) loses to these — F3 still covers it.
+              { key: "Mod-h", run: openSearchPanel },
+              { key: "Mod-g", run: gotoLine },
             ]),
           ),
           // minimalSetup already binds undo (Mod-z) and redo (Mod-y); this adds
@@ -270,7 +406,15 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             },
           }),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+            if (update.docChanged) {
+              const text = update.state.doc.toString();
+              if (!syncingRef.current) onChangeRef.current(text);
+              // Recount words only when the doc changed — cursor moves reuse it.
+              wordsRef.current = (text.match(WORD) ?? []).length;
+            }
+            if (update.docChanged || update.selectionSet) {
+              onStatusRef.current?.(editorStatus(update.state, wordsRef.current));
+            }
           }),
         ],
       }),
@@ -278,6 +422,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     });
     viewRef.current = view;
     view.focus();
+    onStatusRef.current?.(editorStatus(view.state, wordsRef.current));
     return () => {
       view.destroy();
       viewRef.current = null;

@@ -36,6 +36,13 @@ interface ExplorerProps {
   currentProject: string | null;
   openId: string | null;
   onSelect: (id: string, isNote: boolean) => void;
+  /** Right-click on a note/draft row — App shows the context menu. */
+  onContext: (e: React.MouseEvent, id: string, isNote: boolean) => void;
+  /** Which of the panel's two views is showing. */
+  view: "files" | "search";
+  onViewChange: (view: "files" | "search") => void;
+  /** Rendered in place of the file tree while `view` is "search". */
+  searchSlot: ReactNode;
   /** Docked beside the editor (true) vs floating over it. */
   pinned: boolean;
   onTogglePin: () => void;
@@ -55,6 +62,10 @@ export function Explorer({
   currentProject,
   openId,
   onSelect,
+  onContext,
+  view,
+  onViewChange,
+  searchSlot,
   pinned,
   onTogglePin,
   onCollapse,
@@ -88,6 +99,7 @@ export function Explorer({
       key={id}
       className={id === openId ? "current" : undefined}
       onClick={() => onSelect(id, noteNames.has(id))}
+      onContextMenu={(e) => onContext(e, id, noteNames.has(id))}
     >
       <span className="explorer-name">{fileOf(id).replace(/\.md$/, "")}</span>
       {showProject && projectOf(id) && <span className="explorer-detail">{projectOf(id)}</span>}
@@ -130,6 +142,22 @@ export function Explorer({
   return (
     <nav className={pinned ? "explorer" : "explorer floating"} style={{ width }}>
       <header className="explorer-bar">
+        <div className="explorer-views">
+          <button
+            className={view === "files" ? "view-btn open" : "view-btn"}
+            title="Files"
+            onClick={() => onViewChange("files")}
+          >
+            ▤
+          </button>
+          <button
+            className={view === "search" ? "view-btn open" : "view-btn"}
+            title="Search in notes (Ctrl+Shift+F)"
+            onClick={() => onViewChange("search")}
+          >
+            ⌕
+          </button>
+        </div>
         <button
           className={pinned ? "pin-btn pinned" : "pin-btn"}
           title={pinned ? "Unpin — float over the editor" : "Pin — dock beside the editor"}
@@ -145,7 +173,8 @@ export function Explorer({
           «
         </button>
       </header>
-      <div className="explorer-body">
+      {view === "search" && searchSlot}
+      <div className="explorer-body" hidden={view === "search"}>
         {currentProject && (
           <section>
             <h2>{currentProject}</h2>
