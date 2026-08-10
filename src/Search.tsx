@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { searchNotes, SearchHit, SEARCH_LIMIT } from "./notes";
+import { errText } from "./toasts";
 import { fileOf, projectOf } from "./paths";
 
 /** Debounce: long enough that typing a word is one scan, short enough to feel live. */
@@ -49,17 +50,23 @@ interface SearchViewProps {
   focusToken: number;
   /** Open a note and put the cursor on `line`. */
   onOpenHit: (note: string, line: number) => void;
+  /** Surface a failed scan — otherwise it reads as "no results". */
+  onError: (message: string) => void;
 }
 
-/** Content search across every note (Ctrl+Shift+F), VSCode-style: query box on
+/** Content search across every note (Ctrl+Shift+F): query box on
  * top, matches grouped under the note they live in. */
-export function SearchView({ focusToken, onOpenHit }: SearchViewProps) {
+export function SearchView({ focusToken, onOpenHit, onError }: SearchViewProps) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // Only the newest scan may write state — a slow one must not overwrite it.
   const runRef = useRef(0);
+  // Held in a ref, not an effect dep: App passes a fresh arrow every render,
+  // and a dep on it would reset the debounce timer on unrelated re-renders.
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -84,10 +91,11 @@ export function SearchView({ focusToken, onOpenHit }: SearchViewProps) {
             setBusy(false);
           }
         })
-        .catch(() => {
+        .catch((err: unknown) => {
           if (runRef.current === run) {
             setHits([]);
             setBusy(false);
+            onErrorRef.current(errText(err));
           }
         });
     }, DEBOUNCE_MS);

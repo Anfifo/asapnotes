@@ -14,6 +14,110 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Today (2026-08-09)
 
+- [ ] **Explorer: easier creation, wider resize, context menus everywhere**
+      (2026-08-09) — three panel gripes designed and implemented in one pass,
+      pending hands-on check. (a) **Name-first inline creation** (chosen over
+      keeping untitled tabs): hover-revealed `+` on every section/project/folder
+      heading (plus one in the panel header bar) opens an inline input row where
+      the file will land — Enter writes the (empty) file immediately and opens
+      it; Esc/blur cancels; a typed allowlisted extension sticks, else `.md`;
+      collision and invalid-name guards toast. Ctrl+N / tab `+` stay
+      capture-first — only explorer-driven creation names first. (b) **Resize**:
+      the 480px hard cap is gone; the drag now ranges to `window − 280px`
+      (docked; floating gets `window − 48px`), and since the drag can no longer
+      cross the auto-collapse threshold, only an actual window shrink collapses
+      the panel (chosen over deleting auto-collapse entirely). (c) **Context
+      menus**: empty panel body (new note / new project / scan folder…) and
+      project+folder headings (new note here / copy path); row menus' "New note
+      here" now triggers inline creation next to that note. `openContextMenu`
+      stops propagation so nested targets resolve innermost-first. Deliberately
+      deferred: project rename (needs folder-move backend), Reveal on
+      directories (`reveal_note` only resolves note ids), collapse-all (nested
+      folder `<details>` are uncontrolled). Known wrinkle: a folder auto-opened
+      to host the create row closes again after creation (React drops the
+      forced `open` attr) — reveal-active-note (Tier 3) is the real fix.
+- [ ] **Per-project file config ("virtual folders") + new-project location**
+      (2026-08-09) — decided: **design-doc only for now**, folded into the
+      workspace/project-model design item below; no code yet (it shapes sync
+      and MCP scope). The idea: (a) creating a project asks where it lives
+      (notes root vs. picked directory — today silently a root subfolder,
+      external only via scan); (b) projects get a config of which files are
+      in/out — a virtual grouping so notes can attach to a project **without
+      living in its repository**. Payoff: team-syncable project notes that
+      never enter the repo (pairs with the cloud-sync direction). Likely the
+      continuation of the cut-off "per-project settings somehow and…" thought.
+      2026-08-09 addition: the explorer should **color these virtual entries
+      differently** — files/folders shown under a project but not physically
+      living in its tree must read distinctly from what's really there.
+
+- [ ] **Settings rework: menubar entry, theme, file-type config, per-project config**
+      (2026-08-09) — captured design intent, needs design before code. (a) **Settings
+      moves to the top**: its own menubar entry; Help probably stops being a top-level
+      menu and folds into Settings. (b) **Theme selector** (light/dark) lives here —
+      this is the home for the Tier 3 theme-selector item. (c) **App-level file-type
+      config**: which extensions count as notes (today hardcoded in
+      `NOTE_EXTS`/`hasNoteExt`), plus optional per-type color/highlight in the
+      explorer; editable in the UI **and** as a plain JSON settings file (and via MCP
+      later). (d) **Per-project settings**, optionally loaded from a JSON config file
+      in the project, including **exclusions in `.gitignore` pattern syntax**; ship a
+      default exclusion set that effectively excludes everything unsupported, which a
+      project config can override — so a project could pull code files back in even
+      though they're outside the default allowlist. Leaning on defaults: keep the
+      usual `.md`/plain-text set; JSON and other non-text formats stay excluded
+      unless someone opts them in. Overlaps the virtual-folders item above and the
+      workspace/project-model design doc — the per-project config file is likely
+      the same file; design them together.
+- [ ] **Ctrl+Click links in every editor** (2026-08-09) — agreed design (Ctrl+Click
+      chosen over plain click — plain click must keep placing the cursor): new CM
+      extension `src/links.ts`, active in markdown and plain-text editors alike.
+      Recognized: bare `http(s)://`/`mailto:` URLs and absolute Windows paths
+      (regex over visible ranges, trailing prose punctuation trimmed), plus
+      markdown link destinations via the syntax tree (relative @-mention links
+      included; image URLs excluded). Holding Ctrl underlines targets + pointer
+      cursor (window-level key listeners toggle `cm-ctrl` on the editor).
+      Resolution in App's `openLink`: URLs → new Rust `open_external` (validated:
+      http/https/mailto only); relative paths resolve against the note's dir; a
+      path landing in the notes root or a linked project with a note extension
+      opens **in-app** as a tab (`noteIdOf` inverse-maps abs path → id); other
+      existing absolute paths open with their OS default app — **except
+      executable types** (`EXEC_EXTS` in notes.rs: exe/bat/cmd/ps1/vbs/lnk/…),
+      which are revealed in Explorer instead so note text can never launch a
+      program. Deliberately not clickable: bare `note.md` names without a path
+      (guessing is worse than nothing), `www.` without scheme, UNC paths.
+      Failures are `console.error` only — flagged for the in-progress toasts
+      sweep. Gates clean; pending hands-on check (underline-on-Ctrl feel, a URL,
+      a relative md link to a note, an absolute path to a non-note file).
+- [ ] **Toolbar tooltips + stroke icons** (2026-08-09) — feedback: native `title` hints
+      too slow (~1–2 s, OS-fixed), symbolic glyphs (` ``` `, `❝`, color-emoji `🔗`)
+      unclear, `<>` cramped. Candidate sheet → picked 300 ms custom tooltip + stroke
+      icons. Implemented: shared `Tooltip.tsx` (one fixed-position div, delegated
+      `data-tip` listener — fixed because `.fmt-inline` is a scroll container that
+      would clip a CSS bubble); the six symbolic format buttons are now inline
+      Lucide-style SVGs (`currentColor`, letters stay letters); buttons keep
+      `aria-label` since SVG buttons have no text content. Toolbar + preview eye
+      converted; **other `title=` sites (tabs, explorer, status bar, search) still
+      native** — mechanical follow-up: swap `title` → `data-tip` per site. Gates
+      clean. 2026-08-09 visual check done (summon + PrintWindow capture — the
+      window sat behind VS Code, so screen capture alone showed the wrong thing):
+      all six stroke icons render crisp and theme-correct in dark, chevrons have
+      air, color-emoji link gone. Still pending hands-on: tooltip position/delay
+      feel (needs a real hover) and light theme.
+
+- [ ] **Plain-text note formats beyond .md** (2026-08-09) — agreed design (extension
+      allowlist chosen over content-sniffing and over waiting for external-file
+      mappings): `NOTE_EXTS` in `notes.rs` / `hasNoteExt` in `paths.ts` (kept in
+      sync) — md, txt, text, tex, log, csv, json, yaml, yml, ini, cfg, toml, xml.
+      All are listed, opened, searched, drafted, renamed; only `.md` gets markdown
+      features (live styling, Ctrl+E preview, @-mentions, formatting, image paste) —
+      others open as a bare text editor with those affordances hidden (toolbar,
+      Format menu, preview eye/commands). Creation stays .md (capture untouched);
+      non-md files arrive from disk, or via rename typing an allowlisted extension
+      (renaming preserves a non-md extension; a rename crossing the md boundary
+      rebuilds the editor so its extensions match). Display shows non-md extensions
+      (`todo.txt`) since the UI only ever stripped `.md`. Gates all clean; pending
+      hands-on check (open a .txt from an external project, confirm bare editor +
+      hidden md chrome). Candidate for a decisions/ entry once eyeballed — it
+      softens "markdown files are the store" to "plain text files are the store".
 - [x] **Quality gates + smoke check of the uncommitted slice** (2026-08-09) — `npm run
 build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launches,
       summons on Ctrl+Alt+A, and paints the whole new chrome correctly: menubar with
@@ -46,10 +150,10 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       via `scaleX(-1)`; underline switched from `text-decoration` to a dotted
       `border-bottom` on `.title` so it spans name + pencil unbroken (hover still
       darkens both). Pending hands-on check.
-- [ ] **Finish the per-project settings thought** — the spec for "configurable in the
-      settings for each project somehow **and** …" was cut off mid-sentence during
-      design; whatever followed the "and" is still unstated. Also decide: should the
-      scan sheet's note counts reflect the docs/ subtree instead of the whole repo?
+- [ ] **Scan sheet note counts** — decide: should the scan sheet's note counts reflect
+      the docs/ subtree instead of the whole repo? (The other half of this item — the
+      cut-off "per-project settings somehow and…" spec — is now captured in the
+      settings-rework item above.)
 
 ## Next
 
@@ -148,8 +252,27 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
 
   _Tier 3 — polish, mostly cheap:_
 
-  - [ ] **Toasts** — failed moves, rename collisions, failed image pastes and scans are all
-        `console.error` only today, i.e. invisible. One toast surface fixes all of them.
+  - **Toasts** — implemented 2026-08-09, pending hands-on check. Every failure the
+    app had was `console.error` only, i.e. invisible; all nine sites now raise a
+    toast instead (move, image paste, image drop, scan, change-folder, rename
+    collision, rename, delete, reveal) plus a tenth that was newly silent —
+    a failed search scan, which otherwise read as "no results". Bottom-right
+    stack above the status bar, newest at the bottom, click to dismiss, errors
+    linger 6 s and info 3 s, oldest dropped past four so a failure loop can't
+    build a wall. **A plain hook, not a context provider** (`useToasts` in
+    `src/toasts.ts`, `ToastStack` in `src/Toast.tsx` — split so the `.tsx` file
+    only exports a component, which is what react-refresh wants): every call
+    site already lives in `App`, so a provider would have bought nothing but
+    indirection. `errText` normalizes what a rejected Tauri command throws —
+    those reject with a plain string, not an `Error`. `SearchView` takes the
+    error callback through a ref rather than an effect dep, since App passes a
+    fresh arrow each render and a dep would reset the debounce timer on
+    unrelated re-renders. Gates all clean.
+    **Not visually verified.** The only deterministic trigger is a rename
+    collision, and driving that with synthetic keys risks a real rename of a
+    real note if a keystroke drops (which happened once this session), so it
+    was left for a human: rename any note to the name of another note in the
+    same project — the guard fires before anything touches disk.
   - [ ] **Spellcheck** — Win11 Notepad has it; CM's content is contenteditable, so
         `EditorView.contentAttributes.of({ spellcheck: "true" })` gets native squiggles.
   - [ ] **Theme selector** (light/dark/system) instead of `prefers-color-scheme` only.
@@ -164,11 +287,13 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
   - [ ] **Scrollbar search-match markers** + `highlightSelectionMatches`.
   - [ ] **Ctrl+Shift+P palette alias** + `>` prefix support in Ctrl+P (VSCode muscle memory).
 
-  Suggested next slice: both of the above have landed — the remaining Tier 2
-  items (multi-cursor, tab reorder, split view) are all optional polish, so the
-  next real slice is Tier 3's **toasts**: failed moves, rename collisions,
-  failed image pastes and scans are `console.error` only today, and search now
-  adds another silent failure path.
+  Suggested next slice: search, external-change detection and toasts have all
+  landed, and the remaining Tier 2 items (multi-cursor, tab reorder, split view)
+  are optional polish. The best-value item left is Tier 3's **theme selector** —
+  it isn't only preference: the note atop `livePreview.ts` explains every syntax
+  colour had to sit at mid-lightness because a `HighlightStyle` can't follow a
+  media query, so a theme class on the root is what unblocks properly tuned
+  colours in both themes.
 
 - [ ] **Global hotkey summon + tray residency** (2026-08-06) — the defining feature. Close
       hides to tray instead of exiting; window pre-created and hidden; global hotkey toggles
@@ -392,18 +517,88 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       notes. Open question for the hands-on check: should the pill open with notes
       ranked above commands instead?
 
+- [ ] **Prepare repo for going public** (2026-08-09) — audit everything committed for
+      internal-only content before flipping visibility. Decided: docs stay in the
+      repo, but "like <product>" comparisons get scrubbed. 2026-08-09 sweep done:
+      **code comments cleaned** (~25 product references across `src/` +
+      `src-tauri/` rewritten to describe the behavior itself, rationale kept;
+      Segoe glyph names like `ChromeMinimize` kept — they're the API's own names).
+      **Docs still pending a scrub decision**: ~44 references across
+      `docs/TODO.md` (~30), `docs/branding.md` (9 — it's a competitor analysis
+      _by design_, so scrubbing guts it: keep it out of the public repo, or accept
+      it), `docs/decisions/` + READMEs (rest). **History**: every substantive
+      commit carries these in docs, so scrubbing files can't clean it — publish a
+      fresh-history repo (squash to one clean initial commit, full history stays
+      on a private remote). Also: delete stray repo-root `test.md`.
 - [ ] **MCP sidecar** (2026-08-06) — TypeScript stdio MCP server in this repo exposing
-      list/read/write/search over the notes root, so Claude (or any MCP client) can go over
-      the notes.
+      list/read/write/search over the notes root, so any MCP client can go over
+      the notes. 2026-08-09 direction agreed: (a) **access scope as a setting** —
+      which projects the MCP can see (default: notes root only; per-linked-project
+      opt-in); (b) **token economy is structural, not a new serialization** —
+      decided against a compact AI write/read format (markdown is already what
+      LLMs handle best; stripping markers saves little and loses structure).
+      Instead: outline/TOC-level listing, section-level reads ("give me
+      `## Decisions` of note X"), section-targeted writes/appends (saves write
+      tokens and avoids clobbering concurrent edits), search returning excerpts;
+      (c) **teach the AI our docs pattern** — align the `docs/TODO.md` +
+      `docs/decisions/` convention loosely with the ADR/MADR standards
+      (Status / Context / Decision / Consequences fields, superseded-by links),
+      and have the MCP surface the convention so agents can both navigate it
+      (find the decision that answers "why is it like this?") and follow it
+      (append TODO items, draft decision entries) in any project using the
+      pattern. Next concrete step: short design doc for the tool surface.
 - [ ] **Workspace/project model — design doc first** (2026-08-06) — grouping levels user →
       project → notes (Postman-like), including _mappings_ to files that live outside the
       notes root (VS Code-like "open anything"). Shapes storage and future cloud sync — design
-      before code. See
+      before code. 2026-08-09: scope grew to cover **per-project file config /
+      "virtual folders"** and the new-project location question (see the Today
+      item) — decided design-doc-first there too. See
       [decisions/2026-08-06-markdown-files-are-the-store.md](decisions/2026-08-06-markdown-files-are-the-store.md).
 
 ## Pending / future direction
 
 - [ ] **Cloud share + live collaboration** on a group of notes — direction, not scheduled.
       Keep storage decisions compatible: files stay primary, sync layers on top.
-- [ ] **Installer polish + auto-update**; other platforms (and mobile) after Windows is
-      solid. The settings About section already shows auto-update as "planned".
+      2026-08-09 sketch: host under **asapnotes.anfifo.com** (subdomain of the
+      existing site). Phase 1 = end-to-end-encrypted file share (encrypt client-side;
+      key travels in the URL fragment so the server never sees it); phase 2 = sync,
+      noting E2EE sync is a much harder problem (conflict resolution over content the
+      server can't read). Syncing an existing project requires **explicit per-project
+      opt-in** — nothing leaves the machine by default. File-size limits from day one.
+- [ ] **Windows installer — double-click install for non-technical users** (2026-08-09):
+      `tauri build` already emits an NSIS `…-setup.exe`; the work is making it
+      genuinely noob-proof. (a) **Per-user NSIS install** — no admin prompt,
+      lands in `%LOCALAPPDATA%`, standard uninstall entry in "Installed apps";
+      (b) **autostart on by default** — already implemented (`tauri-plugin-autostart`
+      enabled in release builds, registry Run entry, app starts hidden at login);
+      keep that default, expose an off-switch in Settings; (c) **uninstaller must
+      remove the Run entry** — the plugin writes it at runtime, outside the
+      installer manifest, so plain uninstall leaves a dangling autostart (NSIS
+      uninstall hook); (d) **code signing** — unsigned setup.exe hits the
+      SmartScreen "unrecognized app" wall; plan: Azure Trusted Signing (~$10/mo,
+      Tauri bundler integrates). Later, same track: `tauri-plugin-updater`
+      auto-update (static JSON manifest + installer — could live on
+      asapnotes.anfifo.com), GitHub Releases + winget as channels. Other
+      platforms (and mobile) after Windows is solid. The settings About section
+      already shows auto-update as "planned". Update *policy* — the consent
+      model, the settings, the 7-day prompt — is its own item below.
+- [ ] **Update settings + no-unrequested-network policy** (2026-08-09) — the app
+      must never open a connection the user didn't ask for: no telemetry, no
+      analytics, no silent phone-home, no update ping before consent. Open-source
+      and down-to-earth is the product stance, and an always-resident tray app is
+      exactly where users are right to be suspicious. Settings gains an **Updates**
+      section: (a) **"Check for updates" button** — connects only on click, always
+      available, the escape hatch that makes every other default safe to leave off;
+      (b) **auto-update toggle** — when on, checks on a throttle (proposal: at most
+      once every 7 days, never per-launch) and never installs without asking;
+      (c) **one-time consent prompt ~7 days after install** — deliberately *not* at
+      first run (that's install-ceremony noise nobody reads, and consent given to
+      dismiss a dialog isn't consent): after a week of real use, ask once whether to
+      enable update checks, remember the answer, never ask again. Until answered,
+      the state is off — zero connections. **Ambiguity flagged from the 2026-08-09
+      request:** "7 days after the installer" was read as the deferred consent prompt
+      in (c); it could instead have meant the throttle interval in (b) — both are
+      written down, confirm which was meant (they compose fine, so possibly both).
+      Related open question: does the update check hit asapnotes.anfifo.com or
+      GitHub Releases directly — the latter means no server of ours ever sees a
+      user's IP, which fits the stance better.

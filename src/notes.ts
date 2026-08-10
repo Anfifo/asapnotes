@@ -34,6 +34,9 @@ export const moveNote = (from: string, to: string) => invoke<void>("move_note", 
 /** Recycle bin, not hard delete; the note's draft goes with it. */
 export const deleteNote = (name: string) => invoke<void>("delete_note", { name });
 export const revealNote = (name: string) => invoke<void>("reveal_note", { name });
+/** Ctrl+Clicked link target: URL → default handler; existing absolute path →
+ * default app (executables revealed in Explorer instead, never run). */
+export const openExternal = (target: string) => invoke<void>("open_external", { target });
 /** Returns the project-base-relative asset path, e.g. "assets/img-123.png".
  * The project rides in a header, so it must survive the ASCII-only rule. */
 export const saveAsset = (bytes: Uint8Array, ext: string, project?: string | null) =>

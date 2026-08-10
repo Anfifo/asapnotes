@@ -67,8 +67,8 @@ mod desktop {
             }
         }
 
-        // Ctrl+Alt+A ("asapnotes", one-handed): Ctrl+Alt+Space went to Claude's
-        // quick prompts, Ctrl/Shift+Space chords collide with editor completion,
+        // Ctrl+Alt+A ("asapnotes", one-handed): Ctrl+Alt+Space was already taken
+        // by another resident app, Ctrl/Shift+Space chords collide with editor completion,
         // and Win-modifier chords proved laggy under repeat (shell intercepts Win).
         let summon = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyA);
         app.handle().plugin(
@@ -141,6 +141,7 @@ pub fn run() {
             notes::move_note,
             notes::delete_note,
             notes::reveal_note,
+            notes::open_external,
             notes::list_drafts,
             notes::read_draft,
             notes::write_draft,

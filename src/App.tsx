@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -9,13 +9,24 @@ import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
-import { fileOf, projectOf, relativePath, resolvePath, subdirOf } from "./paths";
+import {
+  fileOf,
+  hasNoteExt,
+  isMarkdown,
+  projectOf,
+  relativePath,
+  resolvePath,
+  subdirOf,
+} from "./paths";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
 import { ScanProjects } from "./ScanProjects";
 import { SearchView } from "./Search";
 import { Settings } from "./Settings";
 import { StatusBar } from "./StatusBar";
+import { ToastStack } from "./Toast";
+import { Tooltip } from "./Tooltip";
+import { errText, useToasts } from "./toasts";
 import * as api from "./notes";
 import "./App.css";
 
@@ -30,11 +41,30 @@ const AUTOSAVE_MS = 500;
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 
 const EXPLORER_DEFAULT_W = 224;
-const clampExplorerWidth = (w: number) => Math.min(480, Math.max(168, w));
+const EXPLORER_MIN_W = 168;
+// Editor space a docked explorer must leave — the drag stops there, and only a
+// window shrinking past it auto-collapses the panel.
+const EDITOR_MIN_W = 280;
 
 const clampZoom = (z: number) => Math.min(3, Math.max(0.5, Math.round(z * 10) / 10));
 
-const FORMAT_GROUPS: { kind: FormatKind; glyph: string; title: string }[][] = [
+// Stroke icons (Lucide-style paths) for the symbolic buttons — text glyphs
+// like ``` and ❝ read poorly at toolbar size, and emoji render in color that
+// ignores the theme. Letters (H1–H3, B, I) stay letters.
+const icon = (paths: ReactNode) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {paths}
+  </svg>
+);
+
+const FORMAT_GROUPS: { kind: FormatKind; glyph: ReactNode; title: string }[][] = [
   [
     { kind: "h1", glyph: "H1", title: "Heading 1 (Ctrl+1)" },
     { kind: "h2", glyph: "H2", title: "Heading 2 (Ctrl+2)" },
@@ -45,15 +75,82 @@ const FORMAT_GROUPS: { kind: FormatKind; glyph: string; title: string }[][] = [
     { kind: "italic", glyph: "I", title: "Italic (Ctrl+I)" },
   ],
   [
-    { kind: "code", glyph: "<>", title: "Inline code (Ctrl+Shift+C)" },
-    { kind: "codeblock", glyph: "```", title: "Code block" },
+    {
+      kind: "code",
+      glyph: icon(
+        <>
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </>,
+      ),
+      title: "Inline code (Ctrl+Shift+C)",
+    },
+    {
+      kind: "codeblock",
+      glyph: icon(
+        <>
+          <path d="m10 9-3 3 3 3" />
+          <path d="m14 15 3-3-3-3" />
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+        </>,
+      ),
+      title: "Code block",
+    },
   ],
   [
-    { kind: "bullet", glyph: "•", title: "Bullet list (Ctrl+Shift+8)" },
-    { kind: "numbered", glyph: "1.", title: "Numbered list (Ctrl+Shift+7)" },
-    { kind: "quote", glyph: "❝", title: "Quote (Ctrl+Shift+9)" },
+    {
+      kind: "bullet",
+      glyph: icon(
+        <>
+          <line x1="9" y1="6" x2="21" y2="6" />
+          <line x1="9" y1="12" x2="21" y2="12" />
+          <line x1="9" y1="18" x2="21" y2="18" />
+          <circle cx="4" cy="6" r="1" fill="currentColor" stroke="none" />
+          <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="4" cy="18" r="1" fill="currentColor" stroke="none" />
+        </>,
+      ),
+      title: "Bullet list (Ctrl+Shift+8)",
+    },
+    {
+      kind: "numbered",
+      glyph: icon(
+        <>
+          <line x1="10" y1="6" x2="21" y2="6" />
+          <line x1="10" y1="12" x2="21" y2="12" />
+          <line x1="10" y1="18" x2="21" y2="18" />
+          <path d="M4 6h1v4" />
+          <path d="M4 10h2" />
+          <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" />
+        </>,
+      ),
+      title: "Numbered list (Ctrl+Shift+7)",
+    },
+    {
+      kind: "quote",
+      glyph: icon(
+        <>
+          <path d="M17 6H3" />
+          <path d="M21 12H8" />
+          <path d="M21 18H8" />
+          <path d="M3 12v6" />
+        </>,
+      ),
+      title: "Quote (Ctrl+Shift+9)",
+    },
   ],
-  [{ kind: "link", glyph: "🔗", title: "Link (Ctrl+Shift+L)" }],
+  [
+    {
+      kind: "link",
+      glyph: icon(
+        <>
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.72" />
+        </>,
+      ),
+      title: "Link (Ctrl+Shift+L)",
+    },
+  ],
 ];
 
 interface NoteEntry extends PaletteItem {
@@ -95,6 +192,7 @@ function deriveName(doc: string, prefix: string, taken: Set<string>): string {
 }
 
 function App() {
+  const { toasts, toast, dismiss } = useToasts();
   const [notes, setNotes] = useState<api.FileInfo[]>([]);
   const [drafts, setDrafts] = useState<api.FileInfo[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
@@ -136,17 +234,18 @@ function App() {
   };
   const [explorerWidth, setExplorerWidth] = useState(() => {
     const saved = Number(localStorage.getItem("explorerWidth"));
-    return saved > 0 ? clampExplorerWidth(saved) : EXPLORER_DEFAULT_W;
+    const max = Math.max(EXPLORER_MIN_W, window.innerWidth - EDITOR_MIN_W);
+    return saved > 0 ? Math.min(Math.max(EXPLORER_MIN_W, saved), max) : EXPLORER_DEFAULT_W;
   });
-  // A pinned explorer only docks while it takes ≲40% of the window; squeezed
-  // past that it collapses to the rail, and reopening floats it over the editor.
+  // A pinned explorer docks while it leaves the editor a usable strip; a window
+  // squeezed past that collapses it to the rail, and reopening floats it.
   const [winWidth, setWinWidth] = useState(() => window.innerWidth);
   useEffect(() => {
     const onResize = () => setWinWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  const dockLimit = winWidth * 0.4;
+  const dockLimit = winWidth - EDITOR_MIN_W;
   const explorerNarrow = explorerWidth > dockLimit;
   const explorerDocked = explorerPinned && !explorerNarrow;
   // Squeezed past the limit, an open docked panel collapses to the rail — and
@@ -169,6 +268,9 @@ function App() {
   }, [explorerNarrow, explorerPinned, explorerOpen]);
   const [creatingProject, setCreatingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
+  // Explorer-driven creation is name-first: the target dir ("" = notes root)
+  // gets an inline input row in the tree, Enter creates the file.
+  const [explorerCreate, setExplorerCreate] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -187,6 +289,8 @@ function App() {
   tabsRef.current = tabs;
   const notesRef = useRef<api.FileInfo[]>([]);
   notesRef.current = notes;
+  const draftsRef = useRef<api.FileInfo[]>([]);
+  draftsRef.current = drafts;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const externalsRef = useRef<Record<string, string>>({});
@@ -324,6 +428,52 @@ function App() {
     [flushDraft, showDoc],
   );
 
+  /** Note id for an absolute path inside the notes root or a linked project,
+   * null when the path lives outside both. */
+  const noteIdOf = useCallback((abs: string): string | null => {
+    const relTo = (base: string) => {
+      const rel = base ? relativePath(base, abs) : null;
+      return rel && !rel.startsWith("../") ? rel : null;
+    };
+    const inRoot = relTo(rootPathRef.current);
+    if (inRoot && !projectOf(inRoot)) return inRoot;
+    // Root subfolders are projects, but a path may also land in a linked
+    // project's folder — that mapping owns the id shape.
+    for (const [name, dir] of Object.entries(externalsRef.current)) {
+      const rel = relTo(dir);
+      if (rel) return `${name}/${rel}`;
+    }
+    return inRoot;
+  }, []);
+
+  /** Follow a Ctrl+Clicked editor target: URLs → browser; paths resolving to
+   * a note → open in-app; other paths → OS default (relative ones resolve
+   * against the open note's directory, like images do). */
+  const openLink = useCallback(
+    (target: string) => {
+      void (async () => {
+        try {
+          if (/^(https?:\/\/|mailto:)/i.test(target)) {
+            await api.openExternal(target);
+            return;
+          }
+          const abs = /^[a-z]:[\\/]/i.test(target)
+            ? target.replace(/\\/g, "/")
+            : resolvePath(noteDirRef.current, target);
+          const id = noteIdOf(abs);
+          if (id && hasNoteExt(id)) {
+            await openItem({ id, isNote: true }, new Set(draftsRef.current.map((d) => d.name)));
+          } else {
+            await api.openExternal(abs.replace(/\//g, "\\"));
+          }
+        } catch (err) {
+          console.error("open link failed:", err);
+        }
+      })();
+    },
+    [noteIdOf, openItem],
+  );
+
   const openSearchView = useCallback(() => {
     setExplorerOpen(true);
     setExplorerView("search");
@@ -391,7 +541,7 @@ function App() {
         try {
           await api.moveNote(cur.name, newId);
         } catch (err) {
-          console.error("move failed:", err);
+          toast(`Couldn't move that note — ${errText(err)}`);
           return;
         }
         retagOpen(cur.id, { id: newId, name: newId });
@@ -408,11 +558,11 @@ function App() {
       if (target) setProjects((ps) => (ps.includes(target) ? ps : [...ps, target].sort()));
       editorRef.current?.focus();
     },
-    [retagOpen, trackMtime],
+    [retagOpen, trackMtime, toast],
   );
 
   const togglePreview = useCallback(() => {
-    if (!openRef.current) return;
+    if (!openRef.current || !isMarkdown(openRef.current.id)) return;
     if (modeRef.current === "edit") {
       setInitialDoc(contentRef.current);
       setMode("preview");
@@ -468,11 +618,11 @@ function App() {
         const rel = await api.saveAsset(bytes, ext, cur ? projectOf(cur.id) : null);
         return assetLink(rel);
       } catch (err) {
-        console.error("image paste failed:", err);
+        toast(`Couldn't save the pasted image — ${errText(err)}`);
         return null;
       }
     },
-    [assetLink],
+    [assetLink, toast],
   );
 
   // Startup: recover the most recent draft; else open the most recent note;
@@ -554,14 +704,14 @@ function App() {
           const rel = await api.importAsset(path, cur ? projectOf(cur.id) : null);
           editorRef.current?.insertText(`![](${assetLink(rel)})\n`);
         } catch (err) {
-          console.error("image drop failed:", err);
+          toast(`Couldn't import that image — ${errText(err)}`);
         }
       }
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [assetLink]);
+  }, [assetLink, toast]);
 
   // File → Scan folder for projects: pick a folder, find README-marked
   // subfolders, confirm in a sheet, link them in place as external projects.
@@ -582,9 +732,9 @@ function App() {
     try {
       setScanResults(await api.scanProjects(dir));
     } catch (err) {
-      console.error("scan failed:", err);
+      toast(`Couldn't scan that folder — ${errText(err)}`);
     }
-  }, []);
+  }, [toast]);
 
   const addScannedProjects = useCallback(
     async (chosen: { name: string; path: string }[]) => {
@@ -613,10 +763,10 @@ function App() {
         await api.setExternalPath(name, dir);
         await refreshProjects();
       } catch (err) {
-        console.error("change folder failed:", err);
+        toast(`Couldn't change that project's folder — ${errText(err)}`);
       }
     },
-    [refreshProjects],
+    [refreshProjects, toast],
   );
 
   // App-level shortcuts. Kept in a ref so the window listener registers once
@@ -731,7 +881,7 @@ function App() {
 
   // External-change detection (files are shared with other tools by design):
   // whenever the window regains focus — a summon included — re-list notes and
-  // drafts, and re-sync the open note against its file. VSCode's model: a
+  // drafts, and re-sync the open note against its file. The rule: a
   // clean buffer reloads silently (in place, cursor kept); a dirty one keeps
   // editing and the stale mtime makes Ctrl+S raise the overwrite confirm.
   useEffect(() => {
@@ -801,6 +951,8 @@ function App() {
       })),
   ];
 
+  // Markdown-only affordances (preview, formatting) hide for plain-text notes.
+  const openIsMd = open ? isMarkdown(open.id) : true;
   // The open note's real directory (for resolving relative image links) — an
   // external project's base is its mapped folder, and deep notes add subdirs.
   const currentProject = open ? projectOf(open.id) : null;
@@ -832,10 +984,12 @@ function App() {
     const base = renameValue.trim();
     if (!cur || !validFileName(base)) return;
     const project = projectOf(cur.id);
-    const newId = (project ? `${project}/` : "") + `${base}.md`;
+    // A typed extension from the allowlist is kept (renaming todo.txt keeps
+    // .txt); anything else gets the default .md.
+    const newId = (project ? `${project}/` : "") + (hasNoteExt(base) ? base : `${base}.md`);
     if (newId === cur.name) return;
     if (notesRef.current.some((n) => n.name.toLowerCase() === newId.toLowerCase())) {
-      console.error(`rename failed: ${newId} already exists`);
+      toast(`A note named "${fileOf(newId)}" already exists here`);
       return;
     }
     void (async () => {
@@ -843,7 +997,7 @@ function App() {
         try {
           await api.moveNote(cur.name, newId);
         } catch (err) {
-          console.error("rename failed:", err);
+          toast(`Couldn't rename that note — ${errText(err)}`);
           return;
         }
         retagOpen(cur.id, { id: newId, name: newId });
@@ -853,6 +1007,12 @@ function App() {
       } else {
         await save(newId);
       }
+      // A rename that crosses the markdown boundary (x.md → x.txt) must
+      // rebuild the editor — its extensions were chosen at mount.
+      if (isMarkdown(cur.id) !== isMarkdown(newId)) {
+        setInitialDoc(contentRef.current);
+        setDocKey(newId);
+      }
     })();
   };
 
@@ -860,7 +1020,7 @@ function App() {
   // below keep the narrowed string type.
   const openName = open?.name ?? null;
 
-  // Ctrl+K: Claude-style palette — commands first (New note on top), recent
+  // Ctrl+K: command palette — commands first (New note on top), recent
   // notes below; typing fuzzy-searches across both.
   const commands: CommandEntry[] = [
     {
@@ -895,13 +1055,17 @@ function App() {
           },
         ]
       : []),
-    {
-      kind: "command",
-      id: "cmd:preview",
-      label: mode === "edit" ? "Open preview" : "Back to editor",
-      detail: "Ctrl+E",
-      run: togglePreview,
-    },
+    ...(openIsMd
+      ? [
+          {
+            kind: "command" as const,
+            id: "cmd:preview",
+            label: mode === "edit" ? "Open preview" : "Back to editor",
+            detail: "Ctrl+E",
+            run: togglePreview,
+          },
+        ]
+      : []),
     ...projects
       .filter((p) => p !== currentProject)
       .map((p) => ({
@@ -932,7 +1096,7 @@ function App() {
       label: "Scan folder for projects…",
       run: () => void scanForProjects(),
     },
-    ...FORMAT_GROUPS.flat().map((f) => ({
+    ...(openIsMd ? FORMAT_GROUPS.flat() : []).map((f) => ({
       kind: "command" as const,
       id: `cmd:format:${f.kind}`,
       label: `Format: ${f.title.replace(/ \(.+\)$/, "")}`,
@@ -1002,16 +1166,20 @@ function App() {
       ],
     },
     { label: "Edit", items: editEntries },
-    // "O" mnemonic (Notepad/WordPad convention) — "F" belongs to File.
-    { label: "Format", mnemonic: "o", items: formatMenuItems },
+    // "O" mnemonic (the classic Windows Format-menu convention) — "F" belongs to File.
+    ...(openIsMd ? [{ label: "Format", mnemonic: "o", items: formatMenuItems }] : []),
     {
       label: "View",
       items: [
-        {
-          label: mode === "edit" ? "Open preview" : "Back to editor",
-          detail: "Ctrl+E",
-          run: togglePreview,
-        },
+        ...(openIsMd
+          ? [
+              {
+                label: mode === "edit" ? "Open preview" : "Back to editor",
+                detail: "Ctrl+E",
+                run: togglePreview,
+              },
+            ]
+          : []),
         {
           label: explorerOpen ? "Hide explorer" : "Show explorer",
           detail: "Ctrl+Shift+E",
@@ -1127,7 +1295,7 @@ function App() {
     try {
       await api.deleteNote(id);
     } catch (err) {
-      console.error("delete failed:", err);
+      toast(`Couldn't delete that note — ${errText(err)}`);
       return;
     }
     closeTab(id);
@@ -1151,6 +1319,8 @@ function App() {
 
   const openContextMenu = (e: React.MouseEvent, entries: MenuEntry[]) => {
     e.preventDefault();
+    // Targets nest (row inside folder inside panel body) — innermost menu wins.
+    e.stopPropagation();
     setCtxMenu({ x: e.clientX, y: e.clientY, entries });
   };
 
@@ -1160,7 +1330,9 @@ function App() {
     {
       label: "Reveal in File Explorer",
       run: () =>
-        void api.revealNote(id).catch((err: unknown) => console.error("reveal failed:", err)),
+        void api
+          .revealNote(id)
+          .catch((err: unknown) => toast(`Couldn't reveal that file — ${errText(err)}`)),
     },
     "sep",
     { label: "Delete note", run: () => void deleteNote(id) },
@@ -1182,10 +1354,57 @@ function App() {
     setRenaming(true);
   };
 
+  const startExplorerCreate = (dir: string) => {
+    setExplorerOpen(true);
+    setExplorerView("files");
+    setExplorerCreate(dir);
+  };
+
+  /** Inline name-first creation: write the (empty) file immediately, open it
+   * as a saved note. A typed allowlisted extension sticks, else `.md`. */
+  const createNamedNote = async (dir: string, name: string) => {
+    setExplorerCreate(null);
+    const trimmed = name.trim().replace(/^\/+|\/+$/g, "");
+    if (!trimmed) return;
+    const file = hasNoteExt(trimmed) ? trimmed : `${trimmed}.md`;
+    const id = dir ? `${dir}/${file}` : file;
+    if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
+      toast(`"${name}" isn't a valid note name`);
+      return;
+    }
+    const lower = id.toLowerCase();
+    if (
+      notes.some((n) => n.name.toLowerCase() === lower) ||
+      drafts.some((d) => d.name.toLowerCase() === lower)
+    ) {
+      toast(`"${fileOf(id)}" already exists here`);
+      return;
+    }
+    try {
+      await api.saveNote(id, "");
+    } catch (err) {
+      toast(`Couldn't create that note — ${errText(err)}`);
+      return;
+    }
+    setNotes(await api.listNotes());
+    openFromExplorer(id, true);
+  };
+
+  /** Absolute path of a folder id ("" = notes root, else project[/sub…]). */
+  const absDirOf = (dir: string) => {
+    if (!dir) return rootPath.replace(/\//g, "\\");
+    const [project, ...rest] = dir.split("/");
+    const base = externals[project] ?? `${rootPath}/${project}`;
+    return [base, ...rest].join("/").replace(/\//g, "\\");
+  };
+
   const explorerContextMenu = (e: React.MouseEvent, id: string, isNote: boolean) =>
     openContextMenu(e, [
       { label: "Open", run: () => openFromExplorer(id, isNote) },
-      { label: "New note here", run: () => void newNote(projectOf(id)) },
+      {
+        label: "New note here",
+        run: () => startExplorerCreate(id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : ""),
+      },
       ...(isNote
         ? [
             { label: "Rename", run: () => void renameFromExplorer(id) },
@@ -1193,6 +1412,24 @@ function App() {
             ...noteOps(id),
           ]
         : ["sep" as const, { label: "Discard draft", run: () => void discardDraft(id) }]),
+    ]);
+
+  /** Right-click on a project or folder heading. (No Reveal: the backend only
+   * resolves note ids, not directories.) */
+  const explorerDirMenu = (e: React.MouseEvent, dir: string) =>
+    openContextMenu(e, [
+      { label: "New note here", run: () => startExplorerCreate(dir) },
+      "sep",
+      { label: "Copy path", run: () => void writeText(absDirOf(dir)) },
+    ]);
+
+  /** Right-click on the explorer's empty space. */
+  const explorerBodyMenu = (e: React.MouseEvent) =>
+    openContextMenu(e, [
+      { label: "New note", run: () => startExplorerCreate("") },
+      { label: "New project…", run: () => setCreatingProject(true) },
+      "sep",
+      { label: "Scan folder for projects…", run: () => void scanForProjects() },
     ]);
 
   const runEntry = (entry: Entry) => {
@@ -1238,17 +1475,32 @@ function App() {
             openId={open?.id ?? null}
             onSelect={openFromExplorer}
             onContext={explorerContextMenu}
+            onDirContext={explorerDirMenu}
+            onBodyContext={explorerBodyMenu}
+            onStartCreate={startExplorerCreate}
+            creatingIn={explorerCreate}
+            onCreate={(dir, name) => void createNamedNote(dir, name)}
+            onCreateCancel={() => setExplorerCreate(null)}
             view={explorerView}
             onViewChange={setExplorerView}
-            searchSlot={<SearchView focusToken={searchFocus} onOpenHit={openHit} />}
+            searchSlot={
+              <SearchView
+                focusToken={searchFocus}
+                onOpenHit={openHit}
+                onError={(msg) => toast(`Search failed — ${msg}`)}
+              />
+            }
             pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
             onCollapse={() => setExplorerOpen(false)}
             width={explorerWidth}
-            // Docked, the drag stops at the dock limit instead of collapsing
-            // the panel out from under the pointer; floating is unrestricted.
+            // The drag ranges up to the dock limit (docked) or nearly the whole
+            // window (floating) — it can never cross the auto-collapse
+            // threshold, so only a window shrink ever collapses the panel.
             onResize={(w) =>
-              setExplorerWidth(clampExplorerWidth(explorerDocked ? Math.min(w, dockLimit) : w))
+              setExplorerWidth(
+                Math.max(EXPLORER_MIN_W, Math.min(w, explorerDocked ? dockLimit : winWidth - 48)),
+              )
             }
             onResizeEnd={() => localStorage.setItem("explorerWidth", String(explorerWidth))}
           />
@@ -1314,17 +1566,22 @@ function App() {
               </button>
             </div>
             <header className="titlebar">
-              <button
-                className={mode === "preview" ? "tool-btn open" : "tool-btn"}
-                title={
-                  mode === "edit" ? "Open reading preview (Ctrl+E)" : "Back to editor (Ctrl+E)"
-                }
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={togglePreview}
-              >
-                {mode === "edit" ? "👁" : "✎"}
-              </button>
-              {mode === "edit" && (
+              {openIsMd && (
+                <button
+                  className={mode === "preview" ? "tool-btn open" : "tool-btn"}
+                  data-tip={
+                    mode === "edit" ? "Open reading preview (Ctrl+E)" : "Back to editor (Ctrl+E)"
+                  }
+                  aria-label={
+                    mode === "edit" ? "Open reading preview (Ctrl+E)" : "Back to editor (Ctrl+E)"
+                  }
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={togglePreview}
+                >
+                  {mode === "edit" ? "👁" : "✎"}
+                </button>
+              )}
+              {mode === "edit" && openIsMd && (
                 <div className="fmt-inline">
                   {FORMAT_GROUPS.map((group, i) => (
                     <div className="toolbar-group" key={i}>
@@ -1332,7 +1589,8 @@ function App() {
                         <button
                           key={f.kind}
                           className={`fmt-${f.kind}`}
-                          title={f.title}
+                          data-tip={f.title}
+                          aria-label={f.title}
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => editorRef.current?.applyFormat(f.kind)}
                         >
@@ -1374,8 +1632,10 @@ function App() {
                 resolveImage={resolveImage}
                 mentionItems={mentionItems}
                 mentionLink={mentionLink}
+                onOpenLink={openLink}
                 onStatus={handleStatus}
                 hidden={mode === "preview"}
+                plainText={!openIsMd}
               />
             )}
             {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
@@ -1416,6 +1676,8 @@ function App() {
       )}
       {ctxMenu && <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} />}
       <StatusBar register={registerStatus} summonMs={summonMs} zoom={zoom} />
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
+      <Tooltip />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { ReactNode, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { FileInfo } from "./notes";
 import { fileOf, projectOf } from "./paths";
 
@@ -38,6 +38,16 @@ interface ExplorerProps {
   onSelect: (id: string, isNote: boolean) => void;
   /** Right-click on a note/draft row — App shows the context menu. */
   onContext: (e: React.MouseEvent, id: string, isNote: boolean) => void;
+  /** Right-click on a project/folder heading ("" = notes root). */
+  onDirContext: (e: React.MouseEvent, dir: string) => void;
+  /** Right-click on the panel's empty space. */
+  onBodyContext: (e: React.MouseEvent) => void;
+  /** Begin inline name-first creation in a folder ("" = notes root). */
+  onStartCreate: (dir: string) => void;
+  /** Folder with an active inline create row, null when none. */
+  creatingIn: string | null;
+  onCreate: (dir: string, name: string) => void;
+  onCreateCancel: () => void;
   /** Which of the panel's two views is showing. */
   view: "files" | "search";
   onViewChange: (view: "files" | "search") => void;
@@ -54,7 +64,7 @@ interface ExplorerProps {
 }
 
 /** Side panel: the open note's project first, then recent files (collapsed
- * by default) and the remaining notes grouped by project, VSCode-style. */
+ * by default) and the remaining notes grouped by project. */
 export function Explorer({
   notes,
   drafts,
@@ -63,6 +73,12 @@ export function Explorer({
   openId,
   onSelect,
   onContext,
+  onDirContext,
+  onBodyContext,
+  onStartCreate,
+  creatingIn,
+  onCreate,
+  onCreateCancel,
   view,
   onViewChange,
   searchSlot,
@@ -80,6 +96,15 @@ export function Explorer({
   // Non-current projects start collapsed; a project's tree isn't built until
   // its first expand, so big external projects cost nothing while closed.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Creation targeting a collapsed project expands it so the input is visible.
+  useEffect(() => {
+    if (creatingIn === null) return;
+    const p = creatingIn.split("/")[0];
+    if (p && p !== currentProject) {
+      setExpanded((s) => (s.has(p) ? s : new Set(s).add(p)));
+    }
+  }, [creatingIn, currentProject]);
 
   // A note with unsaved edits appears in both lists — keep the newest timestamp.
   const latest = new Map<string, number>();
@@ -107,15 +132,61 @@ export function Explorer({
     </li>
   );
 
-  const renderTree = (node: TreeNode): ReactNode => (
+  /** Hover-revealed "new note in this folder" button for a heading row. */
+  const addBtn = (dir: string) => (
+    <button
+      className="add-btn"
+      title="New note"
+      onClick={(e) => {
+        // A summary parent would otherwise toggle its folder on this click.
+        e.preventDefault();
+        e.stopPropagation();
+        onStartCreate(dir);
+      }}
+    >
+      +
+    </button>
+  );
+
+  // Inline name-first creation: Enter creates, Esc/blur cancels. Key events
+  // stop here so the app-level Esc (hide window) and shortcuts don't fire.
+  const createRow = (dir: string) => (
+    <li className="create-row" key="__create">
+      <input
+        autoFocus
+        placeholder="note name…"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") onCreate(dir, e.currentTarget.value);
+          else if (e.key === "Escape") onCreateCancel();
+        }}
+        onBlur={onCreateCancel}
+      />
+    </li>
+  );
+
+  const renderTree = (node: TreeNode, base: string): ReactNode => (
     <>
-      {[...node.folders.keys()].sort().map((name) => (
-        <details key={name} className="explorer-folder">
-          <summary>{name}</summary>
-          {renderTree(node.folders.get(name)!)}
-        </details>
-      ))}
-      {node.files.length > 0 && <ul>{node.files.map((id) => item(id))}</ul>}
+      {[...node.folders.keys()].sort().map((name) => {
+        const dir = `${base}/${name}`;
+        const holdsCreate = creatingIn === dir || creatingIn?.startsWith(`${dir}/`);
+        return (
+          <details key={name} className="explorer-folder" open={holdsCreate || undefined}>
+            <summary onContextMenu={(e) => onDirContext(e, dir)}>
+              <span className="explorer-name">{name}</span>
+              {addBtn(dir)}
+            </summary>
+            {renderTree(node.folders.get(name)!, dir)}
+          </details>
+        );
+      })}
+      {(node.files.length > 0 || creatingIn === base) && (
+        <ul>
+          {creatingIn === base && createRow(base)}
+          {node.files.map((id) => item(id))}
+        </ul>
+      )}
     </>
   );
 
@@ -134,8 +205,11 @@ export function Explorer({
         });
       }}
     >
-      <summary>{p}</summary>
-      {expanded.has(p) && renderTree(buildTree(inProject(p)))}
+      <summary onContextMenu={(e) => onDirContext(e, p)}>
+        <span className="explorer-name">{p}</span>
+        {addBtn(p)}
+      </summary>
+      {expanded.has(p) && renderTree(buildTree(inProject(p)), p)}
     </details>
   );
 
@@ -159,6 +233,13 @@ export function Explorer({
           </button>
         </div>
         <button
+          className="view-btn"
+          title="New note"
+          onClick={() => onStartCreate(currentProject ?? "")}
+        >
+          +
+        </button>
+        <button
           className={pinned ? "pin-btn pinned" : "pin-btn"}
           title={pinned ? "Unpin — float over the editor" : "Pin — dock beside the editor"}
           onClick={onTogglePin}
@@ -174,11 +255,14 @@ export function Explorer({
         </button>
       </header>
       {view === "search" && searchSlot}
-      <div className="explorer-body" hidden={view === "search"}>
+      <div className="explorer-body" hidden={view === "search"} onContextMenu={onBodyContext}>
         {currentProject && (
           <section>
-            <h2>{currentProject}</h2>
-            {renderTree(buildTree(inProject(currentProject)))}
+            <h2 onContextMenu={(e) => onDirContext(e, currentProject)}>
+              <span className="explorer-name">{currentProject}</span>
+              {addBtn(currentProject)}
+            </h2>
+            {renderTree(buildTree(inProject(currentProject)), currentProject)}
           </section>
         )}
         {recent.length > 0 && (
@@ -188,8 +272,16 @@ export function Explorer({
           </details>
         )}
         <section>
-          <h2>Notes</h2>
-          {loose.length > 0 && <ul>{loose.map((n) => item(n.name))}</ul>}
+          <h2 onContextMenu={(e) => onDirContext(e, "")}>
+            <span className="explorer-name">Notes</span>
+            {addBtn("")}
+          </h2>
+          {(loose.length > 0 || creatingIn === "") && (
+            <ul>
+              {creatingIn === "" && createRow("")}
+              {loose.map((n) => item(n.name))}
+            </ul>
+          )}
           {projects.filter((p) => p !== currentProject).map(projectSection)}
           {notes.length === 0 && <p className="muted">No saved notes yet</p>}
         </section>

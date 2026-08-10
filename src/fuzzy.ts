@@ -8,7 +8,7 @@ export interface FuzzyMatch {
 }
 
 /**
- * Subsequence match of `query` against `text` (VS Code Ctrl+P style): every
+ * Subsequence match of `query` against `text`, quick-open style: every
  * query char must appear in order; consecutive runs and word-start hits rank
  * higher, spread-out matches and long labels rank slightly lower. Greedy
  * leftmost matching — not optimal alignment, but cheap and good enough.

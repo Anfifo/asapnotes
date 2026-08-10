@@ -1,7 +1,8 @@
 //! Filesystem commands for notes, projects, shadow drafts, and pasted assets.
 //!
-//! Layout of the notes root (`Documents/asapnotes`): `.md` files at the top
-//! level are the "inbox"; each first-level subfolder is a project; `assets/`
+//! Layout of the notes root (`Documents/asapnotes`): note files (any
+//! `NOTE_EXTS` extension; `.md` is the default) at the top level are the
+//! "inbox"; each first-level subfolder is a project; `assets/`
 //! holds pasted images and is not a project. A note's id everywhere is its
 //! root-relative path (`note.md` or `project/note.md`).
 //!
@@ -26,6 +27,12 @@ use tauri::{AppHandle, Manager};
 
 const ASSETS_DIR: &str = "assets";
 const IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+/// Plain-text extensions listed and editable as notes. Only `.md` gets
+/// markdown features on the frontend; the rest open as plain text.
+/// Keep in sync with `hasNoteExt` in `src/paths.ts`.
+const NOTE_EXTS: [&str; 13] = [
+    "md", "txt", "text", "tex", "log", "csv", "json", "yaml", "yml", "ini", "cfg", "toml", "xml",
+];
 /// Directories never walked when listing or scanning external folders.
 const SKIP_DIRS: [&str; 5] = ["node_modules", "target", "dist", "build", "out"];
 const MAX_DEPTH: u32 = 12;
@@ -60,6 +67,12 @@ fn valid_segment(s: &str) -> bool {
     !s.is_empty() && !s.contains('\\') && !s.starts_with('.')
 }
 
+fn has_note_ext(file: &str) -> bool {
+    file.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty() && NOTE_EXTS.contains(&ext.to_ascii_lowercase().as_str())
+    })
+}
+
 /// Note ids come from the frontend as relative paths (`note.md` or
 /// `project/…/note.md`); reject anything that could escape its base.
 fn checked_name(name: &str) -> Result<&str, String> {
@@ -67,8 +80,7 @@ fn checked_name(name: &str) -> Result<&str, String> {
     let file = segments.last().copied().unwrap_or("");
     let ok = (1..=MAX_DEPTH as usize).contains(&segments.len())
         && segments.iter().all(|s| valid_segment(s))
-        && file.ends_with(".md")
-        && file.len() > ".md".len()
+        && has_note_ext(file)
         && (segments.len() == 1 || segments[0] != ASSETS_DIR);
     if ok {
         Ok(name)
@@ -143,7 +155,7 @@ fn collect_md(dir: &Path, prefix: &str, out: &mut Vec<FileInfo>) -> Result<(), S
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
-        if is_file && name.ends_with(".md") {
+        if is_file && has_note_ext(&name) {
             out.push(FileInfo {
                 name: format!("{prefix}{name}"),
                 modified_ms: modified_ms(&entry),
@@ -167,7 +179,7 @@ fn project_dirs(root: &Path) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// List all `.md` files in `base`: top level plus one project-folder level.
+/// List all note files in `base`: top level plus one project-folder level.
 fn list_tree(base: &Path) -> Result<Vec<FileInfo>, String> {
     let mut out = Vec::new();
     collect_md(base, "", &mut out)?;
@@ -182,7 +194,7 @@ fn skip_dir(name: &str) -> bool {
     name.starts_with('.') || SKIP_DIRS.contains(&name.to_ascii_lowercase().as_str())
 }
 
-/// Recursively collect `.md` files. Tolerant by design: unreadable directories
+/// Recursively collect note files. Tolerant by design: unreadable directories
 /// are skipped, not fatal — one broken external folder must not take down the
 /// whole note list.
 fn collect_md_deep(dir: &Path, prefix: &str, depth: u32, out: &mut Vec<FileInfo>) {
@@ -197,7 +209,7 @@ fn collect_md_deep(dir: &Path, prefix: &str, depth: u32, out: &mut Vec<FileInfo>
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if file_type.is_file() && name.ends_with(".md") {
+        if file_type.is_file() && has_note_ext(&name) {
             out.push(FileInfo {
                 name: format!("{prefix}{name}"),
                 modified_ms: modified_ms(&entry),
@@ -400,6 +412,47 @@ pub fn reveal_note(app: AppHandle, name: String) -> Result<(), String> {
     let path = resolve_note(&app, &name)?;
     app.opener()
         .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
+}
+
+/// Extensions never launched from note text — revealed in Explorer instead,
+/// so a Ctrl+Click can't start a program.
+const EXEC_EXTS: [&str; 17] = [
+    "exe", "bat", "cmd", "com", "scr", "ps1", "msi", "vbs", "vbe", "js", "jse", "wsf", "wsh",
+    "hta", "lnk", "reg", "msc",
+];
+
+/// Open a Ctrl+Clicked editor target: http(s)/mailto URLs go to the default
+/// handler, existing absolute paths open with their default app (executable
+/// types are revealed, not run). Everything else is rejected.
+#[tauri::command]
+pub fn open_external(app: AppHandle, target: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let lower = target.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
+    {
+        return app
+            .opener()
+            .open_url(target, None::<&str>)
+            .map_err(|e| e.to_string());
+    }
+    let path = PathBuf::from(&target);
+    if !path.is_absolute() || !path.exists() {
+        return Err(format!("not an existing absolute path: {target}"));
+    }
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if EXEC_EXTS.contains(&ext.as_str()) {
+        return app
+            .opener()
+            .reveal_item_in_dir(path)
+            .map_err(|e| e.to_string());
+    }
+    app.opener()
+        .open_path(target, None::<&str>)
         .map_err(|e| e.to_string())
 }
 

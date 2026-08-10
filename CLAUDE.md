@@ -6,6 +6,9 @@ summoned by a global hotkey; notes are plain `.md` files; an MCP sidecar is plan
 ## Code style
 
 - KISS: the obvious solution over the clever one. Comments say _why_, not _what_.
+- **No product comparisons in comments or docs** — never "VSCode-style", "like Obsidian",
+  etc. Describe the behavior itself; keep the rationale without naming other products.
+  (The repo is going public; this covers code, TODO.md, and decisions/ entries alike.)
 - Hoist a helper on the _second_ real use — not before, never a third copy.
 - Smallest diff that solves the problem; no unrelated reformatting or renames.
 - Leave working, tested machinery alone; state what you deliberately left alone.
@@ -21,6 +24,10 @@ summoned by a global hotkey; notes are plain `.md` files; an MCP sidecar is plan
   notes live under one root — external-file mappings are planned.
 - **No heavy frameworks by default** — no state libraries, UI kits, or ORM-ish layers until
   a real need forces one.
+- **No unrequested network connections.** No telemetry, analytics, or silent phone-home —
+  ever. Anything that leaves the machine (update checks, cloud share, sync) is explicitly
+  asked for or explicitly consented to first. A resident tray app earns trust by being
+  auditably quiet.
 
 ## Working loop (`docs/`)
 

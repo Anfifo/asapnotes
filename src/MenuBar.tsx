@@ -35,7 +35,7 @@ interface MenuBarProps {
 }
 
 /** Custom title bar: dropdown menus, drag region, window buttons. The window
- * is undecorated (VSCode-style), so this row *is* the OS title bar.
+ * is undecorated, so this row *is* the OS title bar.
  * Keyboard-reachable: Alt toggles the first menu, Alt+letter opens one by
  * mnemonic, arrows navigate, Enter runs, Esc closes. */
 export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) {
@@ -213,7 +213,7 @@ export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) 
           )}
         </div>
       ))}
-      {/* VSCode-style command center: the search pill sits IN the flex row
+      {/* Command center: the search pill sits IN the flex row
           between two drag regions, so it can never cross the menus — it
           centers in the leftover space and shrinks (label ellipsizes) first. */}
       <div className="menubar-drag" data-tauri-drag-region />

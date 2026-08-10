@@ -10,7 +10,7 @@ interface StatusBarProps {
   zoom: number;
 }
 
-/** Slim VSCode-style bar on the window's dark chrome: cursor position,
+/** Slim status bar on the window's dark chrome: cursor position,
  * selection size, word count; zoom and summon latency on the right. */
 export function StatusBar({ register, summonMs, zoom }: StatusBarProps) {
   const [status, setStatus] = useState<EditorStatus | null>(null);

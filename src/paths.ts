@@ -1,3 +1,11 @@
+/** Plain-text extensions listed and editable as notes — keep in sync with
+ * `NOTE_EXTS` in `src-tauri/src/notes.rs`. Only `.md` gets markdown features
+ * (live styling, preview, mentions, formatting); the rest are plain text. */
+export const hasNoteExt = (path: string) =>
+  /\.(md|txt|text|tex|log|csv|json|yaml|yml|ini|cfg|toml|xml)$/i.test(path);
+
+export const isMarkdown = (path: string) => /\.md$/i.test(path);
+
 /** Last segment of a root-relative note path. */
 export const fileOf = (path: string) => path.split("/").pop() ?? path;
 

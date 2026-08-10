@@ -59,8 +59,8 @@ body,
   flex-direction: column; /* menubar on top, panels in the middle, status bar below */
 }
 
-/* The window ground is the menubar's dark chrome (VSCode-style, constant in
-   both themes); explorer / titlebar / editor float on it as separate panels. */
+/* The window ground is the menubar's dark chrome (constant in both themes);
+   explorer / titlebar / editor float on it as separate panels. */
 .app-body {
   flex: 1;
   min-height: 0;
@@ -72,8 +72,8 @@ body,
 }
 
 /* Custom title bar (the window is undecorated): menus, drag region, window
-   buttons. Deliberately darker than the editor in BOTH themes — VSCode-style
-   constant dark chrome, so the window reads as a frame around the paper. */
+   buttons. Deliberately darker than the editor in BOTH themes — constant
+   dark chrome, so the window reads as a frame around the paper. */
 
 .menubar {
   display: flex;
@@ -86,7 +86,7 @@ body,
   user-select: none;
 }
 
-/* VSCode-style command center: a flex item flanked by two drag regions, so it
+/* Command center: a flex item flanked by two drag regions, so it
    centers in the space the menus leave over and can never overlap them —
    squeezed, it gives up width and the label ellipsizes. Shows the open note's
    name (the window's de-facto title); opens the combined command/note palette. */
@@ -326,7 +326,7 @@ body,
   cursor: col-resize;
 }
 
-/* VSCode-style grip: three tiny dots centered in the panel gap. Painted on a
+/* Resize grip: three tiny dots centered in the panel gap. Painted on a
    pseudo-element so the handle itself adds no width. */
 .explorer-resize::after {
   content: "";
@@ -474,7 +474,7 @@ body,
 }
 
 /* One row per matching line: line number in a fixed gutter, excerpt after it.
-   Strictly one line each (VSCode-style) — wrapped excerpts run to four or five
+   Strictly one line each — wrapped excerpts run to four or five
    lines at this panel width, which buries the result count in scroll. The full
    text is in the row's tooltip, and the panel is resizable. */
 .search-results li {
@@ -521,6 +521,8 @@ body,
 }
 
 .explorer h2 {
+  display: flex;
+  align-items: center;
   margin: 0 0 0.2rem;
   font-size: 0.68rem;
   font-weight: 600;
@@ -529,8 +531,51 @@ body,
   color: #7a7a7a;
 }
 
+/* Hover-revealed "new note here" on section, project, and folder headings. */
+.add-btn {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: #7a7a7a;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.explorer h2:hover .add-btn,
+.explorer summary:hover .add-btn,
+.add-btn:focus-visible {
+  opacity: 1;
+}
+
+.add-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: inherit;
+}
+
+/* Inline name-first creation row — sits where the file will land. */
+.create-row {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.create-row input {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(217, 154, 6, 0.55);
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+  outline: none;
+}
+
 /* Top-level sections (current project / Recent / Notes) read as siblings:
-   clear gap + hairline between them, VSCode section style. */
+   clear gap + hairline between them. */
 .explorer-body > * + * {
   margin-top: 0.55rem;
   padding-top: 0.45rem;
@@ -590,7 +635,7 @@ body,
   display: none;
 }
 
-/* Slim VSCode-style chevron: › closed, ˅ open. */
+/* Slim tree chevron: › closed, ˅ open. */
 .explorer summary::before {
   content: "";
   width: 5px;
@@ -611,7 +656,7 @@ body,
   background: rgba(0, 0, 0, 0.06);
 }
 
-/* Per-level indent: folders nest like the VSCode explorer. */
+/* Per-level indent: folders nest as a file tree. */
 .explorer details > ul,
 .explorer details > details {
   margin-left: 0.8rem;
@@ -637,7 +682,7 @@ body,
 
 /* Tab strip — each open note is a tab; the active one matches the editor.
    Double-click the active tab to rename (the input renders in place).
-   The strip is a darker band (VSCode-style) and the active tab fills with the
+   The strip is a darker band and the active tab fills with the
    panel color, so it visibly connects to the toolbar/editor below. */
 .tabbar {
   display: flex;
@@ -659,7 +704,7 @@ body,
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  /* Chrome-style sizing: inactive tabs squeeze down to a sliver before the
+  /* Browser-style sizing: inactive tabs squeeze down to a sliver before the
      strip ever pans; the active tab is exempt (flex-shrink 0 below). */
   flex: 0 1 auto;
   min-width: 2.6rem;
@@ -673,7 +718,7 @@ body,
 }
 
 /* Hairline separator between adjacent tabs, hidden next to the active one
-   (Chrome-style) — the active tab's fill is its own boundary. */
+   — the active tab's fill is its own boundary. */
 .tab + .tab::before {
   content: "";
   position: absolute;
@@ -790,6 +835,53 @@ body,
   flex: 1;
 }
 
+/* Toasts sit above the status bar, clear of the editor's scrollbar. Failures
+   here were `console.error` only, i.e. invisible, before this surface existed. */
+.toast-stack {
+  position: fixed;
+  right: 0.75rem;
+  bottom: calc(1.4rem + 0.5rem); /* status bar height + gap */
+  z-index: 60; /* above menubar dropdowns (40) and the floating explorer (20) */
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-width: min(26rem, calc(100% - 1.5rem));
+  pointer-events: none;
+}
+
+/* Dark in both themes — the stack hangs over the app's dark chrome, so it
+   needs no `prefers-color-scheme` counterpart. */
+.toast {
+  pointer-events: auto;
+  padding: 0.45rem 0.65rem;
+  border-radius: 7px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: #f0f0f0;
+  background: #383838;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid #8a8a8a;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  animation: toast-in 120ms ease-out;
+}
+
+.toast-error {
+  border-left-color: #e57368;
+}
+
+.toast-info {
+  border-left-color: rgba(217, 154, 6, 0.9);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 .editor {
   flex: 1;
   overflow: hidden;
@@ -840,6 +932,18 @@ body,
 
 .editor .cm-bullet {
   color: #7a7a7a;
+}
+
+/* Ctrl+Click link targets (links.ts): pointer + underline only while Ctrl is
+   held, so a plain click stays ordinary cursor placement. Markdown editors
+   keep their own link colors; plain text gets the shared link blue. */
+.editor-plain .cm-linkable {
+  color: #4a7dc9;
+}
+
+.editor .cm-ctrl .cm-linkable {
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 /* Find panel (Ctrl+F) */
@@ -1162,7 +1266,29 @@ body,
   font-style: italic;
 }
 
-/* Ctrl+K / Ctrl+P palette — floating Claude-style panel */
+.fmt-inline button svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* Shared data-tip tooltip (see Tooltip.tsx) — fixed-position so the
+   formatting bar's scroll container can't clip it. */
+
+.tooltip {
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 100;
+  pointer-events: none;
+  white-space: nowrap;
+  background: #2f2f2f;
+  color: #f2f2f2;
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+/* Ctrl+K / Ctrl+P palette — floating panel */
 
 .palette-backdrop {
   position: fixed;
@@ -1385,8 +1511,17 @@ body,
   }
 
   .explorer h2,
-  .collapse-btn {
+  .collapse-btn,
+  .add-btn {
     color: #9a9a9a;
+  }
+
+  .add-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .create-row input {
+    background: rgba(255, 255, 255, 0.07);
   }
 
   .explorer-body > * + * {
@@ -1540,5 +1675,10 @@ body,
 
   .fmt-inline button:hover {
     background: rgba(255, 255, 255, 0.1);
+  }
+
+  .tooltip {
+    background: #ececec;
+    color: #222222;
   }
 }

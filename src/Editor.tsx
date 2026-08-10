@@ -7,6 +7,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { minimalSetup } from "codemirror";
+import { linkify } from "./links";
 import { livePreview } from "./livePreview";
 import { MentionItem, mentions } from "./mentions";
 
@@ -63,10 +64,15 @@ interface EditorProps {
   mentionItems: MentionItem[];
   /** Markdown link inserted when a mention is accepted. */
   mentionLink: (id: string) => string;
+  /** Follow a Ctrl+Clicked URL / file path / markdown link destination. */
+  onOpenLink: (target: string) => void;
   /** Cursor / selection / word-count updates for the status bar. */
   onStatus?: (status: EditorStatus) => void;
   /** Hide instead of unmounting (preview mode) so undo history survives. */
   hidden?: boolean;
+  /** Non-markdown note: no markdown parsing, live preview, mentions, image
+   * paste, or formatting — a bare text editor. */
+  plainText?: boolean;
 }
 
 /** Toggle `marker` (e.g. `**`) around each selection range. */
@@ -278,8 +284,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     resolveImage,
     mentionItems,
     mentionLink,
+    onOpenLink,
     onStatus,
     hidden,
+    plainText,
   },
   ref,
 ) {
@@ -297,10 +305,14 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   mentionItemsRef.current = mentionItems;
   const mentionLinkRef = useRef(mentionLink);
   mentionLinkRef.current = mentionLink;
+  const onOpenLinkRef = useRef(onOpenLink);
+  onOpenLinkRef.current = onOpenLink;
   const onStatusRef = useRef(onStatus);
   onStatusRef.current = onStatus;
   const initialDocRef = useRef(initialDoc);
   initialDocRef.current = initialDoc;
+  const plainTextRef = useRef(plainText);
+  plainTextRef.current = plainText;
 
   useImperativeHandle(
     ref,
@@ -308,7 +320,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       focus: () => viewRef.current?.focus(),
       applyFormat: (kind: FormatKind) => {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view || plainTextRef.current) return;
         applyFormat(view, kind);
         view.focus();
       },
@@ -355,32 +367,43 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         doc: initialDocRef.current,
         extensions: [
           minimalSetup,
-          // codeLanguages makes ```lang fences parse with the real language
-          // (lazy-loaded), so the highlight style has tokens to color.
-          markdown({ base: markdownLanguage, codeLanguages: languages }),
-          livePreview((src) => resolveImageRef.current(src)),
-          mentions(
-            () => mentionItemsRef.current,
-            (id) => mentionLinkRef.current(id),
-          ),
+          // Markdown machinery only for .md — plain-text notes get a bare editor.
+          ...(plainTextRef.current
+            ? []
+            : [
+                // codeLanguages makes ```lang fences parse with the real language
+                // (lazy-loaded), so the highlight style has tokens to color.
+                markdown({ base: markdownLanguage, codeLanguages: languages }),
+                livePreview((src) => resolveImageRef.current(src)),
+                mentions(
+                  () => mentionItemsRef.current,
+                  (id) => mentionLinkRef.current(id),
+                ),
+              ]),
+          linkify((target) => onOpenLinkRef.current(target)),
           EditorView.lineWrapping,
           placeholder("Capture a thought…"),
           Prec.high(
             keymap.of([
-              { key: "Mod-b", run: (v) => applyFormat(v, "bold") },
-              { key: "Mod-i", run: (v) => applyFormat(v, "italic") },
-              { key: "Mod-1", run: (v) => applyFormat(v, "h1") },
-              { key: "Mod-2", run: (v) => applyFormat(v, "h2") },
-              { key: "Mod-3", run: (v) => applyFormat(v, "h3") },
-              { key: "Mod-Shift-c", run: (v) => applyFormat(v, "code") },
-              // Ctrl+Shift+K stays VSCode's delete-line (defaultKeymap); the
-              // code-block format lives on the toolbar / menu / palette only.
-              // Docs/Word convention for lists; quote continues the row.
-              { key: "Mod-Shift-8", run: (v) => applyFormat(v, "bullet") },
-              { key: "Mod-Shift-7", run: (v) => applyFormat(v, "numbered") },
-              { key: "Mod-Shift-9", run: (v) => applyFormat(v, "quote") },
-              // Ctrl+K (the usual link binding) is the command palette.
-              { key: "Mod-Shift-l", run: (v) => applyFormat(v, "link") },
+              ...(plainTextRef.current
+                ? []
+                : [
+                    { key: "Mod-b", run: (v: EditorView) => applyFormat(v, "bold") },
+                    { key: "Mod-i", run: (v: EditorView) => applyFormat(v, "italic") },
+                    { key: "Mod-1", run: (v: EditorView) => applyFormat(v, "h1") },
+                    { key: "Mod-2", run: (v: EditorView) => applyFormat(v, "h2") },
+                    { key: "Mod-3", run: (v: EditorView) => applyFormat(v, "h3") },
+                    { key: "Mod-Shift-c", run: (v: EditorView) => applyFormat(v, "code") },
+                    // Ctrl+Shift+K stays delete-line (defaultKeymap) — the
+                    // code-editor reflex beats a rarely-chorded format; the
+                    // code-block format lives on the toolbar / menu / palette only.
+                    // Word-processor convention for lists; quote continues the row.
+                    { key: "Mod-Shift-8", run: (v: EditorView) => applyFormat(v, "bullet") },
+                    { key: "Mod-Shift-7", run: (v: EditorView) => applyFormat(v, "numbered") },
+                    { key: "Mod-Shift-9", run: (v: EditorView) => applyFormat(v, "quote") },
+                    // Ctrl+K (the usual link binding) is the command palette.
+                    { key: "Mod-Shift-l", run: (v: EditorView) => applyFormat(v, "link") },
+                  ]),
               // Windows-standard replace / go-to-line; searchKeymap's own
               // Mod-g (find next) loses to these — F3 still covers it.
               { key: "Mod-h", run: openSearchPanel },
@@ -392,6 +415,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           keymap.of([...searchKeymap, indentWithTab, { key: "Mod-Shift-z", run: redo }]),
           EditorView.domEventHandlers({
             paste: (event, v) => {
+              if (plainTextRef.current) return false;
               const files = Array.from(event.clipboardData?.files ?? []);
               const images = files.filter((f) => f.type.startsWith("image/"));
               if (images.length === 0) return false;
@@ -431,7 +455,13 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     // edits between renders and must not reset the editor.
   }, [docKey]);
 
-  return <div ref={containerRef} className="editor" hidden={hidden} />;
+  return (
+    <div
+      ref={containerRef}
+      className={plainText ? "editor editor-plain" : "editor"}
+      hidden={hidden}
+    />
+  );
 });
 
 export default Editor;
