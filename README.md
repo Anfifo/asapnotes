@@ -43,6 +43,9 @@ npm.cmd run tauri dev     # run the app (first Rust build is slow; later ones ar
 npm.cmd run tauri build   # produce the installer/bundle
 ```
 
+In VS Code, <kbd>F5</kbd> runs `tauri dev` in a debug terminal; stopping the session stops
+the app. Rust breakpoints need extra setup — see [docs/dev-environment.md](docs/dev-environment.md).
+
 Quality gates before finishing any change:
 
 ```powershell

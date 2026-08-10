@@ -12,6 +12,127 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-10)
+
+- [ ] **Canvas surface: project board, freeform canvas, ink — and the note-type
+      registry under them** (2026-08-10) — agreed design, **no code yet**. Requested
+      after feedback that heavy note-takers value a freeform page where text and
+      images are boxes dropped anywhere, plus the wish that clicking a project opens
+      a _view_ instead of only expanding a tree.
+
+  **Shape: one canvas engine, two node vocabularies.** Pan/zoom, hit testing,
+  selection, marquee, drag, resize, z-order are built once and configured twice —
+  (a) **project board**: nodes are note _files_, laid out freely, click opens the
+  tab; layout lives in the per-project config planned in the virtual-folders item
+  below; (b) **freeform canvas**: nodes are arbitrary content — text boxes, images,
+  ink. This is why the cheap half is a stepping stone rather than a detour.
+
+  **Editing inside a canvas: one live editor, N static blocks.** One CodeMirror
+  instance per text box would blow both RAM and mount time, so blocks render through
+  the existing preview path and a real editor mounts only in the focused block.
+
+  _Decisions taken 2026-08-10:_
+
+  - **Built natively in-tree — not as a plugin system.** The latency worry that
+    prompted the plugin idea is answered by lazy loading, not by an extension host:
+    a code-split canvas module loaded on tab activation costs nothing at idle.
+    Plugins buy third-party extensibility instead, which is a separate goal, and
+    loading untrusted code into a resident tray app is in direct tension with the
+    no-unrequested-network invariant. Also: canvas is currently the _only_ candidate
+    consumer, and an API designed for one consumer is the wrong API.
+  - **The seam is a note-type registry, not a plugin API.** A note type declares its
+    extensions, view provider, icon, and supported features; views become providers
+    (`editor` / `preview` / `canvas`) selected by type and dynamically imported.
+    This is worth doing on its own: that knowledge is scattered today across
+    `NOTE_EXTS` (notes.rs), `hasNoteExt` (paths.ts), Editor's `plainText` flag, and
+    md-only branches in App — and the settings-rework item below already asks for
+    exactly this registry (user-configurable note extensions + per-type colors).
+    Commands are the second registry and are already half-built via the Ctrl+K palette.
+  - **Format: JSONCanvas (open spec) + a custom ink node type.** Keeps plain boards
+    and canvases readable by other tools and by the planned MCP, instead of a private
+    schema. Accepted trade, recorded so it isn't rediscovered: JSONCanvas nodes are
+    axis-aligned rectangles with no rotation and no freehand, so the ink node is a
+    documented extension — a conforming reader will open the file but skip strokes.
+  - **No canvas library** (tldraw / konva / react-flow class). Pan/zoom over a
+    transform matrix is a few hundred lines; a library is idle rent plus a heavy
+    framework, both of which need a stronger case than this.
+  - **Idle-footprint rules, binding on the implementation:** (1) dynamic import only —
+    no top-level import of the canvas module or its deps, or every user pays for it
+    at startup; (2) no watchers, polling, or timers outside an open canvas; (3) a
+    canvas tab restored as the _active_ tab must still load on activation, not at
+    startup — otherwise persisted tabs quietly move the cost back into summon.
+  - **Undo is a canvas-level history stack.** CodeMirror owns undo per text block,
+    but move/resize/delete/z-order are canvas operations and users expect one Ctrl+Z.
+    Budget for it explicitly rather than discovering it late.
+
+  _Order and rough cost (build in this order — the cheap half proves the engine):_
+
+  1. **Project board** (~2–3 d) — note-file nodes, layout in per-project config.
+  2. **Freeform canvas** (~1 wk for a credible MVP) — surface + transforms ~2 d;
+     block model with lazy editor mount + images ~2 d; Rust read/write and
+     tab/explorer/search/draft integration ~2 d; unified undo ~1 d.
+  3. **Ink on top of images** (~2–3 d) — pointer events give pressure/tilt with a
+     real pen; expect a raster layer rather than thousands of SVG paths once stroke
+     counts grow, and decide erase semantics (whole-stroke vs. pixel) up front.
+
+  Images are largely free: `save_asset` / `import_asset`, the asset protocol, and
+  paste/drag-drop already exist.
+
+  _Deliberately deferred:_ a third-party plugin API — revisit only once a second
+  consumer exists to prove the shape, at which point the isolation model (sandboxed
+  view with a capability-gated bridge vs. process-isolated host) is the real
+  decision, not the contribution points. Handwriting recognition, node rotation,
+  and connectors/arrows are out of scope for the first pass.
+
+  _Overlaps to design together, not bolt on:_ the workspace/project-model doc (board
+  layout is per-project config) and the settings rework (the note-type registry is
+  the same registry). Both are below. **2026-08-10: settled in
+  [docs/project-model.md](project-model.md)**, with one correction to the assumption
+  above — board layout is **not** a config key but its own `board.canvas` JSONCanvas
+  file, whose nodes are the spec's `file` nodes. One format for both vocabularies,
+  readable by other tools and the planned MCP, and node drags stop rewriting a
+  settings file; costs one more visible file per project. The registry landed as
+  designed: `{ id, extensions, view, icon, features }`, where `view`/`icon` are ids
+  into in-tree tables (so a user can add extensions from JSON but never a view — the
+  native-not-plugin line, enforced by the data model), and `features` is a closed set
+  the chrome keys off instead of `isMarkdown`. `.canvas` ships as a type with
+  `view: "canvas"` behind the dynamic import.
+
+  **2026-08-10: the registry itself has shipped** (settings-rework item) — data in
+  `settings.json`, `features` gating the chrome, `view` narrowed in `src/noteTypes.ts`.
+  What canvas still owns of that seam: the `canvas` entry (deliberately not shipped —
+  nothing implements that view yet, and a listed `.canvas` opening as raw JSON is worse
+  than not listing it) and a real **view provider table**: with two views the table is one
+  branch in `Editor`, and the dynamic import belongs in it when the third arrives.
+
+  _Promote to `decisions/` when this work starts landing_ — at least two entries are
+  earned here: **"canvas is a native view, not a plugin"** (the seam, and why the
+  plugin API is deferred) and **"canvas files are JSONCanvas plus an ink extension"**
+  (which softens the plain-text-files-are-the-store line the same way the plain-text
+  formats item does, and should link to it).
+
+- [ ] **Dev environment for a public repo — questions written, F5 shipped** (2026-08-10) —
+      triggered by "why doesn't F5 work?": it did nothing because no launch config existed.
+      **Done:** [`.vscode/launch.json`](../.vscode/launch.json) committed (F5 launches
+      `@tauri-apps/cli/tauri.js dev` directly in the integrated terminal) and
+      `.gitignore` widened to let it through — previously only `extensions.json` was
+      un-ignored. First attempt used the `node-terminal` debug type running
+      `npm.cmd run tauri dev` and silently did nothing — terminal opened, Node version
+      probe printed, command never ran (confirmed by process scan: no cargo/rustc/
+      asapnotes.exe, nothing on 1420, while the same command in a plain terminal
+      reached `Running target\debug\asapnotes.exe` in 12 s). Invoking the CLI script
+      directly drops the shell from the path, which also makes the config portable.
+      Chosen over a Rust-debugging config, which needs a debug adapter
+      (CodeLLDB or C/C++) that isn't installed here: verifying it wasn't possible, and
+      unverified config shouldn't go into a repo about to be public.
+      **Open:** everything else about the dev environment is written up as a question
+      list in [`dev-environment.md`](dev-environment.md) — license (the one real
+      blocker), CI, tests, toolchain pinning, CONTRIBUTING + what happens to CLAUDE.md,
+      and the small day-one embarrassments (stray `test.md`, stale README status, no
+      screenshot). It ends in an ordered decision checklist; nothing there is
+      implemented. Lands together with the "Prepare repo for going public" item below,
+      which owns the _content_ half (scrubs, history) while this owns the machinery.
+
 ## Today (2026-08-09)
 
 - [ ] **Explorer: easier creation, wider resize, context menus everywhere**
@@ -38,6 +159,28 @@ The AI (or anyone) working on this repo keeps this file current while working:
       folder `<details>` are uncontrolled). Known wrinkle: a folder auto-opened
       to host the create row closes again after creation (React drops the
       forced `open` attr) — reveal-active-note (Tier 3) is the real fix.
+- [ ] **Explorer context menu: create folder + add virtual folder** (2026-08-10) —
+      requested, not designed yet. Right-clicking in the explorer (empty body,
+      project heading, folder heading) should offer (a) **New folder** — a real
+      directory on disk, created inline in the same name-first row the new-note
+      flow already uses; and (b) **Add virtual folder** — attach a folder that
+      does _not_ live under the project's disk tree, i.e. the virtual-entry half
+      of the per-project file config item below (which also owns the "color
+      virtual entries differently" rule). (a) is a small addition to the existing
+      context menus (new Rust command + a `kind` on the inline create row);
+      (b) can't ship before the project-config format is decided, since the
+      mapping has to persist somewhere. ~~Open: does "add" mean pick an existing
+      folder, or create one elsewhere and link it?~~ **Answered 2026-08-10 in
+      [docs/project-model.md](project-model.md): pick.** One verb — mount an
+      existing folder at a name — because the system folder picker already creates
+      folders, so a second flow would be a second code path for nothing. (b) is
+      unblocked: mounts persist in the app-data `settings.json` project entry
+      (never in the project file — they carry absolute machine paths). Explorer
+      marking is settled too: badge + real path on the **mount root only**, subtle
+      inherited tint on its subtree — inside a mounted folder the files really do
+      live together, so badging every descendant reads as breakage. 2026-08-10: the
+      `mounts` key now exists in `settings.json` and round-trips untouched, so (b) only
+      waits on step 4 of the project-model implementation (resolution both ways).
 - [ ] **Per-project file config ("virtual folders") + new-project location**
       (2026-08-09) — decided: **design-doc only for now**, folded into the
       workspace/project-model design item below; no code yet (it shapes sync
@@ -51,12 +194,25 @@ The AI (or anyone) working on this repo keeps this file current while working:
       2026-08-09 addition: the explorer should **color these virtual entries
       differently** — files/folders shown under a project but not physically
       living in its tree must read distinctly from what's really there.
+      **2026-08-10: designed in [docs/project-model.md](project-model.md)** — both
+      halves answered. (a) creation asks notes root vs. picked folder, with a
+      "use the repository's `docs/`" option when `.git` is present, so a manual
+      pick lands where a scanned repo would. (b) virtual grouping is
+      **folder-granular mounts, never per-file** — per-file membership is exactly
+      the manifest [folders are projects](decisions/2026-08-07-folders-are-projects.md)
+      rejected. The unification worth remembering: _a project is a location plus
+      zero or more mounts_, so notes-root projects, linked folders, and virtual
+      folders stop being three different things and today's external mapping
+      becomes the degenerate case. Ids keep their shape, so drafts, tabs, palette
+      and search need no migration.
 
 - [ ] **Settings rework: menubar entry, theme, file-type config, per-project config**
       (2026-08-09) — captured design intent, needs design before code. (a) **Settings
       moves to the top**: its own menubar entry; Help probably stops being a top-level
-      menu and folds into Settings. (b) **Theme selector** (light/dark) lives here —
-      this is the home for the Tier 3 theme-selector item. (c) **App-level file-type
+      menu and folds into Settings. (b) **Theme selector** — done 2026-08-10 (see the
+      Tier 3 item below); it already lives in Settings under a new Appearance section,
+      and its setting sits in localStorage, so it moves into whatever JSON settings
+      file this item lands on. (c) **App-level file-type
       config**: which extensions count as notes (today hardcoded in
       `NOTE_EXTS`/`hasNoteExt`), plus optional per-type color/highlight in the
       explorer; editable in the UI **and** as a plain JSON settings file (and via MCP
@@ -68,7 +224,53 @@ The AI (or anyone) working on this repo keeps this file current while working:
       usual `.md`/plain-text set; JSON and other non-text formats stay excluded
       unless someone opts them in. Overlaps the virtual-folders item above and the
       workspace/project-model design doc — the per-project config file is likely
-      the same file; design them together.
+      the same file; design them together. **2026-08-10: (c) and (d) are designed
+      in [docs/project-model.md](project-model.md)**; (a) the menubar move and the
+      Help fold are still open UI work, unaffected by it. Two files, not one, and
+      the seam is **trust, not scope**: anything that grants access or names a
+      machine path is personal (app-data `settings.json`), everything portable is
+      `<project>/.asapnotes.json` — because a project file arrives on other
+      machines by `git pull`, so an MCP grant or a mount living there would let a
+      clone widen what the app can reach. The project file is created lazily and
+      `.gitignore` is never touched, so linking a dozen repos writes nothing.
+      Exclusions: the **default stays code** (registry allowlist + skip dirs), since
+      the pattern idiom for "deny everything except" is a foot-gun; a project
+      overrides with **one ordered list, last match wins**, where `!src/**/*.rs`
+      both re-includes and waives the type allowlist. Note the startup constraint
+      recorded there: `localStorage` stays as a boot mirror for theme/zoom/explorer/
+      tabs, because those are read before first paint and summon latency outranks
+      config purity.
+
+  **2026-08-10 — (c) landed as data; steps 1–2 of the doc's order are in.** New
+  `src-tauri/src/settings.rs` owns app-data `settings.json`: the whole documented schema
+  (so a write never drops a key it didn't model), parsed once into app state and replaced
+  on write, re-read when the frontend asks on window focus. `external_projects.json` is
+  migrated into `projects` entries on first launch and deleted after the new file is
+  safely written (temp + rename — this file now holds every project mapping). A parse
+  failure is deliberately **not** fatal: shipped defaults take over, the message is
+  toasted once, and writes are refused so the file the user has to fix is never
+  overwritten. Appearance dual-writes — `localStorage` for the pre-paint read, the file as
+  source of truth, reconciled from the file once it loads (tabs stay localStorage-only:
+  session state, not settings). `notesRoot` is deliberately **not** written yet — honoring
+  a hand-edited root is a real new capability with no UI, no validation and no answer for
+  existing notes; it belongs with (a)/(b) below.
+
+  The **note-type registry is that file's `noteTypes`**, and it retired the duplicated
+  knowledge: `NOTE_EXTS` and `has_note_ext` (notes.rs) are now `Settings::is_note`,
+  `hasNoteExt`/`isMarkdown` (paths.ts) are gone in favour of `src/noteTypes.ts`, the
+  Editor's `plainText` flag became `view` + `features`, and App's md-only branches became
+  `preview` / `format` / `images` / `mentions` / `live-preview` checks. One list, read by
+  both sides from the same file. Two deliberate deltas from before: `.markdown` joins the
+  allowlist, and a dropped image now needs the `images` feature (it used to insert a
+  markdown image link into a `.log`). The `canvas` type is **not** shipped yet — nothing
+  implements that view, so it lands with the canvas work.
+
+  Still open here: **(a)** the menubar move and the Help fold; **(b)** the explorer's
+  per-type icon and color, and a UI for editing note types — `icon` and `color` are carried
+  in the file but nothing renders them yet, so editing them by hand currently does nothing;
+  **(d)** the per-project `.asapnotes.json` and its `files` patterns, which are steps 3–5 in
+  the project-model item below.
+
 - [ ] **Ctrl+Click links in every editor** (2026-08-09) — agreed design (Ctrl+Click
       chosen over plain click — plain click must keep placing the cursor): new CM
       extension `src/links.ts`, active in markdown and plain-text editors alike.
@@ -107,8 +309,12 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 - [ ] **Plain-text note formats beyond .md** (2026-08-09) — agreed design (extension
       allowlist chosen over content-sniffing and over waiting for external-file
-      mappings): `NOTE_EXTS` in `notes.rs` / `hasNoteExt` in `paths.ts` (kept in
-      sync) — md, txt, text, tex, log, csv, json, yaml, yml, ini, cfg, toml, xml.
+      mappings): md, txt, text, tex, log, csv, json, yaml, yml, ini, cfg, toml, xml.
+      **2026-08-10: the two hardcoded lists this shipped with (`NOTE_EXTS` in `notes.rs`,
+      `hasNoteExt` in `paths.ts`) are gone** — the allowlist is now the note-type
+      registry's union of extensions, in `settings.json`, read by both sides from the one
+      file, and "only `.md` gets markdown features" is now "each type declares its
+      features". `.markdown` joined the set on the way through.
       All are listed, opened, searched, drafted, renamed; only `.md` gets markdown
       features (live styling, Ctrl+E preview, @-mentions, formatting, image paste) —
       others open as a bare text editor with those affordances hidden (toolbar,
@@ -277,11 +483,36 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
     same project — the guard fires before anything touches disk.
   - [ ] **Spellcheck** — Win11 Notepad has it; CM's content is contenteditable, so
         `EditorView.contentAttributes.of({ spellcheck: "true" })` gets native squiggles.
-  - [ ] **Theme selector** (light/dark/system) instead of `prefers-color-scheme` only.
-        Real payoff beyond preference: the note at the top of `livePreview.ts` explains
-        every syntax color had to sit at mid-lightness because a `HighlightStyle` can't
-        follow a media query — a theme class on the root removes that constraint and lets
-        both themes get properly tuned colors.
+  - **Theme selector** (light/dark/system) — implemented 2026-08-10, pending hands-on
+    check. `src/theme.ts` resolves the setting (system → `matchMedia`) and stamps the
+    result as `data-theme` on the root element; `initTheme()` runs in `main.tsx`
+    **before** `createRoot` so nothing ever paints in the wrong theme, and keeps
+    following the OS while the setting stays "system". Stored in localStorage
+    alongside zoom/explorer width — deliberately not a JSON settings file yet, since
+    that file's format belongs to the settings-rework item above. The dark block in
+    `App.css` changed from `@media (prefers-color-scheme: dark)` to
+    `:root[data-theme="dark"]` with its rules left nested — a two-line diff instead of
+    prefixing ~90 selectors; verified the build flattens the nesting to plain
+    selectors, so there's no runtime dependency on nesting support.
+    **The real payoff, now unblocked:** the twelve syntax colors in `livePreview.ts`
+    went from fixed mid-lightness compromises to `var(--syn-*)`, defined per theme in
+    `App.css` and tuned against the editor's own background rather than against
+    white: eleven of twelve tokens clear 4.2:1 on both grounds, where the old single
+    set had nine of twelve under 3.9:1 on light (the bleached look). UI is a
+    segmented Light/Dark/System picker in a new Settings → Appearance section.
+    Gates all clean.
+    **Palette reviewed and approved 2026-08-10** via a before/after proof sheet —
+    both grounds side by side with an old/new toggle, since the alternative was
+    hunting for a code fence in the running app. One value is deliberately _not_ an
+    improvement by the numbers: `--syn-marker` on dark went 4.76 → 4.14, because the
+    `##`/`**`/`---` markers are meant to recede (and `.cm-syntax` dims them a further
+    0.6 opacity on top). It's the first value to raise if they read faint at real
+    size; on light it sits at 2.81, fine for a marker and not for anything you read.
+    _Still unverified:_ the switch itself in a running app — the segmented control,
+    the light↔dark flip, persistence across restart, and that nothing flashes the
+    wrong theme at startup. The colors are settled; the mechanism isn't.
+    Candidate for a decisions/ entry once that's confirmed: the "why" is that an
+    explicit stamped attribute is what lets a `HighlightStyle` be theme-aware at all.
   - [ ] **Breadcrumb path** for deep external notes — the tab shows the basename only, so
         two `README` tabs are indistinguishable.
   - [ ] **Explorer**: F2 inline rename, drag notes between projects, filter box, keyboard
@@ -289,13 +520,15 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
   - [ ] **Scrollbar search-match markers** + `highlightSelectionMatches`.
   - [ ] **Ctrl+Shift+P palette alias** + `>` prefix support in Ctrl+P (VSCode muscle memory).
 
-  Suggested next slice: search, external-change detection and toasts have all
-  landed, and the remaining Tier 2 items (multi-cursor, tab reorder, split view)
-  are optional polish. The best-value item left is Tier 3's **theme selector** —
-  it isn't only preference: the note atop `livePreview.ts` explains every syntax
-  colour had to sit at mid-lightness because a `HighlightStyle` can't follow a
-  media query, so a theme class on the root is what unblocks properly tuned
-  colours in both themes.
+  Suggested next slice: search, external-change detection, toasts and the theme
+  selector have all landed, and the remaining Tier 2 items (multi-cursor, tab
+  reorder, split view) are optional polish. What's left in this list is genuinely
+  small — spellcheck is a one-liner, the remaining `title=` → `data-tip` sites are
+  mechanical. The next item with real leverage isn't in this list at all: it was the
+  **project-model design doc**, which four separate items above were blocked behind —
+  written 2026-08-10 as [docs/project-model.md](project-model.md), so the leverage now
+  sits in the first slice of _implementing_ it (settings file + note-type registry are
+  the natural first cut, since they unblock the rest).
 
 - [ ] **Global hotkey summon + tray residency** (2026-08-06) — the defining feature. Close
       hides to tray instead of exiting; window pre-created and hidden; global hotkey toggles
@@ -532,6 +765,10 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       commit carries these in docs, so scrubbing files can't clean it — publish a
       fresh-history repo (squash to one clean initial commit, full history stays
       on a private remote). Also: delete stray repo-root `test.md`.
+      This item owns the **content** half; the machinery half (license, CI, tests,
+      toolchain pinning, CONTRIBUTING) is written up as a question list in
+      [`dev-environment.md`](dev-environment.md). Both have to land before flipping
+      visibility.
 - [ ] **MCP sidecar** (2026-08-06) — TypeScript stdio MCP server in this repo exposing
       list/read/write/search over the notes root, so any MCP client can go over
       the notes. 2026-08-09 direction agreed: (a) **access scope as a setting** —
@@ -549,13 +786,31 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       (find the decision that answers "why is it like this?") and follow it
       (append TODO items, draft decision entries) in any project using the
       pattern. Next concrete step: short design doc for the tool surface.
-- [ ] **Workspace/project model — design doc first** (2026-08-06) — grouping levels user →
-      project → notes (Postman-like), including _mappings_ to files that live outside the
-      notes root (VS Code-like "open anything"). Shapes storage and future cloud sync — design
-      before code. 2026-08-09: scope grew to cover **per-project file config /
-      "virtual folders"** and the new-project location question (see the Today
-      item) — decided design-doc-first there too. See
-      [decisions/2026-08-06-markdown-files-are-the-store.md](decisions/2026-08-06-markdown-files-are-the-store.md).
+      **2026-08-10: (a) is settled by [docs/project-model.md](project-model.md)** —
+      the grant is `off` / `read` / `write` per project, stored in the **personal**
+      app-data file and nowhere else, defaulting to `off` for anything linked from
+      outside the notes root. That placement is the whole point of splitting config
+      by trust: no file in any repository can widen the sidecar's reach. The
+      sidecar also sees only what a project's file rules list, so exclusions are an
+      access boundary, not just a display one. (b) and (c) still need the tool-surface
+      doc.
+- [ ] **Project model — implementation, steps 3–6** (2026-08-10) — the design is
+      [docs/project-model.md](project-model.md), promoted to
+      [a project is a location plus mounts](decisions/2026-08-10-a-project-is-a-location-plus-mounts.md)
+      and [config splits by trust](decisions/2026-08-10-config-splits-by-trust.md); the doc
+      carries the order and the cost-to-existing-code list. **Steps 1–2 landed 2026-08-10**
+      (see the settings-rework item above for what that covered). Remaining, each useful
+      alone: **(3) projects as location** — unify notes-root and linked projects behind one
+      entry shape, add the where-does-it-live prompt to creation (this is where
+      user-visible behavior starts changing); **(4) mounts** — resolution both ways,
+      explorer marking, the context-menu entry; **(5) `files` patterns** — the override path
+      plus the floor; **(6) consumers** — the MCP grant and `board.canvas`, each its own
+      item. Traps to carry forward, all listed in the doc: `note_paths` must learn about
+      mounts or mounted notes are listed and openable yet silently unsearchable;
+      `assets_dir_for` needs the note id, not the project name; `move_note`'s `fs::rename`
+      needs a copy-then-delete fallback across volumes; `MAX_DEPTH` counts id segments, so
+      cap mount `at` depth at creation where the error can be explained; removing a mount
+      orphans drafts filed under its ids.
 
 ## Pending / future direction
 
@@ -582,7 +837,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       auto-update (static JSON manifest + installer — could live on
       asapnotes.anfifo.com), GitHub Releases + winget as channels. Other
       platforms (and mobile) after Windows is solid. The settings About section
-      already shows auto-update as "planned". Update *policy* — the consent
+      already shows auto-update as "planned". Update _policy_ — the consent
       model, the settings, the 7-day prompt — is its own item below.
 - [ ] **Update settings + no-unrequested-network policy** (2026-08-09) — the app
       must never open a connection the user didn't ask for: no telemetry, no
@@ -593,7 +848,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       available, the escape hatch that makes every other default safe to leave off;
       (b) **auto-update toggle** — when on, checks on a throttle (proposal: at most
       once every 7 days, never per-launch) and never installs without asking;
-      (c) **one-time consent prompt ~7 days after install** — deliberately *not* at
+      (c) **one-time consent prompt ~7 days after install** — deliberately _not_ at
       first run (that's install-ceremony noise nobody reads, and consent given to
       dismiss a dialog isn't consent): after a week of real use, ask once whether to
       enable update checks, remember the answer, never ask again. Until answered,
