@@ -6,6 +6,23 @@
   background-color: #f6f6f6;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+
+  /* Editor syntax colours. Variables because the highlight style that consumes
+     them (livePreview.ts) is built once and can't re-run per theme; the dark
+     block at the end of this file overrides them. Tuned against the editor's
+     own background (.content-panel), not against white. */
+  --syn-link: #0b5cad;
+  --syn-quote: #63696f;
+  --syn-muted: #6e6e6e;
+  --syn-marker: #949494;
+  --syn-keyword: #8b30ad;
+  --syn-string: #2c7a34;
+  --syn-comment: #6e6e6e;
+  --syn-number: #9a5518;
+  --syn-type: #10736b;
+  --syn-property: #6b3fc4;
+  --syn-variable: #2f6099;
+  --syn-punct: #767676;
 }
 
 html,
@@ -1084,6 +1101,37 @@ body,
   overflow-wrap: anywhere;
 }
 
+/* Segmented picker — one visible group of mutually exclusive choices, so the
+   current setting is readable without opening anything. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid #d5d5d5;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.segmented button {
+  font: inherit;
+  font-size: 0.78rem;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid #d5d5d5;
+}
+
+.segmented button:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.segmented button.active {
+  background: rgba(217, 154, 6, 0.22);
+}
+
 .settings-remove,
 .settings-edit {
   font: inherit;
@@ -1419,11 +1467,26 @@ body,
   color: inherit;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
+/* Dark theme. Keyed off the resolved theme that theme.ts stamps on the root
+   element before the first paint, rather than reading `prefers-color-scheme`
+   here — that is what lets an explicit Light/Dark choice override the OS. The
+   rules stay nested, so this is the same block it has always been. */
+:root[data-theme="dark"] {
+  color: #f6f6f6;
+  background-color: #2f2f2f;
+
+  --syn-link: #74aeff;
+  --syn-quote: #a8adb4;
+  --syn-muted: #a0a0a0;
+  --syn-marker: #8f8f8f;
+  --syn-keyword: #d29bef;
+  --syn-string: #79c97e;
+  --syn-comment: #a0a0a0;
+  --syn-number: #e0a05c;
+  --syn-type: #5cc7bb;
+  --syn-property: #bda6f0;
+  --syn-variable: #8fb8e8;
+  --syn-punct: #969696;
 
   .explorer,
   .top-panel,
@@ -1652,6 +1715,19 @@ body,
   .settings-edit:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #f6f6f6;
+  }
+
+  .segmented,
+  .segmented button + button {
+    border-color: #4a4a4a;
+  }
+
+  .segmented button:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .segmented button.active {
+    background: rgba(217, 154, 6, 0.28);
   }
 
   .editor .cm-tooltip.cm-tooltip-autocomplete {

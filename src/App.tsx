@@ -9,20 +9,14 @@ import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
-import {
-  fileOf,
-  hasNoteExt,
-  isMarkdown,
-  projectOf,
-  relativePath,
-  resolvePath,
-  subdirOf,
-} from "./paths";
+import { fileOf, projectOf, relativePath, resolvePath, subdirOf, winPath } from "./paths";
+import { featuresOf, hasFeature, isNoteFile, noteTypeOf, setNoteTypes, viewOf } from "./noteTypes";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
 import { ScanProjects } from "./ScanProjects";
 import { SearchView } from "./Search";
 import { Settings } from "./Settings";
+import { getTheme, setTheme, type Theme } from "./theme";
 import { StatusBar } from "./StatusBar";
 import { ToastStack } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -47,6 +41,11 @@ const EXPLORER_MIN_W = 168;
 const EDITOR_MIN_W = 280;
 
 const clampZoom = (z: number) => Math.min(3, Math.max(0.5, Math.round(z * 10) / 10));
+
+/** A stored (or hand-edited) explorer width, held to what this window can show.
+ * The resize drag has its own limits — this is the boot/settings clamp. */
+const clampExplorerWidth = (w: number) =>
+  Math.min(Math.max(EXPLORER_MIN_W, w), Math.max(EXPLORER_MIN_W, window.innerWidth - EDITOR_MIN_W));
 
 // Stroke icons (Lucide-style paths) for the symbolic buttons — text glyphs
 // like ``` and ❝ read poorly at toolbar size, and emoji render in color that
@@ -196,7 +195,8 @@ function App() {
   const [notes, setNotes] = useState<api.FileInfo[]>([]);
   const [drafts, setDrafts] = useState<api.FileInfo[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
-  // External projects: name → absolute folder path, linked in place.
+  // Registered projects that live outside the notes root: name → absolute
+  // folder path, linked in place. Mirrors the located entries of settings.json.
   const [externals, setExternals] = useState<Record<string, string>>({});
   const [scanResults, setScanResults] = useState<api.ProjectCandidate[] | null>(null);
   const [rootPath, setRootPath] = useState("");
@@ -228,14 +228,9 @@ function App() {
   // Bumped on every Ctrl+Shift+F so a repeat press refocuses and selects the
   // query box even when the search view is already showing.
   const [searchFocus, setSearchFocus] = useState(0);
-  const setExplorerPinned = (pinned: boolean) => {
-    setExplorerPinnedState(pinned);
-    localStorage.setItem("explorerPinned", pinned ? "1" : "0");
-  };
   const [explorerWidth, setExplorerWidth] = useState(() => {
     const saved = Number(localStorage.getItem("explorerWidth"));
-    const max = Math.max(EXPLORER_MIN_W, window.innerWidth - EDITOR_MIN_W);
-    return saved > 0 ? Math.min(Math.max(EXPLORER_MIN_W, saved), max) : EXPLORER_DEFAULT_W;
+    return saved > 0 ? clampExplorerWidth(saved) : EXPLORER_DEFAULT_W;
   });
   // A pinned explorer docks while it leaves the editor a usable strip; a window
   // squeezed past that collapses it to the rail, and reopening floats it.
@@ -280,6 +275,7 @@ function App() {
     const saved = Number(localStorage.getItem("zoom"));
     return saved > 0 ? clampZoom(saved) : 1;
   });
+  const [theme, setThemeState] = useState<Theme>(getTheme);
 
   const editorRef = useRef<EditorHandle>(null);
   const contentRef = useRef("");
@@ -322,12 +318,52 @@ function App() {
       .catch(() => {});
   }, []);
 
-  const setZoom = useCallback((z: number) => {
+  // Appearance lives in settings.json; localStorage stays its boot mirror,
+  // because theme and zoom are read before the first paint and summon latency
+  // outranks config purity. False until the file has been read, so the values
+  // that mirror produced are never written back over it.
+  const appearanceSyncedRef = useRef(false);
+  // Last reported settings-file problem, so a broken file doesn't toast on
+  // every focus — only when the message changes.
+  const settingsErrorRef = useRef<string | null>(null);
+  const appearanceRef = useRef<api.Appearance>({});
+  appearanceRef.current = {
+    theme,
+    zoom,
+    explorer: { width: explorerWidth, pinned: explorerPinned },
+  };
+
+  /** Write appearance to settings.json. `patch` carries the value the caller
+   * just changed — its state hasn't landed in `appearanceRef` yet. */
+  const persistAppearance = useCallback(
+    (patch: api.Appearance) => {
+      if (!appearanceSyncedRef.current) return;
+      void api
+        .setAppearance({ ...appearanceRef.current, ...patch })
+        .catch((err: unknown) => toast(`Couldn't save that setting — ${errText(err)}`));
+    },
+    [toast],
+  );
+
+  /** Zoom the webview and mirror the factor for the next boot. */
+  const applyZoom = useCallback((z: number) => {
     const next = clampZoom(z);
     setZoomState(next);
     localStorage.setItem("zoom", String(next));
     void getCurrentWebview().setZoom(next);
+    return next;
   }, []);
+
+  const setZoom = useCallback(
+    (z: number) => persistAppearance({ zoom: applyZoom(z) }),
+    [applyZoom, persistAppearance],
+  );
+
+  const setExplorerPinned = (pinned: boolean) => {
+    setExplorerPinnedState(pinned);
+    localStorage.setItem("explorerPinned", pinned ? "1" : "0");
+    persistAppearance({ explorer: { width: explorerWidth, pinned } });
+  };
 
   // Editor status flows straight to the StatusBar through this ref — routing
   // it through App state would re-render the whole tree on every keystroke.
@@ -428,18 +464,62 @@ function App() {
     [flushDraft, showDoc],
   );
 
-  /** Note id for an absolute path inside the notes root or a linked project,
-   * null when the path lives outside both. */
+  /** Location of a project: its registered folder, else a notes-root subfolder.
+   * The one table the paths below and `noteIdOf` both read — the backend's
+   * `base_of` is the same rule, and the two must not disagree. */
+  const projectDirOf = useCallback(
+    (project: string | null) =>
+      project
+        ? (externalsRef.current[project] ?? `${rootPathRef.current}/${project}`)
+        : rootPathRef.current,
+    [],
+  );
+
+  /** Directory holding a note id (forward slashes). */
+  const noteDirOf = useCallback(
+    (id: string) => {
+      const sub = subdirOf(id);
+      const base = projectDirOf(projectOf(id));
+      return sub ? `${base}/${sub}` : base;
+    },
+    [projectDirOf],
+  );
+
+  /** Absolute filesystem path of a note id (Windows separators). */
+  const absPathOf = useCallback(
+    (id: string) => winPath(`${noteDirOf(id)}/${fileOf(id)}`),
+    [noteDirOf],
+  );
+
+  /** Absolute path of a folder id ("" = notes root, else project[/sub…]). */
+  const absDirOf = useCallback(
+    (dir: string) => {
+      if (!dir) return winPath(rootPathRef.current);
+      const [project, ...rest] = dir.split("/");
+      return winPath([projectDirOf(project), ...rest].join("/"));
+    },
+    [projectDirOf],
+  );
+
+  /** Note id for an absolute path inside the notes root or a registered
+   * project, null when the path lives outside both. The inverse of the
+   * backend's resolution, and it has to agree with it: bases are tried
+   * longest-first, so a project whose folder sits inside another's can't give
+   * one file two ids — two ids mean two shadow drafts and two tabs that
+   * overwrite each other. */
   const noteIdOf = useCallback((abs: string): string | null => {
     const relTo = (base: string) => {
       const rel = base ? relativePath(base, abs) : null;
       return rel && !rel.startsWith("../") ? rel : null;
     };
     const inRoot = relTo(rootPathRef.current);
+    // Directly in the root: the loose id, matching the backend, which resolves
+    // a single-segment id against the root whatever else claims that folder.
     if (inRoot && !projectOf(inRoot)) return inRoot;
-    // Root subfolders are projects, but a path may also land in a linked
-    // project's folder — that mapping owns the id shape.
-    for (const [name, dir] of Object.entries(externalsRef.current)) {
+    const located = Object.entries(externalsRef.current).sort(
+      ([, a], [, b]) => b.length - a.length,
+    );
+    for (const [name, dir] of located) {
       const rel = relTo(dir);
       if (rel) return `${name}/${rel}`;
     }
@@ -461,10 +541,10 @@ function App() {
             ? target.replace(/\\/g, "/")
             : resolvePath(noteDirRef.current, target);
           const id = noteIdOf(abs);
-          if (id && hasNoteExt(id)) {
+          if (id && isNoteFile(id)) {
             await openItem({ id, isNote: true }, new Set(draftsRef.current.map((d) => d.name)));
           } else {
-            await api.openExternal(abs.replace(/\//g, "\\"));
+            await api.openExternal(winPath(abs));
           }
         } catch (err) {
           console.error("open link failed:", err);
@@ -562,7 +642,7 @@ function App() {
   );
 
   const togglePreview = useCallback(() => {
-    if (!openRef.current || !isMarkdown(openRef.current.id)) return;
+    if (!openRef.current || !hasFeature(openRef.current.id, "preview")) return;
     if (modeRef.current === "edit") {
       setInitialDoc(contentRef.current);
       setMode("preview");
@@ -594,17 +674,15 @@ function App() {
   /** Markdown link for an `@`-mentioned note: relative to the open note's
    * directory, falling back to the app's root-relative id when no relative
    * path exists (target on another drive). */
-  const mentionLink = useCallback((id: string) => {
-    const label = fileOf(id).replace(/\.md$/, "");
-    const project = projectOf(id);
-    const base = project
-      ? (externalsRef.current[project] ?? `${rootPathRef.current}/${project}`)
-      : rootPathRef.current;
-    const rest = project ? id.slice(project.length + 1) : id;
-    const target = relativePath(noteDirRef.current, `${base}/${rest}`) ?? id;
-    // CommonMark: destinations with spaces (or parens) need <> wrapping.
-    return /[\s()]/.test(target) ? `[${label}](<${target}>)` : `[${label}](${target})`;
-  }, []);
+  const mentionLink = useCallback(
+    (id: string) => {
+      const label = fileOf(id).replace(/\.md$/, "");
+      const target = relativePath(noteDirRef.current, `${noteDirOf(id)}/${fileOf(id)}`) ?? id;
+      // CommonMark: destinations with spaces (or parens) need <> wrapping.
+      return /[\s()]/.test(target) ? `[${label}](<${target}>)` : `[${label}](${target})`;
+    },
+    [noteDirOf],
+  );
 
   /** Persist a pasted image and hand back the note-relative link path. */
   const pasteImage = useCallback(
@@ -625,23 +703,62 @@ function App() {
     [assetLink, toast],
   );
 
+  /** Adopt a settings document: the note-type registry, project locations, and
+   * appearance — the file is the source of truth, so it wins over the boot
+   * mirror the first paint read. */
+  const applySettings = useCallback(
+    ({ settings, error }: api.SettingsRead) => {
+      if (error && error !== settingsErrorRef.current) toast(error);
+      settingsErrorRef.current = error;
+      setNoteTypes(settings.noteTypes);
+      setExternals(
+        Object.fromEntries(
+          Object.entries(settings.projects).flatMap(([name, p]) =>
+            p.path ? [[name, p.path]] : [],
+          ),
+        ),
+      );
+      const { theme: saved, zoom: savedZoom, explorer } = settings.appearance;
+      if ((saved === "light" || saved === "dark" || saved === "system") && saved !== getTheme()) {
+        setTheme(saved);
+        setThemeState(saved);
+      }
+      if (typeof savedZoom === "number" && clampZoom(savedZoom) !== zoomRef.current) {
+        applyZoom(savedZoom);
+      }
+      if (typeof explorer?.width === "number") {
+        const width = clampExplorerWidth(explorer.width);
+        setExplorerWidth(width);
+        localStorage.setItem("explorerWidth", String(width)); // mirror only
+      }
+      if (typeof explorer?.pinned === "boolean") {
+        setExplorerPinnedState(explorer.pinned);
+        localStorage.setItem("explorerPinned", explorer.pinned ? "1" : "0"); // mirror only
+      }
+      // From here on an appearance change is the user's, and gets written back.
+      appearanceSyncedRef.current = true;
+    },
+    [applyZoom, toast],
+  );
+
   // Startup: recover the most recent draft; else open the most recent note;
   // else start on a blank capture.
   useEffect(() => {
     void (async () => {
-      const [ns, ds, ps, ext, root] = await Promise.all([
+      const [ns, ds, ps, cfg, root] = await Promise.all([
         api.listNotes(false),
         api.listDrafts(),
         api.listProjects(),
-        api.listExternalProjects(),
+        api.getSettings(),
         api.notesRootPath(),
       ]);
       setNotes(ns);
       setDrafts(ds);
       setProjects(ps);
-      setExternals(ext);
+      applySettings(cfg);
       setRootPath(root);
-      // External projects can be big — walk them after the first paint.
+      // Projects living outside the notes root can be big — walk them after
+      // the first paint.
       void api.listNotes().then(setNotes);
       // Restored tabs win: reopen the last active one (content loads here, the
       // rest stay lazy). A tab whose note vanished is dropped and we fall back.
@@ -673,7 +790,7 @@ function App() {
         showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
       }
     })();
-  }, [showDoc]);
+  }, [showDoc, applySettings]);
 
   // Tabs (and which one is active) survive restarts.
   useEffect(() => {
@@ -693,15 +810,17 @@ function App() {
   }, [open]);
 
   // Dropped image files are intercepted by Tauri (we get paths, not File
-  // objects): copy them into assets/ and insert the link at the cursor.
+  // objects): copy them into assets/ and insert the link at the cursor. Only
+  // for a note whose type takes images — an image link in a .log is noise.
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent(async (event) => {
       if (event.payload.type !== "drop" || modeRef.current !== "edit") return;
+      const cur = openRef.current;
+      if (!cur || !hasFeature(cur.id, "images")) return;
       for (const path of event.payload.paths) {
         if (!IMAGE_FILE.test(path)) continue;
         try {
-          const cur = openRef.current;
-          const rel = await api.importAsset(path, cur ? projectOf(cur.id) : null);
+          const rel = await api.importAsset(path, projectOf(cur.id));
           editorRef.current?.insertText(`![](${assetLink(rel)})\n`);
         } catch (err) {
           toast(`Couldn't import that image — ${errText(err)}`);
@@ -716,15 +835,15 @@ function App() {
   // File → Scan folder for projects: pick a folder, find README-marked
   // subfolders, confirm in a sheet, link them in place as external projects.
   const refreshProjects = useCallback(async () => {
-    const [ns, ps, ext] = await Promise.all([
+    const [ns, ps, cfg] = await Promise.all([
       api.listNotes(),
       api.listProjects(),
-      api.listExternalProjects(),
+      api.getSettings(),
     ]);
     setNotes(ns);
     setProjects(ps);
-    setExternals(ext);
-  }, []);
+    applySettings(cfg);
+  }, [applySettings]);
 
   const scanForProjects = useCallback(async () => {
     const dir = await openFolderDialog({ directory: true, title: "Scan a folder for projects" });
@@ -884,10 +1003,16 @@ function App() {
   // drafts, and re-sync the open note against its file. The rule: a
   // clean buffer reloads silently (in place, cursor kept); a dirty one keeps
   // editing and the stale mtime makes Ctrl+S raise the overwrite confirm.
+  // Settings are re-read on the same signal: hand-editing settings.json while
+  // the app runs works, with no watcher and no idle cost.
   useEffect(() => {
     const onFocus = () => {
       void api.listNotes().then(setNotes);
       void api.listDrafts().then(setDrafts);
+      void api
+        .getSettings(true)
+        .then(applySettings)
+        .catch((err: unknown) => toast(`Couldn't read settings — ${errText(err)}`));
       const name = openRef.current?.name;
       if (!name) return;
       void (async () => {
@@ -908,7 +1033,7 @@ function App() {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, []);
+  }, [applySettings, toast]);
 
   // `summoned` carries the hotkey-press epoch ms from Rust; the next animation
   // frame approximates when the shown window actually painted.
@@ -951,16 +1076,13 @@ function App() {
       })),
   ];
 
-  // Markdown-only affordances (preview, formatting) hide for plain-text notes.
-  const openIsMd = open ? isMarkdown(open.id) : true;
-  // The open note's real directory (for resolving relative image links) — an
-  // external project's base is its mapped folder, and deep notes add subdirs.
+  // Affordances the open note's type declares; with nothing open the chrome
+  // shows, since a new note is markdown.
+  const canPreview = open ? hasFeature(open.id, "preview") : true;
+  const canFormat = open ? hasFeature(open.id, "format") : true;
+  // The open note's real directory (for resolving relative image links).
   const currentProject = open ? projectOf(open.id) : null;
-  const projectBase = currentProject
-    ? (externals[currentProject] ?? `${rootPath}/${currentProject}`)
-    : rootPath;
-  const noteSubdir = open ? subdirOf(open.id) : "";
-  const noteDir = noteSubdir ? `${projectBase}/${noteSubdir}` : projectBase;
+  const noteDir = open ? noteDirOf(open.id) : rootPath;
   noteDirRef.current = noteDir;
 
   const submitNewProject = () => {
@@ -984,9 +1106,9 @@ function App() {
     const base = renameValue.trim();
     if (!cur || !validFileName(base)) return;
     const project = projectOf(cur.id);
-    // A typed extension from the allowlist is kept (renaming todo.txt keeps
+    // A typed extension the registry claims is kept (renaming todo.txt keeps
     // .txt); anything else gets the default .md.
-    const newId = (project ? `${project}/` : "") + (hasNoteExt(base) ? base : `${base}.md`);
+    const newId = (project ? `${project}/` : "") + (isNoteFile(base) ? base : `${base}.md`);
     if (newId === cur.name) return;
     if (notesRef.current.some((n) => n.name.toLowerCase() === newId.toLowerCase())) {
       toast(`A note named "${fileOf(newId)}" already exists here`);
@@ -1007,9 +1129,9 @@ function App() {
       } else {
         await save(newId);
       }
-      // A rename that crosses the markdown boundary (x.md → x.txt) must
+      // A rename that lands on a different note type (x.md → x.txt) must
       // rebuild the editor — its extensions were chosen at mount.
-      if (isMarkdown(cur.id) !== isMarkdown(newId)) {
+      if (noteTypeOf(cur.id)?.id !== noteTypeOf(newId)?.id) {
         setInitialDoc(contentRef.current);
         setDocKey(newId);
       }
@@ -1055,7 +1177,7 @@ function App() {
           },
         ]
       : []),
-    ...(openIsMd
+    ...(canPreview
       ? [
           {
             kind: "command" as const,
@@ -1096,7 +1218,7 @@ function App() {
       label: "Scan folder for projects…",
       run: () => void scanForProjects(),
     },
-    ...(openIsMd ? FORMAT_GROUPS.flat() : []).map((f) => ({
+    ...(canFormat ? FORMAT_GROUPS.flat() : []).map((f) => ({
       kind: "command" as const,
       id: `cmd:format:${f.kind}`,
       label: `Format: ${f.title.replace(/ \(.+\)$/, "")}`,
@@ -1167,11 +1289,11 @@ function App() {
     },
     { label: "Edit", items: editEntries },
     // "O" mnemonic (the classic Windows Format-menu convention) — "F" belongs to File.
-    ...(openIsMd ? [{ label: "Format", mnemonic: "o", items: formatMenuItems }] : []),
+    ...(canFormat ? [{ label: "Format", mnemonic: "o", items: formatMenuItems }] : []),
     {
       label: "View",
       items: [
-        ...(openIsMd
+        ...(canPreview
           ? [
               {
                 label: mode === "edit" ? "Open preview" : "Back to editor",
@@ -1275,14 +1397,6 @@ function App() {
     }
   };
 
-  /** Absolute filesystem path of a note id (Windows separators). */
-  const absPathOf = (id: string) => {
-    const project = projectOf(id);
-    const base = project ? (externals[project] ?? `${rootPath}/${project}`) : rootPath;
-    const rest = project ? id.slice(project.length + 1) : id;
-    return `${base}/${rest}`.replace(/\//g, "\\");
-  };
-
   /** Recycle-bin delete (after a native confirm); the note's draft and open
    * tab go with it. Never a hard delete — notes are user-owned files. */
   const deleteNote = async (id: string) => {
@@ -1360,13 +1474,13 @@ function App() {
     setExplorerCreate(dir);
   };
 
-  /** Inline name-first creation: write the (empty) file immediately, open it
-   * as a saved note. A typed allowlisted extension sticks, else `.md`. */
+  /** Inline name-first creation: write the (empty) file immediately, open it as
+   * a saved note. A typed extension the registry claims sticks, else `.md`. */
   const createNamedNote = async (dir: string, name: string) => {
     setExplorerCreate(null);
     const trimmed = name.trim().replace(/^\/+|\/+$/g, "");
     if (!trimmed) return;
-    const file = hasNoteExt(trimmed) ? trimmed : `${trimmed}.md`;
+    const file = isNoteFile(trimmed) ? trimmed : `${trimmed}.md`;
     const id = dir ? `${dir}/${file}` : file;
     if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
       toast(`"${name}" isn't a valid note name`);
@@ -1388,14 +1502,6 @@ function App() {
     }
     setNotes(await api.listNotes());
     openFromExplorer(id, true);
-  };
-
-  /** Absolute path of a folder id ("" = notes root, else project[/sub…]). */
-  const absDirOf = (dir: string) => {
-    if (!dir) return rootPath.replace(/\//g, "\\");
-    const [project, ...rest] = dir.split("/");
-    const base = externals[project] ?? `${rootPath}/${project}`;
-    return [base, ...rest].join("/").replace(/\//g, "\\");
   };
 
   const explorerContextMenu = (e: React.MouseEvent, id: string, isNote: boolean) =>
@@ -1509,7 +1615,11 @@ function App() {
                 Math.max(EXPLORER_MIN_W, Math.min(w, explorerDocked ? dockLimit : winWidth - 48)),
               )
             }
-            onResizeEnd={() => localStorage.setItem("explorerWidth", String(explorerWidth))}
+            // Persisted on release, not per pointer move.
+            onResizeEnd={() => {
+              localStorage.setItem("explorerWidth", String(explorerWidth));
+              persistAppearance({ explorer: { width: explorerWidth, pinned: explorerPinned } });
+            }}
           />
         )}
         <div className="main">
@@ -1573,7 +1683,7 @@ function App() {
               </button>
             </div>
             <header className="titlebar">
-              {openIsMd && (
+              {canPreview && (
                 <button
                   className={mode === "preview" ? "tool-btn open" : "tool-btn"}
                   data-tip={
@@ -1588,7 +1698,7 @@ function App() {
                   {mode === "edit" ? "👁" : "✎"}
                 </button>
               )}
-              {mode === "edit" && openIsMd && (
+              {mode === "edit" && canFormat && (
                 <div className="fmt-inline">
                   {FORMAT_GROUPS.map((group, i) => (
                     <div className="toolbar-group" key={i}>
@@ -1642,7 +1752,8 @@ function App() {
                 onOpenLink={openLink}
                 onStatus={handleStatus}
                 hidden={mode === "preview"}
-                plainText={!openIsMd}
+                view={viewOf(open.id)}
+                features={featuresOf(open.id)}
               />
             )}
             {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
@@ -1675,6 +1786,12 @@ function App() {
           externalProjects={externals}
           onRemoveProject={(name) => void removeExternalProject(name)}
           onChangeProjectPath={(name) => void changeProjectPath(name)}
+          theme={theme}
+          onThemeChange={(next) => {
+            setTheme(next);
+            setThemeState(next);
+            persistAppearance({ theme: next });
+          }}
           onClose={() => {
             setSettingsOpen(false);
             editorRef.current?.focus();

@@ -10,6 +10,7 @@ import { minimalSetup } from "codemirror";
 import { linkify } from "./links";
 import { livePreview } from "./livePreview";
 import { MentionItem, mentions } from "./mentions";
+import type { Feature, ViewId } from "./noteTypes";
 
 export type FormatKind =
   | "h1"
@@ -70,9 +71,12 @@ interface EditorProps {
   onStatus?: (status: EditorStatus) => void;
   /** Hide instead of unmounting (preview mode) so undo history survives. */
   hidden?: boolean;
-  /** Non-markdown note: no markdown parsing, live preview, mentions, image
-   * paste, or formatting — a bare text editor. */
-  plainText?: boolean;
+  /** Editing surface from the open note's type: the markdown view brings the
+   * parser, anything else is a bare text editor. */
+  view: ViewId;
+  /** Affordances the note's type declares; each gates its own extension. Read
+   * when the editor mounts, so a type change has to rebuild it. */
+  features: readonly Feature[];
 }
 
 /** Toggle `marker` (e.g. `**`) around each selection range. */
@@ -287,7 +291,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     onOpenLink,
     onStatus,
     hidden,
-    plainText,
+    view: noteView,
+    features,
   },
   ref,
 ) {
@@ -311,8 +316,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   onStatusRef.current = onStatus;
   const initialDocRef = useRef(initialDoc);
   initialDocRef.current = initialDoc;
-  const plainTextRef = useRef(plainText);
-  plainTextRef.current = plainText;
+  const noteViewRef = useRef(noteView);
+  noteViewRef.current = noteView;
+  const featuresRef = useRef(features);
+  featuresRef.current = features;
+  const has = (feature: Feature) => featuresRef.current.includes(feature);
 
   useImperativeHandle(
     ref,
@@ -320,7 +328,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       focus: () => viewRef.current?.focus(),
       applyFormat: (kind: FormatKind) => {
         const view = viewRef.current;
-        if (!view || plainTextRef.current) return;
+        if (!view || !has("format")) return;
         applyFormat(view, kind);
         view.focus();
       },
@@ -367,27 +375,29 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         doc: initialDocRef.current,
         extensions: [
           minimalSetup,
-          // Markdown machinery only for .md — plain-text notes get a bare editor.
-          ...(plainTextRef.current
-            ? []
-            : [
-                // codeLanguages makes ```lang fences parse with the real language
-                // (lazy-loaded), so the highlight style has tokens to color.
-                markdown({ base: markdownLanguage, codeLanguages: languages }),
-                livePreview((src) => resolveImageRef.current(src)),
+          // The note type decides what the editor is: the markdown view brings
+          // the parser (codeLanguages makes ```lang fences parse with the real
+          // language, lazy-loaded, so the highlight style has tokens to color),
+          // and each optional affordance is one feature it declares.
+          ...(noteViewRef.current === "markdown"
+            ? [markdown({ base: markdownLanguage, codeLanguages: languages })]
+            : []),
+          ...(has("live-preview") ? [livePreview((src) => resolveImageRef.current(src))] : []),
+          ...(has("mentions")
+            ? [
                 mentions(
                   () => mentionItemsRef.current,
                   (id) => mentionLinkRef.current(id),
                 ),
-              ]),
+              ]
+            : []),
           linkify((target) => onOpenLinkRef.current(target)),
           EditorView.lineWrapping,
           placeholder("Capture a thought…"),
           Prec.high(
             keymap.of([
-              ...(plainTextRef.current
-                ? []
-                : [
+              ...(has("format")
+                ? [
                     { key: "Mod-b", run: (v: EditorView) => applyFormat(v, "bold") },
                     { key: "Mod-i", run: (v: EditorView) => applyFormat(v, "italic") },
                     { key: "Mod-1", run: (v: EditorView) => applyFormat(v, "h1") },
@@ -403,7 +413,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     { key: "Mod-Shift-9", run: (v: EditorView) => applyFormat(v, "quote") },
                     // Ctrl+K (the usual link binding) is the command palette.
                     { key: "Mod-Shift-l", run: (v: EditorView) => applyFormat(v, "link") },
-                  ]),
+                  ]
+                : []),
               // Windows-standard replace / go-to-line; searchKeymap's own
               // Mod-g (find next) loses to these — F3 still covers it.
               { key: "Mod-h", run: openSearchPanel },
@@ -415,7 +426,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           keymap.of([...searchKeymap, indentWithTab, { key: "Mod-Shift-z", run: redo }]),
           EditorView.domEventHandlers({
             paste: (event, v) => {
-              if (plainTextRef.current) return false;
+              if (!has("images")) return false;
               const files = Array.from(event.clipboardData?.files ?? []);
               const images = files.filter((f) => f.type.startsWith("image/"));
               if (images.length === 0) return false;
@@ -458,7 +469,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   return (
     <div
       ref={containerRef}
-      className={plainText ? "editor editor-plain" : "editor"}
+      className={noteView === "markdown" ? "editor" : "editor editor-plain"}
       hidden={hidden}
     />
   );

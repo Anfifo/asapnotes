@@ -23,6 +23,10 @@ they came from — which breaks "markdown files are the contract". Concretely:
   (`notes.rs`). The id's **first segment** decides where a note lives: an external
   mapping wins, everything else resolves under the notes root. Ids are now any depth
   (`project/docs/x.md`); root projects keep their one-level listing.
+  _(2026-08-10: that store moved into app-data `settings.json` as project entries with a
+  `path` — see [config splits by trust](2026-08-10-config-splits-by-trust.md). The
+  resolution rule is unchanged, and is now the degenerate case of
+  [location plus mounts](2026-08-10-a-project-is-a-location-plus-mounts.md).)_
 - **Scan rule:** File → "Scan folder for projects…" walks the picked folder
   (skipping dot-dirs, `node_modules`, `target`, …); a folder containing a
   `README.md`/`index.md` (case-insensitive) becomes a candidate and is not descended

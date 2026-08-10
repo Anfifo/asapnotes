@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import type { Theme } from "./theme";
+
+const THEMES: [Theme, string][] = [
+  ["light", "Light"],
+  ["dark", "Dark"],
+  ["system", "System"],
+];
 
 const KEYBINDS: [string, string][] = [
   ["Ctrl+Alt+A", "Summon / hide (global)"],
@@ -54,6 +61,8 @@ interface SettingsProps {
   onRemoveProject: (name: string) => void;
   /** Pick a different folder for a linked project (e.g. a repo's docs/). */
   onChangeProjectPath: (name: string) => void;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
   onClose: () => void;
 }
 
@@ -62,6 +71,8 @@ export function Settings({
   externalProjects,
   onRemoveProject,
   onChangeProjectPath,
+  theme,
+  onThemeChange,
   onClose,
 }: SettingsProps) {
   const [version, setVersion] = useState("");
@@ -94,6 +105,28 @@ export function Settings({
             <tr>
               <td>Auto-update</td>
               <td>Planned — updates are manual for now</td>
+            </tr>
+          </tbody>
+        </table>
+        <h2>Appearance</h2>
+        <table>
+          <tbody>
+            <tr>
+              <td>Theme</td>
+              <td>
+                <div className="segmented" role="group" aria-label="Theme">
+                  {THEMES.map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={value === theme ? "active" : undefined}
+                      aria-pressed={value === theme}
+                      onClick={() => onThemeChange(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>

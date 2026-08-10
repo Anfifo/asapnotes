@@ -18,8 +18,10 @@ import { tags as t } from "@lezer/highlight";
 
 const MONO = 'ui-monospace, "Cascadia Code", Consolas, monospace';
 
-// Colors are picked to read on both the light and dark app backgrounds, since
-// a HighlightStyle can't switch with the media query.
+// A HighlightStyle is built once and can't be rebuilt per theme, so colors go
+// through CSS variables (defined per theme in App.css) rather than being fixed
+// here — otherwise every color has to compromise at one mid lightness that
+// reads acceptably on both backgrounds and well on neither.
 const markdownStyle = HighlightStyle.define([
   { tag: t.heading1, fontSize: "1.5em", fontWeight: "700" },
   { tag: t.heading2, fontSize: "1.3em", fontWeight: "700" },
@@ -37,24 +39,23 @@ const markdownStyle = HighlightStyle.define([
     backgroundColor: "rgba(128, 128, 128, 0.15)",
     borderRadius: "3px",
   },
-  { tag: t.link, color: "#4a7dc9" },
-  { tag: t.url, color: "#8a8a8a" },
-  { tag: t.quote, color: "#8a8a8a" },
-  { tag: t.processingInstruction, color: "#9a9a9a" },
-  { tag: t.contentSeparator, color: "#9a9a9a" },
-  // Code-block tokens (nested ```lang parses) — same both-theme constraint,
-  // so every color sits at mid lightness. Plain variableName gets a color too:
-  // shell-ish languages (powershell, bash) tag bare commands as variables, so
-  // without it whole command blocks render uncolored.
-  { tag: t.keyword, color: "#b05ccc" },
-  { tag: [t.string, t.special(t.string)], color: "#54a054" },
-  { tag: t.comment, color: "#8a8a8a", fontStyle: "italic" },
-  { tag: [t.number, t.bool, t.atom, t.null, t.regexp, t.escape], color: "#c9822d" },
-  { tag: [t.typeName, t.className, t.tagName], color: "#2f9c95" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "#4a7dc9" },
-  { tag: [t.definition(t.variableName), t.propertyName], color: "#8f6fd0" },
-  { tag: t.variableName, color: "#5b8bd0" },
-  { tag: [t.operator, t.punctuation, t.meta, t.labelName], color: "#8a8a8a" },
+  { tag: t.link, color: "var(--syn-link)" },
+  { tag: t.url, color: "var(--syn-muted)" },
+  { tag: t.quote, color: "var(--syn-quote)" },
+  { tag: t.processingInstruction, color: "var(--syn-marker)" },
+  { tag: t.contentSeparator, color: "var(--syn-marker)" },
+  // Code-block tokens (nested ```lang parses). Plain variableName gets a color
+  // too: shell-ish languages (powershell, bash) tag bare commands as variables,
+  // so without it whole command blocks render uncolored.
+  { tag: t.keyword, color: "var(--syn-keyword)" },
+  { tag: [t.string, t.special(t.string)], color: "var(--syn-string)" },
+  { tag: t.comment, color: "var(--syn-comment)", fontStyle: "italic" },
+  { tag: [t.number, t.bool, t.atom, t.null, t.regexp, t.escape], color: "var(--syn-number)" },
+  { tag: [t.typeName, t.className, t.tagName], color: "var(--syn-type)" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--syn-link)" },
+  { tag: [t.definition(t.variableName), t.propertyName], color: "var(--syn-property)" },
+  { tag: t.variableName, color: "var(--syn-variable)" },
+  { tag: [t.operator, t.punctuation, t.meta, t.labelName], color: "var(--syn-punct)" },
 ]);
 
 class BulletWidget extends WidgetType {

@@ -13,8 +13,8 @@ was decided before code ([TODO item](../TODO.md), and see
 
 ## Decision
 
-**A project is a first-level subfolder of the notes root; notes at the root are the
-"inbox".** A note's identity everywhere (backend commands, drafts, palette) is its path
+**A project is a first-level subfolder of the notes root; notes at the root belong to no
+project.** A note's identity everywhere (backend commands, drafts, palette) is its path
 relative to the notes root — `project/note.md` or `note.md` — one folder level deep, no
 nesting. The shadow-drafts folder mirrors the same relative paths. Pasted images land in a
 shared `assets/` folder at the notes root (excluded from project listings) and are linked

@@ -1,24 +1,26 @@
 //! Filesystem commands for notes, projects, shadow drafts, and pasted assets.
 //!
-//! Layout of the notes root (`Documents/asapnotes`): note files (any
-//! `NOTE_EXTS` extension; `.md` is the default) at the top level are the
-//! "inbox"; each first-level subfolder is a project; `assets/`
+//! Layout of the notes root (`Documents/asapnotes`): note files (any extension
+//! the note-type registry claims; `.md` is the default) at the top level belong
+//! to no project; each first-level subfolder is a project; `assets/`
 //! holds pasted images and is not a project. A note's id everywhere is its
 //! root-relative path (`note.md` or `project/note.md`).
 //!
-//! External projects extend this: a mapping (name → absolute folder path,
-//! stored in app data) makes any folder on disk a project. Its notes keep the
-//! same id shape — `name/rel/path/note.md`, any depth — and the id's first
-//! segment decides where the file lives: an external mapping wins, everything
-//! else resolves under the notes root.
+//! A registered project extends this: an entry in [`crate::settings`] gives a
+//! project a location anywhere on disk. Its notes keep the same id shape —
+//! `name/rel/path/note.md`, any depth — and the id's first segment decides
+//! where the file lives: a registered location wins, everything else resolves
+//! under the notes root. [`base_of`] is that rule, and `noteIdOf` in
+//! `src/App.tsx` is its inverse — the two have to agree, or one file acquires
+//! two ids, hence two shadow drafts and two tabs that can overwrite each other.
 //!
 //! Drafts live in app data, mirror the same relative paths, and hold unsaved
 //! editor state: a draft named like an existing note is its unsaved edits, any
 //! other draft is an unsaved untitled note. `Ctrl+S` on the frontend writes the
 //! note and deletes the draft.
 
+use crate::settings::{self, Project, Settings};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -27,13 +29,7 @@ use tauri::{AppHandle, Manager};
 
 const ASSETS_DIR: &str = "assets";
 const IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
-/// Plain-text extensions listed and editable as notes. Only `.md` gets
-/// markdown features on the frontend; the rest open as plain text.
-/// Keep in sync with `hasNoteExt` in `src/paths.ts`.
-const NOTE_EXTS: [&str; 13] = [
-    "md", "txt", "text", "tex", "log", "csv", "json", "yaml", "yml", "ini", "cfg", "toml", "xml",
-];
-/// Directories never walked when listing or scanning external folders.
+/// Directories never walked when listing or scanning folders.
 const SKIP_DIRS: [&str; 5] = ["node_modules", "target", "dist", "build", "out"];
 const MAX_DEPTH: u32 = 12;
 
@@ -67,20 +63,15 @@ fn valid_segment(s: &str) -> bool {
     !s.is_empty() && !s.contains('\\') && !s.starts_with('.')
 }
 
-fn has_note_ext(file: &str) -> bool {
-    file.rsplit_once('.').is_some_and(|(stem, ext)| {
-        !stem.is_empty() && NOTE_EXTS.contains(&ext.to_ascii_lowercase().as_str())
-    })
-}
-
 /// Note ids come from the frontend as relative paths (`note.md` or
-/// `project/…/note.md`); reject anything that could escape its base.
-fn checked_name(name: &str) -> Result<&str, String> {
+/// `project/…/note.md`); reject anything that could escape its base, or name a
+/// file the registry doesn't claim as a note.
+fn checked_name<'a>(s: &Settings, name: &'a str) -> Result<&'a str, String> {
     let segments: Vec<&str> = name.split('/').collect();
     let file = segments.last().copied().unwrap_or("");
     let ok = (1..=MAX_DEPTH as usize).contains(&segments.len())
         && segments.iter().all(|s| valid_segment(s))
-        && has_note_ext(file)
+        && s.is_note(file)
         && (segments.len() == 1 || segments[0] != ASSETS_DIR);
     if ok {
         Ok(name)
@@ -89,43 +80,31 @@ fn checked_name(name: &str) -> Result<&str, String> {
     }
 }
 
-// --- External project mappings (name → absolute folder path) ---
-
-fn external_store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("external_projects.json"))
-}
-
-pub fn external_map(app: &AppHandle) -> Result<BTreeMap<String, String>, String> {
-    let path = external_store_path(app)?;
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let data = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&data).map_err(|e| e.to_string())
-}
-
-fn save_external_map(app: &AppHandle, map: &BTreeMap<String, String>) -> Result<(), String> {
-    let data = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
-    fs::write(external_store_path(app)?, data).map_err(|e| e.to_string())
-}
-
-/// Absolute path of a note id: an external mapping on the first segment wins,
-/// everything else lives under the notes root.
-fn resolve_note(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
-    let name = checked_name(name)?;
+/// Base directory and remainder for a note id — the forward half of one ordered
+/// resolution rule, whose inverse is `noteIdOf` on the frontend. A registered
+/// project's location owns its first segment; everything else is relative to the
+/// notes root. Mounts will extend this rule rather than replace it, and both
+/// directions have to read the same table in the same order.
+fn base_of<'a>(app: &AppHandle, s: &Settings, name: &'a str) -> Result<(PathBuf, &'a str), String> {
     if let Some((project, rest)) = name.split_once('/') {
-        if let Some(dir) = external_map(app)?.get(project) {
-            return Ok(Path::new(dir).join(rest));
+        if let Some(dir) = s.projects.get(project).and_then(|p| p.path.as_deref()) {
+            return Ok((PathBuf::from(dir), rest));
         }
     }
-    Ok(notes_root(app)?.join(name))
+    Ok((notes_root(app)?, name))
+}
+
+/// Absolute path of a note id.
+fn resolve_note(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    let s = settings::settings(app)?;
+    let name = checked_name(&s, name)?;
+    let (base, rest) = base_of(app, &s, name)?;
+    Ok(base.join(rest))
 }
 
 /// Resolve a note id inside `base`, creating the project folder if needed.
-fn note_path(base: &Path, name: &str) -> Result<PathBuf, String> {
-    let name = checked_name(name)?;
+fn note_path(s: &Settings, base: &Path, name: &str) -> Result<PathBuf, String> {
+    let name = checked_name(s, name)?;
     let path = base.join(name);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -150,12 +129,17 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn collect_md(dir: &Path, prefix: &str, out: &mut Vec<FileInfo>) -> Result<(), String> {
+fn collect_md(
+    s: &Settings,
+    dir: &Path,
+    prefix: &str,
+    out: &mut Vec<FileInfo>,
+) -> Result<(), String> {
     for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
-        if is_file && has_note_ext(&name) {
+        if is_file && s.is_note(&name) {
             out.push(FileInfo {
                 name: format!("{prefix}{name}"),
                 modified_ms: modified_ms(&entry),
@@ -180,11 +164,11 @@ fn project_dirs(root: &Path) -> Result<Vec<String>, String> {
 }
 
 /// List all note files in `base`: top level plus one project-folder level.
-fn list_tree(base: &Path) -> Result<Vec<FileInfo>, String> {
+fn list_tree(s: &Settings, base: &Path) -> Result<Vec<FileInfo>, String> {
     let mut out = Vec::new();
-    collect_md(base, "", &mut out)?;
+    collect_md(s, base, "", &mut out)?;
     for project in project_dirs(base)? {
-        collect_md(&base.join(&project), &format!("{project}/"), &mut out)?;
+        collect_md(s, &base.join(&project), &format!("{project}/"), &mut out)?;
     }
     out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
     Ok(out)
@@ -195,9 +179,9 @@ fn skip_dir(name: &str) -> bool {
 }
 
 /// Recursively collect note files. Tolerant by design: unreadable directories
-/// are skipped, not fatal — one broken external folder must not take down the
+/// are skipped, not fatal — one broken linked folder must not take down the
 /// whole note list.
-fn collect_md_deep(dir: &Path, prefix: &str, depth: u32, out: &mut Vec<FileInfo>) {
+fn collect_md_deep(s: &Settings, dir: &Path, prefix: &str, depth: u32, out: &mut Vec<FileInfo>) {
     if depth > MAX_DEPTH {
         return;
     }
@@ -209,25 +193,33 @@ fn collect_md_deep(dir: &Path, prefix: &str, depth: u32, out: &mut Vec<FileInfo>
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if file_type.is_file() && has_note_ext(&name) {
+        if file_type.is_file() && s.is_note(&name) {
             out.push(FileInfo {
                 name: format!("{prefix}{name}"),
                 modified_ms: modified_ms(&entry),
             });
         } else if file_type.is_dir() && valid_segment(&name) && !skip_dir(&name) {
-            collect_md_deep(&entry.path(), &format!("{prefix}{name}/"), depth + 1, out);
+            collect_md_deep(
+                s,
+                &entry.path(),
+                &format!("{prefix}{name}/"),
+                depth + 1,
+                out,
+            );
         }
     }
 }
 
-/// `deep: false` skips the external-project walk (can be slow on big folders)
-/// so the first paint after launch isn't held up by it; a deep call follows.
+/// `deep: false` skips the walk of projects living outside the notes root (can
+/// be slow on big folders) so the first paint after launch isn't held up by it;
+/// a deep call follows.
 #[tauri::command]
 pub fn list_notes(app: AppHandle, deep: Option<bool>) -> Result<Vec<FileInfo>, String> {
-    let mut out = list_tree(&notes_root(&app)?)?;
+    let s = settings::settings(&app)?;
+    let mut out = list_tree(&s, &notes_root(&app)?)?;
     if deep.unwrap_or(true) {
-        for (name, dir) in external_map(&app)? {
-            collect_md_deep(Path::new(&dir), &format!("{name}/"), 0, &mut out);
+        for (name, dir) in s.located_projects() {
+            collect_md_deep(&s, Path::new(dir), &format!("{name}/"), 0, &mut out);
         }
         out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
     }
@@ -247,21 +239,23 @@ pub struct SearchHit {
 }
 
 /// Every note id paired with its absolute path — the same corpus `list_notes`
-/// enumerates, but resolved once instead of per note (`resolve_note` re-reads
-/// the external-project mapping on every call).
+/// enumerates, but resolved once instead of per note. Mounted folders will have
+/// to be walked here too, or their notes are listed and openable yet silently
+/// unsearchable.
 fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
+    let s = settings::settings(app)?;
     let root = notes_root(app)?;
-    let mut out: Vec<(String, PathBuf)> = list_tree(&root)?
+    let mut out: Vec<(String, PathBuf)> = list_tree(&s, &root)?
         .into_iter()
         .map(|f| {
             let path = root.join(&f.name);
             (f.name, path)
         })
         .collect();
-    for (project, dir) in external_map(app)? {
-        let dir = Path::new(&dir);
+    for (project, dir) in s.located_projects() {
+        let dir = Path::new(dir);
         let mut found = Vec::new();
-        collect_md_deep(dir, "", 0, &mut found);
+        collect_md_deep(&s, dir, "", 0, &mut found);
         out.extend(
             found
                 .into_iter()
@@ -353,10 +347,17 @@ fn excerpt(line: &str, at: usize) -> String {
     s
 }
 
+/// Notes-root subfolders plus the registered projects that live elsewhere.
+/// Registered entries without a location need no mention: their folder is under
+/// the notes root, so the walk above already found them.
 #[tauri::command]
 pub fn list_projects(app: AppHandle) -> Result<Vec<String>, String> {
     let mut out = project_dirs(&notes_root(&app)?)?;
-    out.extend(external_map(&app)?.into_keys());
+    out.extend(
+        settings::settings(&app)?
+            .located_projects()
+            .map(|(n, _)| n.clone()),
+    );
     out.sort();
     out.dedup();
     Ok(out)
@@ -398,7 +399,8 @@ pub fn save_note(app: AppHandle, name: String, content: String) -> Result<(), St
 #[tauri::command]
 pub fn delete_note(app: AppHandle, name: String) -> Result<(), String> {
     trash::delete(resolve_note(&app, &name)?).map_err(|e| e.to_string())?;
-    let draft = drafts_dir(&app)?.join(checked_name(&name)?);
+    let s = settings::settings(&app)?;
+    let draft = drafts_dir(&app)?.join(checked_name(&s, &name)?);
     if draft.exists() {
         let _ = fs::remove_file(draft);
     }
@@ -457,7 +459,7 @@ pub fn open_external(app: AppHandle, target: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Move/rename a note between projects (or to/from the inbox); its shadow
+/// Move/rename a note between projects (or in/out of no project); its shadow
 /// draft, if any, moves with it.
 #[tauri::command]
 pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String> {
@@ -469,10 +471,11 @@ pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String>
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::rename(resolve_note(&app, &from)?, to_path).map_err(|e| e.to_string())?;
+    let s = settings::settings(&app)?;
     let drafts = drafts_dir(&app)?;
-    let draft_from = drafts.join(checked_name(&from)?);
+    let draft_from = drafts.join(checked_name(&s, &from)?);
     if draft_from.exists() {
-        let draft_to = note_path(&drafts, &to)?;
+        let draft_to = note_path(&s, &drafts, &to)?;
         let _ = fs::rename(draft_from, draft_to);
     }
     Ok(())
@@ -480,27 +483,31 @@ pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String>
 
 #[tauri::command]
 pub fn list_drafts(app: AppHandle) -> Result<Vec<FileInfo>, String> {
-    // Deep walk: drafts of external notes mirror ids like `project/docs/x.md`.
+    // Deep walk: drafts mirror ids like `project/docs/x.md`.
+    let s = settings::settings(&app)?;
     let mut out = Vec::new();
-    collect_md_deep(&drafts_dir(&app)?, "", 0, &mut out);
+    collect_md_deep(&s, &drafts_dir(&app)?, "", 0, &mut out);
     out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
     Ok(out)
 }
 
 #[tauri::command]
 pub fn read_draft(app: AppHandle, id: String) -> Result<String, String> {
-    fs::read_to_string(drafts_dir(&app)?.join(checked_name(&id)?)).map_err(|e| e.to_string())
+    let s = settings::settings(&app)?;
+    fs::read_to_string(drafts_dir(&app)?.join(checked_name(&s, &id)?)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn write_draft(app: AppHandle, id: String, content: String) -> Result<(), String> {
-    let path = note_path(&drafts_dir(&app)?, &id)?;
+    let s = settings::settings(&app)?;
+    let path = note_path(&s, &drafts_dir(&app)?, &id)?;
     fs::write(path, content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_draft(app: AppHandle, id: String) -> Result<(), String> {
-    let path = drafts_dir(&app)?.join(checked_name(&id)?);
+    let s = settings::settings(&app)?;
+    let path = drafts_dir(&app)?.join(checked_name(&s, &id)?);
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?;
     }
@@ -513,12 +520,18 @@ fn assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Where pasted images for a note go: an external project keeps its images in
-/// its own `assets/` (the folder owns its files); everything else shares the
-/// root `assets/`.
+/// Where pasted images for a note go: a project with its own location keeps its
+/// images in its own `assets/` (the folder owns its files); everything else
+/// shares the root `assets/`. Once a mount can own an `assets/` of its own this
+/// needs the note id, not the project name — which mount the note falls under is
+/// what decides.
 fn assets_dir_for(app: &AppHandle, project: Option<&str>) -> Result<PathBuf, String> {
     if let Some(project) = project {
-        if let Some(base) = external_map(app)?.get(project) {
+        if let Some(base) = settings::settings(app)?
+            .projects
+            .get(project)
+            .and_then(|p| p.path.as_deref())
+        {
             let dir = Path::new(base).join(ASSETS_DIR);
             fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             return Ok(dir);
@@ -617,7 +630,7 @@ pub fn import_asset(
     Ok(rel)
 }
 
-// --- Scan a folder for external projects ---
+// --- Scan a folder for projects to register ---
 
 #[derive(Serialize)]
 pub struct ProjectCandidate {
@@ -632,16 +645,16 @@ fn is_readme(name: &str) -> bool {
     lower == "readme.md" || lower == "index.md"
 }
 
-fn count_md(dir: &Path) -> usize {
+fn count_md(s: &Settings, dir: &Path) -> usize {
     let mut files = Vec::new();
-    collect_md_deep(dir, "", 0, &mut files);
+    collect_md_deep(s, dir, "", 0, &mut files);
     files.len()
 }
 
 /// Depth-first hunt for project folders. A folder with a README becomes a
 /// candidate and is not descended into further — nested READMEs (docs inside a
 /// repo) belong to the outer project.
-fn scan_dir(dir: &Path, depth: u32, out: &mut Vec<ProjectCandidate>) {
+fn scan_dir(s: &Settings, dir: &Path, depth: u32, out: &mut Vec<ProjectCandidate>) {
     if depth > MAX_DEPTH || out.len() >= 200 {
         return;
     }
@@ -662,7 +675,7 @@ fn scan_dir(dir: &Path, depth: u32, out: &mut Vec<ProjectCandidate>) {
             out.push(ProjectCandidate {
                 name,
                 path: dir.to_string_lossy().into_owned(),
-                md_count: count_md(dir),
+                md_count: count_md(s, dir),
             });
         }
         return;
@@ -671,19 +684,20 @@ fn scan_dir(dir: &Path, depth: u32, out: &mut Vec<ProjectCandidate>) {
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if is_dir && valid_segment(&name) && !skip_dir(&name) {
-            scan_dir(&entry.path(), depth + 1, out);
+            scan_dir(s, &entry.path(), depth + 1, out);
         }
     }
 }
 
 #[tauri::command]
-pub fn scan_projects(dir: String) -> Result<Vec<ProjectCandidate>, String> {
+pub fn scan_projects(app: AppHandle, dir: String) -> Result<Vec<ProjectCandidate>, String> {
     let root = PathBuf::from(&dir);
     if !root.is_dir() {
         return Err(format!("not a folder: {dir}"));
     }
+    let s = settings::settings(&app)?;
     let mut out = Vec::new();
-    scan_dir(&root, 0, &mut out);
+    scan_dir(&s, &root, 0, &mut out);
     Ok(out)
 }
 
@@ -716,12 +730,14 @@ pub fn add_external_projects(
     projects: Vec<NewExternalProject>,
 ) -> Result<(), String> {
     let root = notes_root(&app)?;
-    let mut map = external_map(&app)?;
+    // Validate and resolve every location first, so a bad one in the batch
+    // leaves the settings file untouched.
+    let mut entries = Vec::new();
     for p in projects {
         if !valid_segment(&p.name) || p.name == ASSETS_DIR {
             return Err(format!("invalid project name: {}", p.name));
         }
-        if map.contains_key(&p.name) || root.join(&p.name).is_dir() {
+        if root.join(&p.name).is_dir() {
             return Err(format!("a project named {} already exists", p.name));
         }
         if !Path::new(&p.path).is_dir() {
@@ -738,34 +754,47 @@ pub fn add_external_projects(
         // protocol; the static scope only covers the root assets dir. Scoped
         // to the scanned folder, not just docs/ — links may climb out of it.
         let _ = app.asset_protocol_scope().allow_directory(&p.path, true);
-        map.insert(p.name, path);
+        entries.push((p.name, path));
     }
-    save_external_map(&app, &map)
+    settings::update(&app, |s| {
+        for (name, path) in entries {
+            if s.projects.contains_key(&name) {
+                return Err(format!("a project named {name} already exists"));
+            }
+            s.projects.insert(
+                name,
+                Project {
+                    path: Some(path),
+                    ..Project::default()
+                },
+            );
+        }
+        Ok(())
+    })
 }
 
-/// Repoint an external project at a different folder (Settings).
+/// Repoint a linked project at a different folder (Settings). Only its location
+/// changes — whatever else its entry carries stays.
 #[tauri::command]
 pub fn set_external_path(app: AppHandle, name: String, path: String) -> Result<(), String> {
-    let mut map = external_map(&app)?;
-    if !map.contains_key(&name) {
-        return Err(format!("no linked project named {name}"));
-    }
     if !Path::new(&path).is_dir() {
         return Err(format!("not a folder: {path}"));
     }
     let _ = app.asset_protocol_scope().allow_directory(&path, true);
-    map.insert(name, path);
-    save_external_map(&app, &map)
+    settings::update(&app, |s| {
+        let project = s
+            .projects
+            .get_mut(&name)
+            .ok_or_else(|| format!("no linked project named {name}"))?;
+        project.path = Some(path);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn remove_external_project(app: AppHandle, name: String) -> Result<(), String> {
-    let mut map = external_map(&app)?;
-    map.remove(&name);
-    save_external_map(&app, &map)
-}
-
-#[tauri::command]
-pub fn list_external_projects(app: AppHandle) -> Result<BTreeMap<String, String>, String> {
-    external_map(&app)
+    settings::update(&app, |s| {
+        s.projects.remove(&name);
+        Ok(())
+    })
 }

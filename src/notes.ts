@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { NoteType } from "./noteTypes";
 
 export interface FileInfo {
   name: string;
@@ -69,6 +70,48 @@ export const removeExternalProject = (name: string) =>
   invoke<void>("remove_external_project", { name });
 export const setExternalPath = (name: string, path: string) =>
   invoke<void>("set_external_path", { name, path });
-export const listExternalProjects = () => invoke<Record<string, string>>("list_external_projects");
+
+// --- Personal settings (app-data settings.json) ---
+
+/** A folder attached into a project at a project-relative name. Carried
+ * through, not yet resolved. */
+export interface Mount {
+  at: string;
+  path: string;
+}
+
+/** Attributes of a project. No `path` means it lives at `<notes root>/<name>`. */
+export interface Project {
+  path?: string | null;
+  mounts?: Mount[];
+  mcp?: string | null;
+}
+
+/** Values `localStorage` also mirrors, because they are read before the first
+ * paint. Absent means never chosen — the mirror's value stands. */
+export interface Appearance {
+  theme?: string | null;
+  zoom?: number | null;
+  explorer?: { width?: number | null; pinned?: boolean | null } | null;
+}
+
+export interface Settings {
+  version: number;
+  appearance: Appearance;
+  projects: Record<string, Project>;
+  noteTypes: NoteType[];
+}
+
+/** `error` is set when the file couldn't be parsed: shipped defaults are in
+ * force and nothing will be written over it until it's fixed. */
+export interface SettingsRead {
+  settings: Settings;
+  error: string | null;
+}
+
+/** `reload` re-reads the file — how a hand-edit takes effect. */
+export const getSettings = (reload = false) => invoke<SettingsRead>("get_settings", { reload });
+export const setAppearance = (appearance: Appearance) =>
+  invoke<void>("set_appearance", { appearance });
 
 export const quit = () => invoke<void>("quit");

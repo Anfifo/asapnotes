@@ -1,4 +1,5 @@
 mod notes;
+mod settings;
 
 #[cfg(desktop)]
 mod desktop {
@@ -49,10 +50,12 @@ mod desktop {
             None,
         ))?;
 
-        // Saved external projects: let the asset protocol serve their images
-        // (preview); newly added ones are granted in add_external_projects.
-        if let Ok(map) = crate::notes::external_map(app.handle()) {
-            for dir in map.values() {
+        // Registered project locations: let the asset protocol serve their
+        // images (preview); newly added ones are granted in
+        // add_external_projects. This is also the first settings read, so any
+        // migration off external_projects.json happens here.
+        if let Ok(settings) = crate::settings::settings(app.handle()) {
+            for (_, dir) in settings.located_projects() {
                 let _ = app.asset_protocol_scope().allow_directory(dir, true);
             }
         }
@@ -129,8 +132,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Parsed settings live here for the process's lifetime.
+        .manage(settings::Cache::default())
         .invoke_handler(tauri::generate_handler![
             quit,
+            settings::get_settings,
+            settings::set_appearance,
             notes::list_notes,
             notes::list_projects,
             notes::search_notes,
@@ -152,7 +159,6 @@ pub fn run() {
             notes::add_external_projects,
             notes::remove_external_project,
             notes::set_external_path,
-            notes::list_external_projects,
         ])
         .setup(|app| {
             #[cfg(desktop)]
