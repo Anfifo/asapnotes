@@ -28,11 +28,13 @@ The AI (or anyone) working on this repo keeps this file current while working:
       cross the auto-collapse threshold, only an actual window shrink collapses
       the panel (chosen over deleting auto-collapse entirely). (c) **Context
       menus**: empty panel body (new note / new project / scan folder…) and
-      project+folder headings (new note here / copy path); row menus' "New note
+      project+folder headings (new note here / copy path / open in File
+      Explorer — folders _open_ rather than being selected in their parent,
+      via `open_external` on the path `Copy path` already computes, so no
+      directory resolver was added to the backend); row menus' "New note
       here" now triggers inline creation next to that note. `openContextMenu`
       stops propagation so nested targets resolve innermost-first. Deliberately
-      deferred: project rename (needs folder-move backend), Reveal on
-      directories (`reveal_note` only resolves note ids), collapse-all (nested
+      deferred: project rename (needs folder-move backend), collapse-all (nested
       folder `<details>` are uncontrolled). Known wrinkle: a folder auto-opened
       to host the create row closes again after creation (React drops the
       forced `open` attr) — reveal-active-note (Tier 3) is the real fix.

@@ -1414,13 +1414,20 @@ function App() {
         : ["sep" as const, { label: "Discard draft", run: () => void discardDraft(id) }]),
     ]);
 
-  /** Right-click on a project or folder heading. (No Reveal: the backend only
-   * resolves note ids, not directories.) */
+  /** Right-click on a project or folder heading. Folders open in File Explorer
+   * rather than being selected in their parent — their contents are the point. */
   const explorerDirMenu = (e: React.MouseEvent, dir: string) =>
     openContextMenu(e, [
       { label: "New note here", run: () => startExplorerCreate(dir) },
       "sep",
       { label: "Copy path", run: () => void writeText(absDirOf(dir)) },
+      {
+        label: "Open in File Explorer",
+        run: () =>
+          void api
+            .openExternal(absDirOf(dir))
+            .catch((err: unknown) => toast(`Couldn't open that folder — ${errText(err)}`)),
+      },
     ]);
 
   /** Right-click on the explorer's empty space. */

@@ -422,9 +422,10 @@ const EXEC_EXTS: [&str; 17] = [
     "hta", "lnk", "reg", "msc",
 ];
 
-/// Open a Ctrl+Clicked editor target: http(s)/mailto URLs go to the default
-/// handler, existing absolute paths open with their default app (executable
-/// types are revealed, not run). Everything else is rejected.
+/// Open a target from a Ctrl+Clicked link or the explorer's folder menu:
+/// http(s)/mailto URLs go to the default handler, existing absolute paths open
+/// with their default app — a folder opens in File Explorer, executable types
+/// are revealed rather than run. Everything else is rejected.
 #[tauri::command]
 pub fn open_external(app: AppHandle, target: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
