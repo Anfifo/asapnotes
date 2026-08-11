@@ -702,12 +702,13 @@ pub fn scan_projects(app: AppHandle, dir: String) -> Result<Vec<ProjectCandidate
 }
 
 #[derive(Deserialize)]
-pub struct NewExternalProject {
+#[serde(rename_all = "camelCase")]
+pub struct LinkedProject {
     pub name: String,
     pub path: String,
     /// Root the project at its docs folder instead of the folder itself.
     #[serde(default)]
-    pub ensure_docs: bool,
+    pub use_docs: bool,
 }
 
 /// A repo's notes root: `docs/` if present, else `documentation/`, else a
@@ -724,40 +725,137 @@ fn docs_root(base: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// A project name has to be free in both places a project can come from: a
+/// notes-root subfolder and a registry entry. One check, because from here on
+/// those are one kind of thing that differs only in where it lives.
+fn check_new_project(root: &Path, s: &Settings, name: &str) -> Result<(), String> {
+    if !valid_segment(name) || name == ASSETS_DIR {
+        return Err(format!("invalid project name: {name}"));
+    }
+    if root.join(name).is_dir() || s.projects.contains_key(name) {
+        return Err(format!("a project named {name} already exists"));
+    }
+    Ok(())
+}
+
+/// Whether a folder sits outside the notes root. A location inside it would
+/// give every file below two ids — one from the root walk, one through this
+/// project — and two ids mean two shadow drafts and two tabs that overwrite
+/// each other. Compared case-insensitively, like the filesystem underneath.
+fn outside_root(root: &Path, path: &Path) -> bool {
+    let norm = |p: &Path| p.to_string_lossy().to_lowercase().replace('\\', "/");
+    let root = norm(root);
+    let root = root.trim_end_matches('/');
+    let path = norm(path);
+    path != root && !path.starts_with(&format!("{root}/"))
+}
+
+/// Validate a folder about to hold a project and return the location to
+/// record — the folder itself, or its docs root.
+fn project_location(
+    app: &AppHandle,
+    root: &Path,
+    path: &str,
+    use_docs: bool,
+) -> Result<String, String> {
+    if !Path::new(path).is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    if !outside_root(root, Path::new(path)) {
+        return Err(format!(
+            "{path} is already in the notes folder — its subfolders are projects already"
+        ));
+    }
+    // Preview must be able to load this folder's images via the asset
+    // protocol; the static scope only covers the root assets dir. Scoped to
+    // the whole picked folder, not just docs/ — links may climb out of it.
+    let _ = app.asset_protocol_scope().allow_directory(path, true);
+    if use_docs {
+        Ok(docs_root(Path::new(path))?.to_string_lossy().into_owned())
+    } else {
+        Ok(path.to_string())
+    }
+}
+
+/// What a picked folder offers a project about to live there: whether it is a
+/// repository (so the docs-folder option is worth showing) and which docs
+/// folder that option would use.
+#[derive(Serialize)]
+pub struct FolderInfo {
+    pub has_git: bool,
+    /// An existing `docs`/`documentation`, else the `docs` that would be made.
+    pub docs: String,
+}
+
 #[tauri::command]
-pub fn add_external_projects(
-    app: AppHandle,
-    projects: Vec<NewExternalProject>,
-) -> Result<(), String> {
+pub fn folder_info(path: String) -> Result<FolderInfo, String> {
+    let dir = PathBuf::from(&path);
+    if !dir.is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    Ok(FolderInfo {
+        // A file in worktrees and submodules, a directory otherwise.
+        has_git: dir.join(".git").exists(),
+        docs: ["docs", "documentation"]
+            .into_iter()
+            .find(|sub| dir.join(sub).is_dir())
+            .unwrap_or("docs")
+            .to_string(),
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewProject {
+    pub name: String,
+    /// Folder to link in place. Absent means a new subfolder of the notes
+    /// root, which needs no registry entry — a first-level subfolder is a
+    /// project whether or not anything registered it.
+    pub path: Option<String>,
+    #[serde(default)]
+    pub use_docs: bool,
+}
+
+/// Create a project, wherever it lives. The two locations differ only in
+/// whether the registry has to remember one: a notes-root project is a folder,
+/// a project elsewhere is a folder plus an entry pointing at it.
+#[tauri::command]
+pub fn create_project(app: AppHandle, project: NewProject) -> Result<(), String> {
     let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    check_new_project(&root, &s, &project.name)?;
+    let Some(path) = project.path else {
+        return fs::create_dir_all(root.join(&project.name)).map_err(|e| e.to_string());
+    };
+    let path = project_location(&app, &root, &path, project.use_docs)?;
+    settings::update(&app, |s| {
+        s.projects.insert(
+            project.name,
+            Project {
+                path: Some(path),
+                ..Project::default()
+            },
+        );
+        Ok(())
+    })
+}
+
+/// Link folders found by a scan, in bulk.
+#[tauri::command]
+pub fn link_projects(app: AppHandle, projects: Vec<LinkedProject>) -> Result<(), String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
     // Validate and resolve every location first, so a bad one in the batch
     // leaves the settings file untouched.
     let mut entries = Vec::new();
     for p in projects {
-        if !valid_segment(&p.name) || p.name == ASSETS_DIR {
-            return Err(format!("invalid project name: {}", p.name));
-        }
-        if root.join(&p.name).is_dir() {
-            return Err(format!("a project named {} already exists", p.name));
-        }
-        if !Path::new(&p.path).is_dir() {
-            return Err(format!("not a folder: {}", p.path));
-        }
-        let path = if p.ensure_docs {
-            docs_root(Path::new(&p.path))?
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            p.path.clone()
-        };
-        // Preview must be able to load this folder's images via the asset
-        // protocol; the static scope only covers the root assets dir. Scoped
-        // to the scanned folder, not just docs/ — links may climb out of it.
-        let _ = app.asset_protocol_scope().allow_directory(&p.path, true);
-        entries.push((p.name, path));
+        check_new_project(&root, &s, &p.name)?;
+        entries.push((p.name, project_location(&app, &root, &p.path, p.use_docs)?));
     }
     settings::update(&app, |s| {
         for (name, path) in entries {
+            // The batch itself can carry a duplicate name; the check above only
+            // saw the names already registered.
             if s.projects.contains_key(&name) {
                 return Err(format!("a project named {name} already exists"));
             }
@@ -776,23 +874,25 @@ pub fn add_external_projects(
 /// Repoint a linked project at a different folder (Settings). Only its location
 /// changes — whatever else its entry carries stays.
 #[tauri::command]
-pub fn set_external_path(app: AppHandle, name: String, path: String) -> Result<(), String> {
-    if !Path::new(&path).is_dir() {
-        return Err(format!("not a folder: {path}"));
-    }
-    let _ = app.asset_protocol_scope().allow_directory(&path, true);
+pub fn set_project_path(app: AppHandle, name: String, path: String) -> Result<(), String> {
+    let root = notes_root(&app)?;
+    // Repointing takes the same location rules as creating: this is a project
+    // moving, not a different kind of thing.
+    let path = project_location(&app, &root, &path, false)?;
     settings::update(&app, |s| {
         let project = s
             .projects
             .get_mut(&name)
-            .ok_or_else(|| format!("no linked project named {name}"))?;
+            .ok_or_else(|| format!("no project named {name} has a folder of its own"))?;
         project.path = Some(path);
         Ok(())
     })
 }
 
+/// Forget a project's registry entry (Settings). Its folder and files are left
+/// exactly where they are.
 #[tauri::command]
-pub fn remove_external_project(app: AppHandle, name: String) -> Result<(), String> {
+pub fn unlink_project(app: AppHandle, name: String) -> Result<(), String> {
     settings::update(&app, |s| {
         s.projects.remove(&name);
         Ok(())

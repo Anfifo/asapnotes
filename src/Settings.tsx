@@ -56,9 +56,11 @@ function ExternalLink({ href, children }: { href: string; children: React.ReactN
 
 interface SettingsProps {
   rootPath: string;
-  /** External (linked-in-place) projects: name → absolute folder path. */
-  externalProjects: Record<string, string>;
-  onRemoveProject: (name: string) => void;
+  /** Every project, whether it lives in the notes folder (no `path`) or is
+   * linked in place from elsewhere. */
+  projects: { name: string; path: string | null }[];
+  /** Forget a linked project's entry; its folder and files stay put. */
+  onUnlinkProject: (name: string) => void;
   /** Pick a different folder for a linked project (e.g. a repo's docs/). */
   onChangeProjectPath: (name: string) => void;
   theme: Theme;
@@ -68,8 +70,8 @@ interface SettingsProps {
 
 export function Settings({
   rootPath,
-  externalProjects,
-  onRemoveProject,
+  projects,
+  onUnlinkProject,
   onChangeProjectPath,
   theme,
   onThemeChange,
@@ -130,30 +132,38 @@ export function Settings({
             </tr>
           </tbody>
         </table>
-        {Object.keys(externalProjects).length > 0 && (
+        {projects.length > 0 && (
           <>
-            <h2>Linked projects</h2>
+            <h2>Projects</h2>
             <table>
               <tbody>
-                {Object.entries(externalProjects).map(([name, path]) => (
+                {projects.map(({ name, path }) => (
                   <tr key={name}>
                     <td>{name}</td>
+                    {/* A project is a location: the notes folder, or one of its
+                        own — which is also what says whether it can be moved
+                        or unlinked at all. */}
                     <td className="settings-path">
-                      {path}{" "}
-                      <button
-                        className="settings-edit"
-                        title="Change folder — new projects root at the repo's docs/"
-                        onClick={() => onChangeProjectPath(name)}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        className="settings-remove"
-                        title="Unlink — the folder and its files stay untouched"
-                        onClick={() => onRemoveProject(name)}
-                      >
-                        ✕
-                      </button>
+                      {path ?? <span className="muted">In the notes folder</span>}
+                      {path && (
+                        <>
+                          {" "}
+                          <button
+                            className="settings-edit"
+                            title="Change folder — new projects root at the repo's docs/"
+                            onClick={() => onChangeProjectPath(name)}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            className="settings-remove"
+                            title="Unlink — the folder and its files stay untouched"
+                            onClick={() => onUnlinkProject(name)}
+                          >
+                            ✕
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}

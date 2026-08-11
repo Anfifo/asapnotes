@@ -9,7 +9,16 @@ import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
-import { fileOf, projectOf, relativePath, resolvePath, subdirOf, winPath } from "./paths";
+import { NewProject } from "./NewProject";
+import {
+  fileOf,
+  projectOf,
+  relativePath,
+  resolvePath,
+  subdirOf,
+  validFileName,
+  winPath,
+} from "./paths";
 import { featuresOf, hasFeature, isNoteFile, noteTypeOf, setNoteTypes, viewOf } from "./noteTypes";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
@@ -165,11 +174,6 @@ interface CommandEntry extends PaletteItem {
 
 type Entry = NoteEntry | CommandEntry;
 
-const validFileName = (name: string) =>
-  name.length > 0 && !name.startsWith(".") && !/[<>:"/\\|?*]/.test(name);
-
-const validProjectName = (name: string) => validFileName(name) && name !== "assets";
-
 /** The name a draft id carries: null only for app-generated `untitled-<ts>` ids.
  * A named draft keeps its name even when the backing file is gone (deleted
  * externally) — the titlebar stays honest and Ctrl+S recreates the file. */
@@ -195,9 +199,10 @@ function App() {
   const [notes, setNotes] = useState<api.FileInfo[]>([]);
   const [drafts, setDrafts] = useState<api.FileInfo[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
-  // Registered projects that live outside the notes root: name → absolute
-  // folder path, linked in place. Mirrors the located entries of settings.json.
-  const [externals, setExternals] = useState<Record<string, string>>({});
+  // Projects carrying a location of their own: name → absolute folder, linked
+  // in place. Mirrors the entries of settings.json that have a path; the rest
+  // live at `<notes root>/<name>`, which is the only difference between them.
+  const [projectPaths, setProjectPaths] = useState<Record<string, string>>({});
   const [scanResults, setScanResults] = useState<api.ProjectCandidate[] | null>(null);
   const [rootPath, setRootPath] = useState("");
   const [open, setOpen] = useState<OpenNote | null>(null);
@@ -262,7 +267,6 @@ function App() {
     }
   }, [explorerNarrow, explorerPinned, explorerOpen]);
   const [creatingProject, setCreatingProject] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
   // Explorer-driven creation is name-first: the target dir ("" = notes root)
   // gets an inline input row in the tree, Enter creates the file.
   const [explorerCreate, setExplorerCreate] = useState<string | null>(null);
@@ -289,8 +293,8 @@ function App() {
   draftsRef.current = drafts;
   const modeRef = useRef(mode);
   modeRef.current = mode;
-  const externalsRef = useRef<Record<string, string>>({});
-  externalsRef.current = externals;
+  const projectPathsRef = useRef<Record<string, string>>({});
+  projectPathsRef.current = projectPaths;
   const rootPathRef = useRef("");
   rootPathRef.current = rootPath;
   const noteDirRef = useRef("");
@@ -470,7 +474,7 @@ function App() {
   const projectDirOf = useCallback(
     (project: string | null) =>
       project
-        ? (externalsRef.current[project] ?? `${rootPathRef.current}/${project}`)
+        ? (projectPathsRef.current[project] ?? `${rootPathRef.current}/${project}`)
         : rootPathRef.current,
     [],
   );
@@ -516,7 +520,7 @@ function App() {
     // Directly in the root: the loose id, matching the backend, which resolves
     // a single-segment id against the root whatever else claims that folder.
     if (inRoot && !projectOf(inRoot)) return inRoot;
-    const located = Object.entries(externalsRef.current).sort(
+    const located = Object.entries(projectPathsRef.current).sort(
       ([, a], [, b]) => b.length - a.length,
     );
     for (const [name, dir] of located) {
@@ -667,7 +671,7 @@ function App() {
     if (!cur) return rel;
     const segments = cur.id.split("/");
     if (segments.length === 1) return rel;
-    const ups = externalsRef.current[segments[0]] ? segments.length - 2 : 1;
+    const ups = projectPathsRef.current[segments[0]] ? segments.length - 2 : 1;
     return "../".repeat(ups) + rel;
   }, []);
 
@@ -711,7 +715,7 @@ function App() {
       if (error && error !== settingsErrorRef.current) toast(error);
       settingsErrorRef.current = error;
       setNoteTypes(settings.noteTypes);
-      setExternals(
+      setProjectPaths(
         Object.fromEntries(
           Object.entries(settings.projects).flatMap(([name, p]) =>
             p.path ? [[name, p.path]] : [],
@@ -858,28 +862,40 @@ function App() {
   const addScannedProjects = useCallback(
     async (chosen: { name: string; path: string }[]) => {
       // Scanned repos root at their docs folder — notes, not the whole tree.
-      await api.addExternalProjects(chosen.map((c) => ({ ...c, ensure_docs: true })));
+      await api.linkProjects(chosen.map((c) => ({ ...c, useDocs: true })));
       setScanResults(null);
       await refreshProjects();
     },
     [refreshProjects],
   );
 
-  const removeExternalProject = useCallback(
+  /** Create a project wherever the sheet says it lives. Deliberately does not
+   * touch the open note — filing one into a project is "Move to project". */
+  const createProject = useCallback(
+    async (project: api.NewProject) => {
+      await api.createProject(project);
+      setCreatingProject(false);
+      await refreshProjects();
+      editorRef.current?.focus();
+    },
+    [refreshProjects],
+  );
+
+  const unlinkProject = useCallback(
     async (name: string) => {
-      await api.removeExternalProject(name);
+      await api.unlinkProject(name);
       await refreshProjects();
     },
     [refreshProjects],
   );
 
-  /** Settings → Linked projects: repoint a project at a different folder. */
+  /** Settings → Projects: repoint a linked project at a different folder. */
   const changeProjectPath = useCallback(
     async (name: string) => {
       const dir = await openFolderDialog({ directory: true, title: `Folder for ${name}` });
       if (typeof dir !== "string") return;
       try {
-        await api.setExternalPath(name, dir);
+        await api.setProjectPath(name, dir);
         await refreshProjects();
       } catch (err) {
         toast(`Couldn't change that project's folder — ${errText(err)}`);
@@ -1084,13 +1100,6 @@ function App() {
   const currentProject = open ? projectOf(open.id) : null;
   const noteDir = open ? noteDirOf(open.id) : rootPath;
   noteDirRef.current = noteDir;
-
-  const submitNewProject = () => {
-    const name = newProjectName.trim();
-    setCreatingProject(false);
-    setNewProjectName("");
-    if (validProjectName(name)) void changeProject(name);
-  };
 
   const startRename = () => {
     if (!open) return;
@@ -1718,19 +1727,6 @@ function App() {
                   ))}
                 </div>
               )}
-              {creatingProject && (
-                <input
-                  className="project-input"
-                  autoFocus
-                  value={newProjectName}
-                  placeholder="project name…"
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submitNewProject();
-                  }}
-                  onBlur={() => setCreatingProject(false)}
-                />
-              )}
             </header>
           </div>
           <div
@@ -1780,11 +1776,22 @@ function App() {
           }}
         />
       )}
+      {creatingProject && (
+        <NewProject
+          rootPath={rootPath}
+          existing={projects}
+          onCreate={createProject}
+          onClose={() => {
+            setCreatingProject(false);
+            editorRef.current?.focus();
+          }}
+        />
+      )}
       {settingsOpen && (
         <Settings
           rootPath={rootPath}
-          externalProjects={externals}
-          onRemoveProject={(name) => void removeExternalProject(name)}
+          projects={projects.map((name) => ({ name, path: projectPaths[name] ?? null }))}
+          onUnlinkProject={(name) => void unlinkProject(name)}
           onChangeProjectPath={(name) => void changeProjectPath(name)}
           theme={theme}
           onThemeChange={(next) => {

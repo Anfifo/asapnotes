@@ -413,7 +413,7 @@ Each step is useful alone and unblocks the next — no step needs the one after 
    markdown-only branches. Unblocks the plain-text-formats item and is the canvas seam.
    **Done 2026-08-10.**
 3. **Projects as location** — unify notes-root and linked projects, add the
-   where-does-it-live prompt to creation.
+   where-does-it-live prompt to creation. **Done 2026-08-11.**
 4. **Mounts** — resolution both ways, explorer marking, the context-menu entry.
 5. **`files` patterns** — the default is already the behavior, so this is the override path
    plus the floor.
@@ -438,6 +438,30 @@ Each step is useful alone and unblocks the next — no step needs the one after 
 - **Appearance writes are per change, not batched.** The read-modify-write happens under the
   settings lock, so a fast series (a Ctrl+scroll zoom gesture) can't leave the older value
   on disk.
+
+### What step 3 taught (2026-08-11)
+
+- **Creation was never a thing.** "New project" was a name box that _moved the open note_,
+  and the folder existed only because `move_note` created it on the way past. So the
+  where-does-it-live prompt could not be bolted onto the old flow; the flow had to be
+  written. Creating and filing are now separate: creation makes the project and nothing
+  else, and "Move to project" — which already existed in the palette — files a note into
+  it. The three entry points that all reached the old name box (File menu, palette,
+  explorer context menu) now genuinely create, which is what the explorer's entry always
+  looked like it did.
+- **A location inside the notes root is the id-collision bug, reachable by hand.** Nothing
+  stopped a linked folder from sitting under the notes root, and a file below it then had
+  two valid ids — one from the root walk, one through the project — which is two shadow
+  drafts and two tabs that overwrite each other. Latent before (a scan of the notes folder
+  could do it), one click away once a picker exists. `outside_root` now refuses it at
+  creation and at repoint, where the user can be told why. This is the same class of bug
+  the cost list flags for mounts, arriving one step early.
+- **The unification is mostly naming, because step 1 already did the data.** What was left
+  was the vocabulary: `add_external_projects`/`set_external_path`/`remove_external_project`
+  became `link_projects`/`set_project_path`/`unlink_project`, and Settings shows one
+  **Projects** table where the location — a path, or "In the notes folder" — is the only
+  thing that distinguishes them. Naming a _kind_ of project was the last place the model
+  still said there were two.
 
 ## Migration
 

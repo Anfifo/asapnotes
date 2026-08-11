@@ -61,15 +61,33 @@ export const writeDraft = (id: string, content: string) =>
 export const deleteDraft = (id: string) => invoke<void>("delete_draft", { id });
 
 export const scanProjects = (dir: string) => invoke<ProjectCandidate[]>("scan_projects", { dir });
-/** `ensure_docs` roots the project at its docs/ (or documentation/) folder,
+
+/** What a picked folder offers a project about to live in it. */
+export interface FolderInfo {
+  has_git: boolean;
+  /** An existing docs/documentation folder, else the docs/ that would be made. */
+  docs: string;
+}
+
+export const folderInfo = (path: string) => invoke<FolderInfo>("folder_info", { path });
+
+/** Where a new project lives: no `path` means a subfolder of the notes root.
+ * `useDocs` roots it at the picked folder's docs/ (or documentation/) instead,
  * creating docs/ when neither exists. */
-export const addExternalProjects = (
-  projects: { name: string; path: string; ensure_docs?: boolean }[],
-) => invoke<void>("add_external_projects", { projects });
-export const removeExternalProject = (name: string) =>
-  invoke<void>("remove_external_project", { name });
-export const setExternalPath = (name: string, path: string) =>
-  invoke<void>("set_external_path", { name, path });
+export interface NewProject {
+  name: string;
+  path?: string | null;
+  useDocs?: boolean;
+}
+
+export const createProject = (project: NewProject) => invoke<void>("create_project", { project });
+/** Link folders found by a scan, in bulk. */
+export const linkProjects = (projects: { name: string; path: string; useDocs?: boolean }[]) =>
+  invoke<void>("link_projects", { projects });
+/** Forget a project's entry; its folder and files stay where they are. */
+export const unlinkProject = (name: string) => invoke<void>("unlink_project", { name });
+export const setProjectPath = (name: string, path: string) =>
+  invoke<void>("set_project_path", { name, path });
 
 // --- Personal settings (app-data settings.json) ---
 

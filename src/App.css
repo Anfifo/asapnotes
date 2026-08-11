@@ -1019,19 +1019,6 @@ body,
 
 /* Titlebar controls */
 
-.project-input {
-  font: inherit;
-  font-size: 0.72rem;
-  color: #7a7a7a;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid #d5d5d5;
-  outline: none;
-  padding: 0;
-  width: 9rem;
-  flex-shrink: 0;
-}
-
 .tool-btn {
   font: inherit;
   font-size: 0.8rem;
@@ -1217,6 +1204,41 @@ body,
 .scan-actions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* New-project sheet */
+
+.np-name {
+  font: inherit;
+  font-size: 0.85rem;
+  color: inherit;
+  width: 100%;
+  background: transparent;
+  border: 1px solid #d5d5d5;
+  border-radius: 5px;
+  outline: none;
+  padding: 0.25rem 0.4rem;
+}
+
+.np-name:focus {
+  border-color: #b8b8b8;
+}
+
+.np-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  cursor: pointer;
+}
+
+/* Where the project will end up — shown for both locations, so the choice is
+   answered by a path rather than by a label. */
+.np-location {
+  margin-top: 0.5rem;
+  color: #9a9a9a;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
 }
 
 /* Credits — the one row in About meant to stand out. */
@@ -1685,17 +1707,17 @@ body,
     color: #b0b0b0;
   }
 
-  .project-input {
-    color: #9a9a9a;
-  }
-
-  .project-input,
   .title-input {
     border-bottom-color: #4a4a4a;
   }
 
-  .tool-btn {
+  .tool-btn,
+  .np-name {
     border-color: #4a4a4a;
+  }
+
+  .np-name:focus {
+    border-color: #6a6a6a;
   }
 
   .tool-btn.open {

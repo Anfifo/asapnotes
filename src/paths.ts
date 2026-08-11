@@ -22,6 +22,14 @@ export function relativePath(fromDir: string, toPath: string): string | null {
   return "../".repeat(from.length - i) + to.slice(i).join("/");
 }
 
+/** Characters Windows forbids in a name, plus the leading dot that would make
+ * a note or project invisible to the walks that skip dot-entries. */
+export const validFileName = (name: string) =>
+  name.length > 0 && !name.startsWith(".") && !/[<>:"/\\|?*]/.test(name);
+
+/** A project is one path segment, and never the shared assets folder. */
+export const validProjectName = (name: string) => validFileName(name) && name !== "assets";
+
 /** A forward-slash path in Windows form — for the clipboard and the shell. */
 export const winPath = (path: string) => path.replace(/\//g, "\\");
 

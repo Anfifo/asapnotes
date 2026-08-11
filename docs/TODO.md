@@ -205,6 +205,9 @@ The AI (or anyone) working on this repo keeps this file current while working:
       folders stop being three different things and today's external mapping
       becomes the degenerate case. Ids keep their shape, so drafts, tabs, palette
       and search need no migration.
+      **2026-08-11: half (a) shipped** with step 3 — creation asks where the project
+      lives, including the repository-`docs/` option. What's left of this item is (b),
+      the virtual grouping, which is step 4.
 
 - [ ] **Settings rework: menubar entry, theme, file-type config, per-project config**
       (2026-08-09) — captured design intent, needs design before code. (a) **Settings
@@ -765,10 +768,13 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       commit carries these in docs, so scrubbing files can't clean it — publish a
       fresh-history repo (squash to one clean initial commit, full history stays
       on a private remote). Also: delete stray repo-root `test.md`.
-      This item owns the **content** half; the machinery half (license, CI, tests,
-      toolchain pinning, CONTRIBUTING) is written up as a question list in
-      [`dev-environment.md`](dev-environment.md). Both have to land before flipping
-      visibility.
+      **2026-08-10: superseded by [`going-public.md`](going-public.md)** — the license
+      decision, the docs-scrub counts, the `branding.md` call, the history question, the
+      README rewrite and what publishing commits us to are all written up there with
+      recommendations and an ordered checklist; the dev machinery that gates _accepting
+      contributions_ (CI, tests, pinning, CONTRIBUTING) stays in
+      [`dev-environment.md`](dev-environment.md). Delete this item once the license is
+      picked and the doc's "before flipping the switch" list is done.
 - [ ] **MCP sidecar** (2026-08-06) — TypeScript stdio MCP server in this repo exposing
       list/read/write/search over the notes root, so any MCP client can go over
       the notes. 2026-08-09 direction agreed: (a) **access scope as a setting** —
@@ -794,15 +800,13 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       sidecar also sees only what a project's file rules list, so exclusions are an
       access boundary, not just a display one. (b) and (c) still need the tool-surface
       doc.
-- [ ] **Project model — implementation, steps 3–6** (2026-08-10) — the design is
+- [ ] **Project model — implementation, steps 4–6** (2026-08-10) — the design is
       [docs/project-model.md](project-model.md), promoted to
       [a project is a location plus mounts](decisions/2026-08-10-a-project-is-a-location-plus-mounts.md)
       and [config splits by trust](decisions/2026-08-10-config-splits-by-trust.md); the doc
       carries the order and the cost-to-existing-code list. **Steps 1–2 landed 2026-08-10**
-      (see the settings-rework item above for what that covered). Remaining, each useful
-      alone: **(3) projects as location** — unify notes-root and linked projects behind one
-      entry shape, add the where-does-it-live prompt to creation (this is where
-      user-visible behavior starts changing); **(4) mounts** — resolution both ways,
+      (see the settings-rework item above), **step 3 on 2026-08-11** (below). Remaining, each
+      useful alone: **(4) mounts** — resolution both ways,
       explorer marking, the context-menu entry; **(5) `files` patterns** — the override path
       plus the floor; **(6) consumers** — the MCP grant and `board.canvas`, each its own
       item. Traps to carry forward, all listed in the doc: `note_paths` must learn about
@@ -811,6 +815,34 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       needs a copy-then-delete fallback across volumes; `MAX_DEPTH` counts id segments, so
       cap mount `at` depth at creation where the error can be explained; removing a mount
       orphans drafts filed under its ids.
+
+  **2026-08-11 — step 3 landed: projects as location.** Both halves, pending hands-on check.
+  **Creation is now its own thing**: a sheet (`src/NewProject.tsx`) asking name + where it
+  lives — _Notes folder_ or _A folder on disk…_ — with a **"use the repository's `docs/`"**
+  checkbox that appears, checked, when the picked folder holds `.git` (new `folder_info`
+  command; the frontend can't stat that itself), and a live path readout so the choice is
+  answered by a path rather than a label. New `create_project` covers both locations: a
+  notes-folder project is a folder and gets **no registry entry** (existence stays
+  filesystem-derived), a picked folder is a folder plus an entry.
+  **Creating and filing are now separate** (chosen over keeping them coupled or offering a
+  "move the open note here" checkbox): the old "New project…" was a name box that _moved the
+  open note_ into a folder `move_note` created on the way past — so the explorer's "New
+  project" quietly relocated whatever was open. Filing a note is "Move to project" in the
+  palette, which already existed. The old toolbar input and its CSS are gone.
+  **The unify half**: `add_external_projects`/`set_external_path`/`remove_external_project`
+  → `link_projects`/`set_project_path`/`unlink_project`; frontend `externals` →
+  `projectPaths`; Settings' "Linked projects" is one **Projects** table listing every
+  project, where the location ("In the notes folder" vs. a path) is the only thing telling
+  them apart, and ✎/✕ show only where there's a folder to repoint or forget.
+  `validFileName`/`validProjectName` moved to `paths.ts` on their second use.
+  **One hazard closed on the way** (not in the step's scope, but the picker put it one click
+  away): a project location _inside_ the notes root gave every file below it two ids — root
+  walk and project — hence two shadow drafts and two tabs that overwrite each other.
+  `outside_root` refuses it at creation and at repoint. Latent before via a scan of the
+  notes folder; the same class of bug the doc's cost list flags for mounts.
+  Gates all clean. Pending hands-on: create in the notes folder, create from a picked repo
+  (docs checkbox), the refusal message when picking inside the notes root, Settings'
+  Projects table in both themes.
 
 ## Pending / future direction
 

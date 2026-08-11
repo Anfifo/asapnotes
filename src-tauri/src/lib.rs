@@ -156,9 +156,11 @@ pub fn run() {
             notes::save_asset,
             notes::import_asset,
             notes::scan_projects,
-            notes::add_external_projects,
-            notes::remove_external_project,
-            notes::set_external_path,
+            notes::folder_info,
+            notes::create_project,
+            notes::link_projects,
+            notes::unlink_project,
+            notes::set_project_path,
         ])
         .setup(|app| {
             #[cfg(desktop)]
