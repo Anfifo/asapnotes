@@ -62,8 +62,9 @@ interface ExplorerProps {
   onStartCreate: (dir: string) => void;
   /** Folder with an active inline create row, null when none. */
   creatingIn: string | null;
-  /** What the create row makes: a note file, or a real folder. */
-  creatingKind: "note" | "folder";
+  /** What the create row makes: a note file, a real folder here, or a virtual
+   * folder whose backing directory is created in the virtual-folders home. */
+  creatingKind: "note" | "folder" | "virtual";
   onCreate: (dir: string, name: string) => void;
   onCreateCancel: () => void;
   /** Folders created this session that hold no note yet. The tree derives from
@@ -186,7 +187,13 @@ export function Explorer({
     <li className="create-row" key="__create">
       <input
         autoFocus
-        placeholder={creatingKind === "folder" ? "folder name…" : "note name…"}
+        placeholder={
+          creatingKind === "virtual"
+            ? "virtual folder name…"
+            : creatingKind === "folder"
+              ? "folder name…"
+              : "note name…"
+        }
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           e.stopPropagation();

@@ -174,6 +174,7 @@ pub fn run() {
             notes::set_project_path,
             notes::list_mounts,
             notes::add_mount,
+            notes::create_virtual_folder,
             notes::remove_mount,
         ])
         .setup(|app| {

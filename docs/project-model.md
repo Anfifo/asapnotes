@@ -11,7 +11,7 @@ the answer they were waiting for. Update as the implementation teaches us things
 | One config file or two, and where the per-project one lives       | **Two**, split by trust: personal in app data, portable in the project                           | [Where config lives](#where-config-lives)       |
 | Does the per-project file end up in the user's repo?              | Only if they commit it. It is never created unasked and we never touch `.gitignore`              | [Is it committed?](#is-it-committed)            |
 | Where a new project lives                                         | Creation asks: notes root, or a picked folder                                                    | [Projects](#projects)                           |
-| Does "add virtual folder" pick or create?                         | **Pick.** One verb — mount an existing folder; creating one is the picker's job                  | [Mounts](#mounts-virtual-folders)               |
+| Does "add virtual folder" pick or create?                         | Both (revised 2026-08-12): _associate_ picks, _new_ creates in the virtual-folders home          | [Mounts](#mounts-virtual-folders)               |
 | Note-type registry shape                                          | Data in settings (`extensions`, `view`, `icon`, `features`); view providers are an in-tree table | [Note-type registry](#the-note-type-registry)   |
 | How the explorer marks virtual entries                            | Badge and real path on the mount root; a subtle inherited tint on its subtree                    | [In the explorer](#in-the-explorer)             |
 | Default exclusion set, and how a project pulls code files back in | Default is code (type allowlist + skip dirs); a project overrides with one ordered pattern list  | [What counts as a note](#what-counts-as-a-note) |
@@ -81,10 +81,10 @@ owning workspace per project.
 
 Two files, and the seam between them is **trust**, not scope level.
 
-|              | Lives in                    | Holds                                                                                    | Leaves the machine?         |
-| ------------ | --------------------------- | ---------------------------------------------------------------------------------------- | --------------------------- |
-| **Personal** | app data, `settings.json`   | notes root, appearance, note-type registry, and per project: location, mounts, MCP grant | never                       |
-| **Portable** | `<project>/.asapnotes.json` | `files` patterns, per-project note-type entries                                          | only if the user commits it |
+|              | Lives in                    | Holds                                                                                                          | Leaves the machine?         |
+| ------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **Personal** | app data, `settings.json`   | notes root, appearance, note-type registry, virtual-folders home, and per project: location, mounts, MCP grant | never                       |
+| **Portable** | `<project>/.asapnotes.json` | `files` patterns, per-project note-type entries                                                                | only if the user commits it |
 
 ### Why the split is there
 
@@ -194,11 +194,23 @@ _and_ rewriting ids in drafts, tabs, and board files.
 
 ## Mounts (virtual folders)
 
-### The verb
+### The verbs
 
-**"Add virtual folder" means: pick a folder, and mount it into this project at a name.**
-There is no separate "create a folder elsewhere and link it" flow, because the system
-folder picker already creates folders. One verb, one code path, one thing to explain.
+_Revised 2026-08-12 — the original design was one verb (pick a folder, mount it, with
+the picker doubling as the way to create one). Use taught otherwise: "make me a virtual
+folder" shouldn't require deciding where it lives._ Two verbs now, split by where the
+folder comes from:
+
+- **Associate virtual folder…** — pick an existing folder, mount it at its own name.
+  The picker is still where a folder at a _chosen_ place gets created.
+- **New virtual folder** — name it inline; the app creates the backing directory in the
+  **virtual-folders home** (`virtualFoldersRoot` in the personal file, defaulting to
+  `virtual/<project>/<at>` in app data — never the installation folder, which updates
+  replace and installs may make read-only) and mounts it. Detaching leaves the folder in
+  place, so creating the same name again revives its files.
+
+Both verbs share one validation and registration path in the code; they differ only in
+where the folder comes from.
 
 Reachable from the explorer context menu on a project or folder heading — mounting onto a
 folder heading simply produces a nested `at` (`design/meetings`).

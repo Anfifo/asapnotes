@@ -1247,14 +1247,11 @@ fn nested_at(a: &str, b: &str) -> bool {
     a == b || a.strip_prefix(b).is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// Attach an existing folder into a project at a project-relative name. One
-/// verb — the folder is picked, never created here, because the system folder
-/// picker already creates folders.
-#[tauri::command]
-pub fn add_mount(app: AppHandle, project: String, at: String, path: String) -> Result<(), String> {
-    let root = notes_root(&app)?;
-    let s = settings::settings(&app)?;
-    if !root.join(&project).is_dir() && !s.projects.contains_key(&project) {
+/// Shared validation for attaching a mount at `at`, however its backing folder
+/// comes to exist: the project is real, the name is usable, no real folder
+/// sits at it, and no other mount overlaps it. Returns the normalized `at`.
+fn checked_mount_at(root: &Path, s: &Settings, project: &str, at: &str) -> Result<String, String> {
+    if !root.join(project).is_dir() && !s.projects.contains_key(project) {
         return Err(format!("no project named {project}"));
     }
     let at = at.trim_matches('/').to_string();
@@ -1266,15 +1263,10 @@ pub fn add_mount(app: AppHandle, project: String, at: String, path: String) -> R
     {
         return Err(format!("{at} isn't a usable folder name inside {project}"));
     }
-    let dir = PathBuf::from(&path);
-    if !dir.is_dir() {
-        return Err(format!("not a folder: {path}"));
-    }
-    check_location(&root, &s, &dir, None)?;
-    if project_base(&root, &s, &project).join(&at).is_dir() {
+    if project_base(root, s, project).join(&at).is_dir() {
         return Err(format!("{project} already has a folder of its own at {at}"));
     }
-    if let Some(entry) = s.projects.get(&project) {
+    if let Some(entry) = s.projects.get(project) {
         if let Some(m) = entry
             .mounts
             .iter()
@@ -1286,10 +1278,21 @@ pub fn add_mount(app: AppHandle, project: String, at: String, path: String) -> R
             ));
         }
     }
+    Ok(at)
+}
+
+/// Grant the asset scope and record the mount — the shared tail of both
+/// attach paths.
+fn register_mount(
+    app: &AppHandle,
+    project: String,
+    at: String,
+    path: String,
+) -> Result<(), String> {
     // Preview loads a mounted note's images through the asset protocol, whose
     // static scope only covers the root assets dir. Re-granted at startup.
     let _ = app.asset_protocol_scope().allow_directory(&path, true);
-    settings::update(&app, |s| {
+    settings::update(app, |s| {
         s.projects
             .entry(project)
             .or_default()
@@ -1297,6 +1300,55 @@ pub fn add_mount(app: AppHandle, project: String, at: String, path: String) -> R
             .push(Mount { at, path });
         Ok(())
     })
+}
+
+/// Attach an existing folder into a project at a project-relative name
+/// ("associate virtual folder") — the folder is picked; making a brand-new one
+/// is `create_virtual_folder`.
+#[tauri::command]
+pub fn add_mount(app: AppHandle, project: String, at: String, path: String) -> Result<(), String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    let at = checked_mount_at(&root, &s, &project, &at)?;
+    if !Path::new(&path).is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    check_location(&root, &s, Path::new(&path), None)?;
+    register_mount(&app, project, at, path)
+}
+
+/// Where "New virtual folder" creates its backing folders: the personal
+/// `virtualFoldersRoot` setting, else `virtual` in app data — a machine-local
+/// home like the drafts dir. Never the installation folder, which updates
+/// replace and installs may make read-only.
+fn virtual_folders_root(app: &AppHandle, s: &Settings) -> Result<PathBuf, String> {
+    match s.virtual_folders_root.as_deref() {
+        Some(dir) => Ok(PathBuf::from(dir)),
+        None => Ok(app
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("virtual")),
+    }
+}
+
+/// Create the backing folder for a brand-new virtual folder and attach it —
+/// "new" as against "associate" (`add_mount`), which picks a folder that
+/// already exists. The folder is created under the virtual-folders home at
+/// `<project>/<at>`, never inside the project itself: virtual means the
+/// contents live elsewhere.
+#[tauri::command]
+pub fn create_virtual_folder(app: AppHandle, project: String, at: String) -> Result<(), String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    let at = checked_mount_at(&root, &s, &project, &at)?;
+    let path = virtual_folders_root(&app, &s)?.join(&project).join(&at);
+    // Checked like any picked folder: a hand-edited home could sit anywhere.
+    check_location(&root, &s, &path, None)?;
+    // An existing folder here is a detached virtual folder of the same name —
+    // detaching leaves files in place, so creating it again revives them.
+    fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    register_mount(&app, project, at, path.to_string_lossy().into_owned())
 }
 
 /// Detach a folder from a project. The folder and its files stay exactly where

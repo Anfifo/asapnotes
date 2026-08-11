@@ -12,12 +12,36 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-12)
+
+- [ ] **Allow closing the last tab → welcome panel** (2026-08-12) — requested: today
+      the last untitled note can't be closed; make it closable. With zero tabs open,
+      the editor area shows a **welcome panel**: a start screen listing the main
+      actions as clickable entries (new note, scan a folder for projects, attach a
+      virtual folder, open a recent note…) plus short pointers to the tool's commands
+      and shortcuts (Ctrl+K palette, Ctrl+P switcher, global summon), so it doubles as
+      a first-run "what can this do" surface. **Summon behavior is unchanged**: hiding
+      to tray and summoning again still lands in a ready-to-type note instantly — the
+      welcome panel appears only when the user deliberately closes the last tab, never
+      as a default state. (If the window is summoned while the welcome panel is up,
+      decide: keep showing it, or auto-create a fresh untitled note — the requested
+      intent leans to a new note being the quick default.)
+
 ## Today (2026-08-11)
 
 - [ ] **Explorer: indent guides for expanded folders** (2026-08-11) — feedback: hard to
       tell what's inside vs. outside an expanded folder. Draw a vertical guide line per
       nesting level that follows the indentation, so where a folder's subtree ends is
       visible at a glance.
+- [ ] **Explorer: file-type icons + colored extensions** (2026-08-11) — suggestion:
+      each file row gets the classic icon for its type before the name, provided the
+      icons come from a freely-licensed source (the repo is going public, so no
+      lifting an editor's icon set). Additionally the extension part of the name is
+      tinted with the color conventionally associated with the type — e.g.
+      `test.json` renders "json" in a distinctive but still readable color. Hooks
+      into settings-rework (b) below: the note-type registry already carries `icon`
+      and `color` per type in `settings.json`, but nothing renders them yet — this
+      is the rendering half, and those fields should be its source of truth.
 - [ ] **Bug: `.md` files not showing as markdown** (2026-08-11) — reported: `.md` files
       aren't being presented as markdown. Needs a repro to pin down where (explorer
       display, editor features, or type resolution) — suspect the note-type registry
@@ -209,6 +233,21 @@ The AI (or anyone) working on this repo keeps this file current while working:
       only for the session (`newFolders`, same idea as empty mounts) — after a restart
       it isn't listed until a note lands in it; the real fix is the backend walk
       returning directories, which belongs with reveal-active-note (Tier 3).
+      **2026-08-12: the verb set grew and renamed** (feedback: creating a virtual
+      folder shouldn't require the picker). The heading menu now offers three
+      creations — **New folder** (real directory here), **New virtual folder**
+      (name-first row; the backing directory is created in the **virtual-folders
+      home** and attached — new `create_virtual_folder`, sharing `add_mount`'s
+      validation via `checked_mount_at`/`register_mount`), and **Associate virtual
+      folder…** (the renamed pick-an-existing flow). The home is `virtualFoldersRoot`
+      in `settings.json`, defaulting to `virtual/<project>/<at>` in app data —
+      deliberately not the installation folder (updates replace it) and never inside
+      a project (virtual means the contents live elsewhere). Detaching leaves the
+      backing folder in place, so creating the same name again revives its files.
+      Pending hands-on: create a virtual folder on a project heading, drop a note in
+      it, detach, re-create the same name and see the note come back. Related open
+      end: a drafts-location setting was mentioned in the same breath — separate
+      item, not designed.
 - [ ] **Settings rework: menubar entry, theme, file-type config, per-project config**
       (2026-08-09) — captured design intent, needs design before code. (a) **Settings
       moves to the top**: its own menubar entry; Help probably stops being a top-level

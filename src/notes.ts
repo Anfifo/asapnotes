@@ -108,9 +108,15 @@ export interface MountInfo {
 }
 
 export const listMounts = () => invoke<MountInfo[]>("list_mounts");
-/** Attach an existing folder into a project at a project-relative name. */
+/** Attach an existing folder into a project at a project-relative name
+ * ("associate virtual folder"). */
 export const addMount = (project: string, at: string, path: string) =>
   invoke<void>("add_mount", { project, at, path });
+/** Create a brand-new virtual folder: its backing directory is made in the
+ * virtual-folders home (settings `virtualFoldersRoot`, default app data) and
+ * attached at `at`. */
+export const createVirtualFolder = (project: string, at: string) =>
+  invoke<void>("create_virtual_folder", { project, at });
 /** Detach it again; the folder and its files stay where they are. */
 export const removeMount = (project: string, at: string) =>
   invoke<void>("remove_mount", { project, at });
@@ -144,6 +150,8 @@ export interface Settings {
   appearance: Appearance;
   projects: Record<string, Project>;
   noteTypes: NoteType[];
+  /** Where "New virtual folder" creates backing folders; absent = app data. */
+  virtualFoldersRoot?: string | null;
 }
 
 /** `error` is set when the file couldn't be parsed: shipped defaults are in

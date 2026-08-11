@@ -37,6 +37,11 @@ pub struct Settings {
     /// The note-type registry. `view` and `icon` are ids into in-tree tables,
     /// so this data can add a format but never a view.
     pub note_types: Vec<NoteType>,
+    /// Where "New virtual folder" creates its backing folders. Absent means
+    /// `virtual` in app data. A machine path, so it lives here and never in a
+    /// project file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_folders_root: Option<String>,
 }
 
 impl Default for Settings {
@@ -46,6 +51,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             projects: BTreeMap::new(),
             note_types: default_note_types(),
+            virtual_folders_root: None,
         }
     }
 }

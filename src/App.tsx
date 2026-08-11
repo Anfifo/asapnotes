@@ -266,7 +266,9 @@ function App() {
   // gets an inline input row in the tree, Enter creates the file — or, with
   // kind "folder", a real directory.
   const [explorerCreate, setExplorerCreate] = useState<string | null>(null);
-  const [explorerCreateKind, setExplorerCreateKind] = useState<"note" | "folder">("note");
+  const [explorerCreateKind, setExplorerCreateKind] = useState<"note" | "folder" | "virtual">(
+    "note",
+  );
   // Folders created this session that hold no note yet: the explorer tree
   // derives from note files, so these are remembered to stay visible.
   const [newFolders, setNewFolders] = useState<string[]>([]);
@@ -1536,7 +1538,7 @@ function App() {
     setRenaming(true);
   };
 
-  const startExplorerCreate = (dir: string, kind: "note" | "folder" = "note") => {
+  const startExplorerCreate = (dir: string, kind: "note" | "folder" | "virtual" = "note") => {
     setExplorerOpen(true);
     setExplorerView("files");
     setExplorerCreateKind(kind);
@@ -1592,6 +1594,26 @@ function App() {
     setNewFolders((ds) => [...ds, id]);
   };
 
+  /** Inline creation of a brand-new virtual folder: the backend makes its
+   * backing directory in the virtual-folders home and attaches it here. */
+  const createNamedVirtualFolder = async (dir: string, name: string) => {
+    setExplorerCreate(null);
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!validFileName(trimmed)) {
+      toast(`"${name}" isn't a valid folder name`);
+      return;
+    }
+    const [project, ...rest] = dir.split("/");
+    try {
+      await api.createVirtualFolder(project, [...rest, trimmed].join("/"));
+    } catch (err) {
+      toast(`Couldn't create that virtual folder — ${errText(err)}`);
+      return;
+    }
+    await refreshProjects();
+  };
+
   const explorerContextMenu = (e: React.MouseEvent, id: string, isNote: boolean) =>
     openContextMenu(e, [
       { label: "Open", run: () => openFromExplorer(id, isNote) },
@@ -1608,10 +1630,10 @@ function App() {
         : ["sep" as const, { label: "Discard draft", run: () => void discardDraft(id) }]),
     ]);
 
-  /** Attach an existing folder into a project ("add virtual folder"): pick it,
-   * and it lands under the clicked heading under its own name. One verb — the
-   * picker is where folders get created. */
-  const addVirtualFolder = async (dir: string) => {
+  /** Attach an existing folder into a project ("associate virtual folder"):
+   * pick it, and it lands under the clicked heading under its own name. A
+   * brand-new one is "New virtual folder" instead. */
+  const associateVirtualFolder = async (dir: string) => {
     const picked = await openFolderDialog({ directory: true, title: "Folder to attach" });
     if (typeof picked !== "string") return;
     const [project, ...rest] = dir.split("/");
@@ -1642,15 +1664,16 @@ function App() {
     const mount = mounts.find((m) => m.project === project && m.at === rest.join("/"));
     openContextMenu(e, [
       { label: "New note here", run: () => startExplorerCreate(dir) },
-      // Both need a project to land in, which the notes-root heading ("")
+      // All three need a project to land in, which the notes-root heading ("")
       // isn't — a top-level folder is a project, created by "New project…".
-      // "New folder" makes a real directory right here; "Add virtual folder"
-      // attaches one that lives elsewhere (the picker is where those get
-      // created).
+      // "New folder" makes a real directory right here; "New virtual folder"
+      // creates one in the virtual-folders home and attaches it; "Associate"
+      // attaches a folder that already exists somewhere.
       ...(dir
         ? [
             { label: "New folder", run: () => startExplorerCreate(dir, "folder") },
-            { label: "Add virtual folder…", run: () => void addVirtualFolder(dir) },
+            { label: "New virtual folder", run: () => startExplorerCreate(dir, "virtual") },
+            { label: "Associate virtual folder…", run: () => void associateVirtualFolder(dir) },
           ]
         : []),
       ...(mount
@@ -1729,7 +1752,9 @@ function App() {
             onCreate={(dir, name) =>
               void (explorerCreateKind === "folder"
                 ? createNamedFolder(dir, name)
-                : createNamedNote(dir, name))
+                : explorerCreateKind === "virtual"
+                  ? createNamedVirtualFolder(dir, name)
+                  : createNamedNote(dir, name))
             }
             onCreateCancel={() => setExplorerCreate(null)}
             newFolders={newFolders}
