@@ -7,9 +7,9 @@ would cost to pick each one.
 
 Scope: the machinery a contributor touches — how you run the app, what stops a bad change
 landing, what a stranger needs to get from `git clone` to a running window. It deliberately
-does **not** cover what content is safe to publish (comment scrubs, docs scrub, history
-squash) — that lives in the **"Prepare repo for going public"** item in
-[TODO.md](TODO.md), and the two need to land together.
+does **not** cover publishing — the license, what is safe to expose, the docs scrub, git
+history, the README. That is [`going-public.md`](going-public.md). Nothing here blocks going
+public; this is what gates accepting someone else's first pull request.
 
 Two things frame every answer:
 
@@ -87,36 +87,12 @@ for now; if it ever bites, the fix is a `tasks.json` task plus a `preLaunchTask`
 
 ---
 
-## 2. License — **the actual blocker**
+## 2. License, and everything else about publishing
 
-There is no `LICENSE` file. `package.json` says `"private": true` and has no `license`
-field; `Cargo.toml` has no `license` either. A public repo with no license is **all rights
-reserved**: nobody may legally use, fork, or contribute to it, and most contributors know to
-walk away. Nothing else in this document blocks going public. This does.
-
-**2.1 — Which license?**
-
-| Option         | What it means here                                                                   |
-| -------------- | ------------------------------------------------------------------------------------ |
-| **MIT**        | Shortest, most permissive, most familiar. Anyone can ship a closed fork.             |
-| **Apache-2.0** | MIT-like freedoms plus an explicit patent grant and a trademark clause. Longer file. |
-| **GPL-3.0**    | Derivatives must also be open. Blocks closed forks; also deters some contributors.   |
-
-Worth weighing against the stated product direction: a paid or hosted cloud-share tier
-(TODO: "Cloud share + live collaboration") coexists fine with any of the three for **our own**
-code, but a permissive license also lets someone else run that service. If that matters, it
-should be decided now rather than discovered later — relicensing after contributions arrive
-requires every contributor's agreement.
-
-_Recommendation:_ **Apache-2.0** for a desktop app with a possible commercial arm — same
-practical openness as MIT, plus the patent grant that makes corporate users comfortable.
-Pick MIT instead if brevity and maximum adoption matter more than the patent language.
-
-**2.2 — Where it propagates.** Answering 2.1 means: `LICENSE` at the root, `"license"` in
-`package.json` (and dropping or keeping `"private": true` — it prevents accidental
-`npm publish`, which is worth keeping since this is an app, not a package), `license` in
-`Cargo.toml`, and a line in the README. Also decide whether to add a `NOTICE` file
-(Apache-2.0 only, optional) and whether third-party licenses need bundling in the installer.
+Moved. The license decision, what is safe to expose, the docs scrub, git history, and the
+README's first impression all live in [`going-public.md`](going-public.md) — they are about
+publishing, not about the dev loop. The license is the one true blocker for going public;
+nothing in _this_ document is.
 
 ---
 
@@ -238,19 +214,12 @@ Covenant); only matters if there's a community. Yes/no.
 
 ---
 
-## 7. Small things that would be embarrassing on day one
+## 7. First impression
 
-- **`test.md` in the repo root** — untracked scratch file. Delete it. (Also listed in the
-  "Prepare repo for going public" TODO item; note that `docs/TODO.md` records an orphaned
-  named draft pointing at it, so deleting it may leave a stale draft entry.)
-- **README "Status" is badly stale** — it says _"Runnable skeleton (2026-08-06): the window
-  launches; no features yet"_, which is wrong by five feature commits (tabs, explorer,
-  search, mentions, live preview, themes). First impression of a public repo is its README.
-- **README has no screenshot.** For a UI app this is the single highest-value README
-  addition, and it costs one capture.
-- **No repository metadata** — `package.json` and `Cargo.toml` have no `repository`,
-  `homepage`, or `keywords`. `Cargo.toml`'s `authors = ["Anfifo"]` should probably carry a
-  contact address if the crate is ever published (it needn't be).
+Also moved to [`going-public.md`](going-public.md) §5 — the stale README status, the missing
+screenshot, repository metadata, and the stray `test.md`. One item stays here because it is
+a dev-loop concern rather than a publishing one:
+
 - **Cargo has no `[lints]` section** — clippy runs are advisory. If §3.2 lands strict, a
   `[lints.clippy]` block makes the policy visible in the repo rather than only in CI.
 
@@ -263,9 +232,8 @@ Covenant); only matters if there's a community. Yes/no.
   pointless before anyone downloads a build.
 - **Dependabot / renovate** — worth having eventually; noise before there's CI to prove an
   update is safe. Do it after §3.
-- **Content safety of what gets published** — the comment scrub, the docs scrub decision
-  (`branding.md` is competitor analysis by design), and the fresh-history question all live
-  in the "Prepare repo for going public" TODO item.
+- **Everything about publishing** — license, content scrub, git history, README, and the
+  promises the repo makes once it is readable — is [`going-public.md`](going-public.md).
 
 ---
 
@@ -273,19 +241,20 @@ Covenant); only matters if there's a community. Yes/no.
 
 Ordered by what blocks what.
 
-| #   | Question                                             | Blocks               | Suggested answer         |
-| --- | ---------------------------------------------------- | -------------------- | ------------------------ |
-| 2.1 | Which license?                                       | **Going public**     | Apache-2.0               |
-| 7   | Delete `test.md`, refresh README status + screenshot | First impression     | Yes, all three           |
-| 5.1 | Pin the Rust toolchain?                              | 3.2                  | Yes                      |
-| 3.1 | CI: split ubuntu (JS) + windows (Rust)?              | Accepting PRs        | Yes                      |
-| 3.2 | Clippy `-D warnings` in CI?                          | —                    | Yes, once 5.1 lands      |
-| 3.3 | CI fails on formatting, or auto-fixes?               | —                    | Fail (simple)            |
-| 4.1 | Add Vitest + tests for the pure modules?             | Trusting outside PRs | Yes, after CI exists     |
-| 6.1 | Write CONTRIBUTING.md with the invariants?           | Accepting PRs        | Yes                      |
-| 6.2 | What happens to CLAUDE.md publicly?                  | 6.1                  | Fold, keep thin          |
-| 1.1 | Rust debugging config + adapter?                     | —                    | Defer until needed       |
-| 1.2 | Commit `.vscode/settings.json`?                      | —                    | Correctness keys only    |
-| 6.4 | SECURITY.md and where reports go?                    | —                    | Yes, needs an address    |
-| 6.3 | Issue/PR templates?                                  | —                    | After the first stranger |
-| 6.5 | CODE_OF_CONDUCT.md?                                  | —                    | Cheap, low urgency       |
+The license and the publishing questions are not here — see
+[`going-public.md`](going-public.md).
+
+| #   | Question                                   | Blocks               | Suggested answer         |
+| --- | ------------------------------------------ | -------------------- | ------------------------ |
+| 5.1 | Pin the Rust toolchain?                    | 3.2                  | Yes                      |
+| 3.1 | CI: split ubuntu (JS) + windows (Rust)?    | Accepting PRs        | Yes                      |
+| 3.2 | Clippy `-D warnings` in CI?                | —                    | Yes, once 5.1 lands      |
+| 3.3 | CI fails on formatting, or auto-fixes?     | —                    | Fail (simple)            |
+| 4.1 | Add Vitest + tests for the pure modules?   | Trusting outside PRs | Yes, after CI exists     |
+| 6.1 | Write CONTRIBUTING.md with the invariants? | Accepting PRs        | Yes                      |
+| 6.2 | What happens to CLAUDE.md publicly?        | 6.1                  | Fold, keep thin          |
+| 1.1 | Rust debugging config + adapter?           | —                    | Defer until needed       |
+| 1.2 | Commit `.vscode/settings.json`?            | —                    | Correctness keys only    |
+| 6.4 | SECURITY.md and where reports go?          | —                    | Yes, needs an address    |
+| 6.3 | Issue/PR templates?                        | —                    | After the first stranger |
+| 6.5 | CODE_OF_CONDUCT.md?                        | —                    | Cheap, low urgency       |
