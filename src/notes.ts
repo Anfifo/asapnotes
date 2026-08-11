@@ -35,6 +35,8 @@ export const searchNotes = (query: string, limit: number = SEARCH_LIMIT) =>
   invoke<SearchHit[]>("search_notes", { query, limit });
 export const notesRootPath = () => invoke<string>("notes_root_path");
 export const moveNote = (from: string, to: string) => invoke<void>("move_note", { from, to });
+/** Create a real folder inside a project (`dir` is its would-be id path). */
+export const createFolder = (dir: string) => invoke<void>("create_folder", { dir });
 /** Recycle bin, not hard delete; the note's draft goes with it. */
 export const deleteNote = (name: string) => invoke<void>("delete_note", { name });
 export const revealNote = (name: string) => invoke<void>("reveal_note", { name });

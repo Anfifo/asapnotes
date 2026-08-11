@@ -694,6 +694,40 @@ pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String>
     Ok(())
 }
 
+/// Create a real folder inside a project, resolved the way note ids are — so a
+/// folder created under a mount lands in the mount's own directory. Top-level
+/// folders are projects and have their own creation flow.
+#[tauri::command]
+pub fn create_folder(app: AppHandle, dir: String) -> Result<(), String> {
+    let s = settings::settings(&app)?;
+    let segments: Vec<&str> = dir.split('/').collect();
+    // A folder only ever holds notes below it, so its own depth stops one
+    // segment short of the id budget.
+    if !(2..MAX_DEPTH as usize).contains(&segments.len())
+        || !segments.iter().all(|s| valid_segment(s))
+        || segments[0] == ASSETS_DIR
+    {
+        return Err(format!("invalid folder name: {dir}"));
+    }
+    let (project, rest) = dir.split_once('/').expect("two segments checked");
+    // A real folder at a mount's name would hide the mount everywhere (the
+    // real folder wins); refuse here, where the reason can be explained.
+    if s.projects
+        .get(project)
+        .is_some_and(|e| e.mounts.iter().any(|m| m.at == rest))
+    {
+        return Err(format!(
+            "{project} already has a folder attached at {rest} — a real folder there would hide it"
+        ));
+    }
+    let (base, sub) = base_of(&app, &s, &dir)?;
+    let path = base.join(sub);
+    if path.exists() {
+        return Err(format!("{dir} already exists"));
+    }
+    fs::create_dir_all(&path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn list_drafts(app: AppHandle) -> Result<Vec<FileInfo>, String> {
     // Deep walk: drafts mirror ids like `project/docs/x.md`. Default rules on

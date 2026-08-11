@@ -156,6 +156,7 @@ pub fn run() {
             notes::note_mtime,
             notes::save_note,
             notes::move_note,
+            notes::create_folder,
             notes::delete_note,
             notes::reveal_note,
             notes::open_external,

@@ -263,8 +263,13 @@ function App() {
   }, [explorerNarrow, explorerPinned, explorerOpen]);
   const [creatingProject, setCreatingProject] = useState(false);
   // Explorer-driven creation is name-first: the target dir ("" = notes root)
-  // gets an inline input row in the tree, Enter creates the file.
+  // gets an inline input row in the tree, Enter creates the file — or, with
+  // kind "folder", a real directory.
   const [explorerCreate, setExplorerCreate] = useState<string | null>(null);
+  const [explorerCreateKind, setExplorerCreateKind] = useState<"note" | "folder">("note");
+  // Folders created this session that hold no note yet: the explorer tree
+  // derives from note files, so these are remembered to stay visible.
+  const [newFolders, setNewFolders] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -1531,9 +1536,10 @@ function App() {
     setRenaming(true);
   };
 
-  const startExplorerCreate = (dir: string) => {
+  const startExplorerCreate = (dir: string, kind: "note" | "folder" = "note") => {
     setExplorerOpen(true);
     setExplorerView("files");
+    setExplorerCreateKind(kind);
     setExplorerCreate(dir);
   };
 
@@ -1565,6 +1571,25 @@ function App() {
     }
     setNotes(await api.listNotes());
     openFromExplorer(id, true);
+  };
+
+  /** Inline creation of a real folder under the clicked heading. */
+  const createNamedFolder = async (dir: string, name: string) => {
+    setExplorerCreate(null);
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!validFileName(trimmed)) {
+      toast(`"${name}" isn't a valid folder name`);
+      return;
+    }
+    const id = `${dir}/${trimmed}`;
+    try {
+      await api.createFolder(id);
+    } catch (err) {
+      toast(`Couldn't create that folder — ${errText(err)}`);
+      return;
+    }
+    setNewFolders((ds) => [...ds, id]);
   };
 
   const explorerContextMenu = (e: React.MouseEvent, id: string, isNote: boolean) =>
@@ -1617,9 +1642,17 @@ function App() {
     const mount = mounts.find((m) => m.project === project && m.at === rest.join("/"));
     openContextMenu(e, [
       { label: "New note here", run: () => startExplorerCreate(dir) },
-      // Attaching needs a project to attach to, which the notes-root heading
-      // ("") isn't.
-      ...(dir ? [{ label: "Add virtual folder…", run: () => void addVirtualFolder(dir) }] : []),
+      // Both need a project to land in, which the notes-root heading ("")
+      // isn't — a top-level folder is a project, created by "New project…".
+      // "New folder" makes a real directory right here; "Add virtual folder"
+      // attaches one that lives elsewhere (the picker is where those get
+      // created).
+      ...(dir
+        ? [
+            { label: "New folder", run: () => startExplorerCreate(dir, "folder") },
+            { label: "Add virtual folder…", run: () => void addVirtualFolder(dir) },
+          ]
+        : []),
       ...(mount
         ? [{ label: "Detach virtual folder", run: () => void detachVirtualFolder(mount) }]
         : []),
@@ -1692,8 +1725,14 @@ function App() {
             onBodyContext={explorerBodyMenu}
             onStartCreate={startExplorerCreate}
             creatingIn={explorerCreate}
-            onCreate={(dir, name) => void createNamedNote(dir, name)}
+            creatingKind={explorerCreateKind}
+            onCreate={(dir, name) =>
+              void (explorerCreateKind === "folder"
+                ? createNamedFolder(dir, name)
+                : createNamedNote(dir, name))
+            }
             onCreateCancel={() => setExplorerCreate(null)}
+            newFolders={newFolders}
             view={explorerView}
             onViewChange={setExplorerView}
             searchSlot={

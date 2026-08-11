@@ -11,10 +11,10 @@ interface TreeNode {
   files: string[];
 }
 
-/** `mountAts` are the project-relative folders attached into this project:
- * they get a node whether or not any note was listed under them, because an
- * empty attached folder is still a folder the user put there. */
-function buildTree(ids: string[], mountAts: string[]): TreeNode {
+/** `bareDirs` are project-relative folders that get a node whether or not any
+ * note was listed under them — mount points and just-created folders — because
+ * an empty folder the user put there is still a folder. */
+function buildTree(ids: string[], bareDirs: string[]): TreeNode {
   const root: TreeNode = { folders: new Map(), files: [] };
   const folder = (path: string[]) => {
     let node = root;
@@ -29,7 +29,7 @@ function buildTree(ids: string[], mountAts: string[]): TreeNode {
     return node;
   };
   for (const id of ids) folder(id.split("/").slice(1, -1)).files.push(id);
-  for (const at of mountAts) folder(at.split("/"));
+  for (const at of bareDirs) folder(at.split("/"));
   return root;
 }
 
@@ -62,8 +62,13 @@ interface ExplorerProps {
   onStartCreate: (dir: string) => void;
   /** Folder with an active inline create row, null when none. */
   creatingIn: string | null;
+  /** What the create row makes: a note file, or a real folder. */
+  creatingKind: "note" | "folder";
   onCreate: (dir: string, name: string) => void;
   onCreateCancel: () => void;
+  /** Folders created this session that hold no note yet. The tree derives from
+   * note files, so without this an empty new folder would vanish on sight. */
+  newFolders: string[];
   /** Which of the panel's two views is showing. */
   view: "files" | "search";
   onViewChange: (view: "files" | "search") => void;
@@ -94,8 +99,10 @@ export function Explorer({
   onBodyContext,
   onStartCreate,
   creatingIn,
+  creatingKind,
   onCreate,
   onCreateCancel,
+  newFolders,
   view,
   onViewChange,
   searchSlot,
@@ -137,7 +144,12 @@ export function Explorer({
   const inProject = (p: string) => notes.filter((n) => projectOf(n.name) === p).map((n) => n.name);
   // Keyed by folder id, so a row only has to ask about itself.
   const mountByDir = new Map(mounts.map((m) => [`${m.project}/${m.at}`, m]));
-  const atsIn = (p: string) => mounts.filter((m) => m.project === p).map((m) => m.at);
+  // Folders shown whether or not any note was listed under them: mount points,
+  // and folders created just now that are still empty.
+  const bareDirsIn = (p: string) => [
+    ...mounts.filter((m) => m.project === p).map((m) => m.at),
+    ...newFolders.filter((d) => projectOf(d) === p).map((d) => d.slice(p.length + 1)),
+  ];
 
   const item = (id: string, showProject = false) => (
     <li
@@ -174,7 +186,7 @@ export function Explorer({
     <li className="create-row" key="__create">
       <input
         autoFocus
-        placeholder="note name…"
+        placeholder={creatingKind === "folder" ? "folder name…" : "note name…"}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           e.stopPropagation();
@@ -243,7 +255,7 @@ export function Explorer({
         <span className="explorer-name">{p}</span>
         {addBtn(p)}
       </summary>
-      {expanded.has(p) && renderTree(buildTree(inProject(p), atsIn(p)), p)}
+      {expanded.has(p) && renderTree(buildTree(inProject(p), bareDirsIn(p)), p)}
     </details>
   );
 
@@ -297,7 +309,7 @@ export function Explorer({
               {addBtn(currentProject)}
             </h2>
             {renderTree(
-              buildTree(inProject(currentProject), atsIn(currentProject)),
+              buildTree(inProject(currentProject), bareDirsIn(currentProject)),
               currentProject,
             )}
           </section>

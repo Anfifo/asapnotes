@@ -12,6 +12,26 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-11)
+
+- [ ] **Explorer: indent guides for expanded folders** (2026-08-11) — feedback: hard to
+      tell what's inside vs. outside an expanded folder. Draw a vertical guide line per
+      nesting level that follows the indentation, so where a folder's subtree ends is
+      visible at a glance.
+- [ ] **Bug: `.md` files not showing as markdown** (2026-08-11) — reported: `.md` files
+      aren't being presented as markdown. Needs a repro to pin down where (explorer
+      display, editor features, or type resolution) — suspect the note-type registry
+      move, since `isMarkdown` was replaced by registry lookups. Diagnose before fixing.
+- [ ] **Default exclusions miss compiled output** (2026-08-11) — reported: some compiled
+      JSON artifacts still show up despite the ignore rules. The default rule set
+      (registry allowlist + `SKIP_DIRS`) needs to be smarter about generated/build
+      output — identify what leaked through and extend the defaults (per-project
+      `.asapnotes.json` overrides already exist as the escape hatch).
+- [ ] **Dropdown/popup text size: smaller default + customizable** (2026-08-11) —
+      feedback: dropdowns/popups (menus, palette, context menus) read too big. Make
+      their text size a user setting, and set the default ~20% smaller than today
+      without breaking layout (check padding/row heights still line up at the new size).
+
 ## Today (2026-08-10)
 
 - [ ] **Canvas surface: project board, freeform canvas, ink — and the note-type
@@ -177,8 +197,18 @@ The AI (or anyone) working on this repo keeps this file current while working:
       **2026-08-11: (b) shipped with step 4** — "Add virtual folder…" on a project or
       folder heading picks a folder and attaches it under its own name; the mount root
       carries a link glyph and its real path, its subtree a tint, and "Detach virtual
-      folder" is on the same menu. **(a) New folder is still open** — a real directory
-      on disk, which needs a Rust command and a `kind` on the inline create row.
+      folder" is on the same menu. **(a) New folder shipped 2026-08-11**, pending
+      hands-on check: the same headings now offer "New folder" beside "Add virtual
+      folder…" — create makes a real directory right where you clicked (the inline
+      name-first row, with a `kind`), add attaches one that lives elsewhere (and the
+      system picker is where _those_ get created). New Rust `create_folder`: resolves
+      the folder id the same way note ids resolve (so creating under a mount lands in
+      the mount's real directory), refuses a name a mount sits at (a real folder would
+      hide it), depth capped one segment under `MAX_DEPTH`. Known gap, deliberate: the
+      explorer tree derives from note files, so a still-empty new folder is remembered
+      only for the session (`newFolders`, same idea as empty mounts) — after a restart
+      it isn't listed until a note lands in it; the real fix is the backend walk
+      returning directories, which belongs with reveal-active-note (Tier 3).
 - [ ] **Settings rework: menubar entry, theme, file-type config, per-project config**
       (2026-08-09) — captured design intent, needs design before code. (a) **Settings
       moves to the top**: its own menubar entry; Help probably stops being a top-level
