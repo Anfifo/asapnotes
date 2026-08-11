@@ -23,6 +23,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Recycle bin for delete_note — notes are user-owned files, never hard-deleted.
 trash = "5"
+# Gitignore-syntax matching for a project's `files` rules. The promise to the
+# user is ".gitignore pattern syntax", and the anchoring/negation corner cases
+# are exactly where a hand-rolled matcher would quietly diverge from it.
+ignore = "0.4"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-global-shortcut = "2"

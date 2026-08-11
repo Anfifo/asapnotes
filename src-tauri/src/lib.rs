@@ -1,4 +1,5 @@
 mod notes;
+mod project_config;
 mod settings;
 
 #[cfg(desktop)]
@@ -148,6 +149,7 @@ pub fn run() {
             settings::set_appearance,
             notes::list_notes,
             notes::list_projects,
+            notes::project_config_errors,
             notes::search_notes,
             notes::notes_root_path,
             notes::read_note,

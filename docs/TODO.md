@@ -240,9 +240,10 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
   Still open here: **(a)** the menubar move and the Help fold; **(b)** the explorer's
   per-type icon and color, and a UI for editing note types — `icon` and `color` are carried
-  in the file but nothing renders them yet, so editing them by hand currently does nothing;
-  **(d)** the per-project `.asapnotes.json` and its `files` patterns, which are steps 3–5 in
-  the project-model item below.
+  in the file but nothing renders them yet, so editing them by hand currently does nothing.
+  **(d) landed 2026-08-11** — the per-project `.asapnotes.json` and its `files` patterns
+  shipped as step 5 of the project-model item below (hand-edit only; a UI for it belongs
+  with (b)).
 
 - [ ] **Ctrl+Click links in every editor** (2026-08-09) — agreed design (Ctrl+Click
       chosen over plain click — plain click must keep placing the cursor): new CM
@@ -770,14 +771,13 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       sidecar also sees only what a project's file rules list, so exclusions are an
       access boundary, not just a display one. (b) and (c) still need the tool-surface
       doc.
-- [ ] **Project model — implementation, steps 5–6** (2026-08-10) — the design is
+- [ ] **Project model — implementation, step 6** (2026-08-10) — the design is
       [docs/project-model.md](project-model.md), promoted to
       [a project is a location plus mounts](decisions/2026-08-10-a-project-is-a-location-plus-mounts.md)
       and [config splits by trust](decisions/2026-08-10-config-splits-by-trust.md); the doc
       carries the order and the cost-to-existing-code list. **Steps 1–2 landed 2026-08-10**
-      (see the settings-rework item above), **step 3 and step 4 on 2026-08-11** (below).
-      Remaining, each useful alone: **(5) `files` patterns** — the override path
-      plus the floor; **(6) consumers** — the MCP grant and `board.canvas`, each its own
+      (see the settings-rework item above), **steps 3–5 on 2026-08-11** (below).
+      Remaining: **(6) consumers** — the MCP grant and `board.canvas`, each its own
       item.
 
   **2026-08-11 — step 3 landed: projects as location.** Both halves, pending hands-on check.
@@ -835,6 +835,39 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
   paste an image into that note (it should land in the mount's own `assets/`), search for
   text only present there, Ctrl+Click a link into it, then detach. Known trades: detaching
   orphans drafts filed under its ids; Settings' Projects table doesn't list mounts.
+
+  **2026-08-11 — step 5 landed: `files` patterns.** The portable
+  `<project>/.asapnotes.json` is now read (never written): `files` is one ordered
+  list in `.gitignore` syntax, relative to the project's location, last match wins —
+  a bare pattern excludes, `!` re-includes and waives the type allowlist. Every
+  consumer reads it the same way: listing, search, scan-sheet counts (which now
+  honor a candidate's own config), **and the id checks** — a re-included `.rs` has
+  to be openable, savable and draftable, not just listed, so `checked_name` learned
+  the rule too. A mount matches at `<at>/rest` (a mount is not a way around the
+  project's exclusions). **Engine: the gitignore matcher from the `ignore` crate**,
+  chosen over hand-rolling because the promise to the user is gitignore syntax and
+  anchoring/negation corners are exactly where a subset would quietly diverge —
+  ~5 small new crates, most of the tree was already in the lock. Matching is
+  case-insensitive, like the app's other path handling. **The floor:** a pattern
+  never re-includes an executable type (`EXEC_EXTS`) or a file over the 2 MB search
+  cap, checked at the walk and at the id check both. A `!`-matched folder is
+  descended even if it's in `SKIP_DIRS` (notes genuinely living in `build/`);
+  nothing resurrects below a pattern-pruned folder, as in gitignore; dot-folders
+  stay out because ids can't express them. **Failure mode:** a broken file falls
+  back to default rules (one typo can't blank a project), one bad glob line is
+  skipped and reported rather than dropping the list, and a new
+  `project_config_errors` command is polled on window focus and toasted — the walk
+  itself must not fail, so the error travels out of band. Also the repo's **first
+  unit tests** (`project_config.rs`, the verdict semantics). Known gaps, deliberate:
+  `list_drafts` keeps default rules, so a draft of a re-included non-allowlist file
+  isn't in Recent (its tab and direct reads work); the frontend's `isNoteFile`
+  doesn't know patterns, so Ctrl+Clicking an absolute path to a re-included file
+  opens it externally instead of in-app; no UI writes the file — it's hand-edit
+  only until the settings rework picks it up. Gates all clean, `cargo test` green.
+  Pending hands-on: drop an `.asapnotes.json` with `["archive/**", "!src/**/*.rs"]`
+  into a linked repo, refocus — excluded notes vanish, `.rs` files appear and open
+  in the bare text editor; search text inside a re-included file; break the JSON
+  and watch for the toast on next focus.
 
 ## Pending / future direction
 

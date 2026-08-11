@@ -26,6 +26,9 @@ export interface SearchHit {
 /** `deep: false` skips external projects — fast root-only list for first paint. */
 export const listNotes = (deep = true) => invoke<FileInfo[]>("list_notes", { deep });
 export const listProjects = () => invoke<string[]>("list_projects");
+/** Parse problems in any project's `.asapnotes.json`. The walks fall back to
+ * default rules rather than failing, so a broken file is reported here. */
+export const projectConfigErrors = () => invoke<string[]>("project_config_errors");
 /** Case-insensitive literal search over every note's contents. Results stop at
  * `limit`, so a full result set is the caller's cue to say so. */
 export const searchNotes = (query: string, limit: number = SEARCH_LIMIT) =>

@@ -417,7 +417,7 @@ Each step is useful alone and unblocks the next — no step needs the one after 
 4. **Mounts** — resolution both ways, explorer marking, the context-menu entry.
    **Done 2026-08-11.**
 5. **`files` patterns** — the default is already the behavior, so this is the override path
-   plus the floor.
+   plus the floor. **Done 2026-08-11.**
 6. **Consumers**: the MCP grant and `board.canvas` land on top, each in its own item.
 
 ### What steps 1–2 taught (2026-08-10)
@@ -495,6 +495,46 @@ Each step is useful alone and unblocks the next — no step needs the one after 
   orphans drafts filed under the mount's ids, the same trade unlinking a project makes, and
   it should get the same answer whenever that one is settled.
 
+### What step 5 taught (2026-08-11)
+
+- **The engine is the promise.** "`.gitignore` pattern syntax" was the documented
+  contract, and anchoring, negation and dir-only patterns are exactly where a
+  hand-rolled subset quietly diverges from what a user's git intuition predicts. So the
+  matching is the gitignore matcher from the `ignore` crate — a handful of small
+  pure-Rust crates, most of whose tree was already in the lock — not a reimplementation.
+  (Not the ~40-crate search stack the search item rejected; that was the other half of
+  that library.) One faithfulness datum worth keeping: the engine rejects almost no
+  pattern — an unclosed `[` is taken literally, exactly as git's matcher takes it — so
+  the skip-and-report path for bad lines exists but rarely fires.
+- **The rules had to reach the id checks, not just the walks.** The obvious wiring is
+  the listing walk; the near-miss is that `checked_name` guards _every_ open, save and
+  draft with the registry allowlist, so a re-included `.rs` would have been listed but
+  unopenable — and its shadow draft unwritable. The "is this id a note" question now has
+  the same two-part answer everywhere: allowlist, or the owning project's re-include
+  (subject to the floor). Same lesson as resolution-and-inverse: a rule read in one
+  place and not another isn't a rule.
+- **The floor is checked twice on purpose.** At the walk (a re-included file over the
+  size cap is not listed) and at the id check (it is not openable either) — because the
+  id path doesn't go through the walk, and the floor's whole point is that a pattern in
+  a pulled config can't make the app touch what it would otherwise refuse.
+- **Matching is case-insensitive**, like extension matching and the `disjoint` check —
+  chosen for consistency with how the rest of the app treats paths and with the
+  filesystem underneath, over git's default-sensitive behavior.
+- **A broken portable file fails visibly but locally.** Same shape as the
+  `settings.json` lesson, different channel: the walks fall back to default rules (one
+  typo must not blank a project's listing, and `list_notes` has no error slot worth
+  growing), and a `project_config_errors` command re-collects the parse problems for
+  the frontend to toast on the focus re-sync it already does.
+- **Scan counts got honest for free**: `count_md` reads a candidate folder's own config,
+  so the scan sheet's number matches what linking the folder would actually list.
+- **Left deliberately:** `list_drafts` keeps default rules — matching each draft id
+  against its project's rules would cost a config read per segment, and the gap (a
+  draft of a re-included non-allowlist file missing from Recent) is recorded rather
+  than paid for. The frontend's `isNoteFile` doesn't know patterns either, so
+  Ctrl+Clicking an absolute path to a re-included file opens it externally — knowing
+  would take an IPC ask in a hot path. And nothing writes the file yet: hand-edit only,
+  until the settings rework gives it UI.
+
 ## Migration
 
 - `external_projects.json` → `projects` in `settings.json` on first launch (a name → path
@@ -535,9 +575,10 @@ Each step is useful alone and unblocks the next — no step needs the one after 
 - **Project rename** — needs the id-rewrite pass described above.
 - **Watching config files** — focus-based re-read for now, on purpose; a watcher is idle
   footprint.
-- **Scan sheet note counts** under these rules (the existing TODO question) — counts
-  should follow the same walk the listing uses, which this model finally makes
-  well-defined.
+- **Scan sheet note counts** under these rules — answered 2026-08-11 with step 5: counts
+  follow the same walk the listing uses, config included. (Whether counts should reflect
+  the docs/ subtree a scanned repo will actually root at is the part still open, in
+  TODO.md.)
 
 ## Links
 

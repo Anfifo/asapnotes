@@ -330,6 +330,9 @@ function App() {
   // Last reported settings-file problem, so a broken file doesn't toast on
   // every focus — only when the message changes.
   const settingsErrorRef = useRef<string | null>(null);
+  // Same rule for the per-project `.asapnotes.json` files: toast a parse
+  // problem once, not on every focus it persists through.
+  const configErrorsRef = useRef<string[]>([]);
   const appearanceRef = useRef<api.Appearance>({});
   appearanceRef.current = {
     theme,
@@ -1074,6 +1077,12 @@ function App() {
         .getSettings(true)
         .then(applySettings)
         .catch((err: unknown) => toast(`Couldn't read settings — ${errText(err)}`));
+      // A broken .asapnotes.json falls back to default rules in the walks;
+      // this is where it becomes visible instead of reading as missing notes.
+      void api.projectConfigErrors().then((errs) => {
+        for (const e of errs) if (!configErrorsRef.current.includes(e)) toast(e);
+        configErrorsRef.current = errs;
+      });
       const name = openRef.current?.name;
       if (!name) return;
       void (async () => {
