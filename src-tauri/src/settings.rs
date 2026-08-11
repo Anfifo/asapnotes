@@ -81,8 +81,7 @@ pub struct Project {
     /// the notes folder and one linked from elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    /// Folders attached into this project at a project-relative name. Carried
-    /// through reads and writes; resolution learns about them later.
+    /// Folders attached into this project at a project-relative name.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mounts: Vec<Mount>,
     /// MCP access: `off` / `read` / `write`. Carried, not yet consumed — it
@@ -98,6 +97,19 @@ pub struct Mount {
     pub at: String,
     /// Absolute folder on disk.
     pub path: String,
+}
+
+impl Project {
+    /// This project's mounts, longest `at` first. Every reader takes them in
+    /// this order — a note id belongs to the deepest mount point that prefixes
+    /// it — because two readers disagreeing about which mount owns a file give
+    /// that file two ids, hence two shadow drafts and two tabs that overwrite
+    /// each other.
+    pub fn sorted_mounts(&self) -> Vec<&Mount> {
+        let mut out: Vec<&Mount> = self.mounts.iter().collect();
+        out.sort_by_key(|m| std::cmp::Reverse(m.at.len()));
+        out
+    }
 }
 
 /// One note format: which extensions it claims, how it opens, and what the

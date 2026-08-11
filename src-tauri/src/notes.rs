@@ -7,19 +7,22 @@
 //! root-relative path (`note.md` or `project/note.md`).
 //!
 //! A registered project extends this: an entry in [`crate::settings`] gives a
-//! project a location anywhere on disk. Its notes keep the same id shape —
-//! `name/rel/path/note.md`, any depth — and the id's first segment decides
-//! where the file lives: a registered location wins, everything else resolves
-//! under the notes root. [`base_of`] is that rule, and `noteIdOf` in
-//! `src/App.tsx` is its inverse — the two have to agree, or one file acquires
-//! two ids, hence two shadow drafts and two tabs that can overwrite each other.
+//! project a location anywhere on disk, plus any number of *mounts* — folders
+//! attached into it at a project-relative name. Its notes keep the same id
+//! shape — `name/rel/path/note.md`, any depth — and the id decides where the
+//! file lives: the deepest mount point prefixing it wins, else the project's
+//! own location, else the notes root. [`base_of`] is that rule, and `noteIdOf`
+//! in `src/App.tsx` is its inverse — the two have to agree, or one file
+//! acquires two ids, hence two shadow drafts and two tabs that can overwrite
+//! each other. Every folder the app resolves ids from is kept disjoint from
+//! every other ([`check_location`]) for the same reason.
 //!
 //! Drafts live in app data, mirror the same relative paths, and hold unsaved
 //! editor state: a draft named like an existing note is its unsaved edits, any
 //! other draft is an unsaved untitled note. `Ctrl+S` on the frontend writes the
 //! note and deletes the draft.
 
-use crate::settings::{self, Project, Settings};
+use crate::settings::{self, Mount, Project, Settings};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -80,18 +83,45 @@ fn checked_name<'a>(s: &Settings, name: &'a str) -> Result<&'a str, String> {
     }
 }
 
-/// Base directory and remainder for a note id — the forward half of one ordered
-/// resolution rule, whose inverse is `noteIdOf` on the frontend. A registered
-/// project's location owns its first segment; everything else is relative to the
-/// notes root. Mounts will extend this rule rather than replace it, and both
-/// directions have to read the same table in the same order.
-fn base_of<'a>(app: &AppHandle, s: &Settings, name: &'a str) -> Result<(PathBuf, &'a str), String> {
-    if let Some((project, rest)) = name.split_once('/') {
-        if let Some(dir) = s.projects.get(project).and_then(|p| p.path.as_deref()) {
-            return Ok((PathBuf::from(dir), rest));
-        }
+/// Where a project's own files live: its registered location, else the
+/// notes-root subfolder that carries its name.
+fn project_base(root: &Path, s: &Settings, project: &str) -> PathBuf {
+    match s.projects.get(project).and_then(|p| p.path.as_deref()) {
+        Some(dir) => PathBuf::from(dir),
+        None => root.join(project),
     }
-    Ok((notes_root(app)?, name))
+}
+
+/// The mount owning a project-relative path, and what is left of that path
+/// below it. Longest mount point first, and a mount whose name a real folder
+/// has taken over is inert: a file that exists on disk must never be invisible
+/// behind a mount, so the real folder wins and the mount reads as conflicted.
+fn mount_of<'a, 'b>(own: &Path, entry: &'a Project, rest: &'b str) -> Option<(&'a Mount, &'b str)> {
+    entry.sorted_mounts().into_iter().find_map(|m| {
+        let sub = rest
+            .strip_prefix(&m.at)
+            .and_then(|s| s.strip_prefix('/'))
+            .filter(|s| !s.is_empty())?;
+        (!own.join(&m.at).is_dir()).then_some((m, sub))
+    })
+}
+
+/// Base directory and remainder for a note id — the forward half of one ordered
+/// resolution rule, whose inverse is `noteIdOf` on the frontend. Both directions
+/// read the same table in the same order.
+fn base_of<'a>(app: &AppHandle, s: &Settings, name: &'a str) -> Result<(PathBuf, &'a str), String> {
+    let root = notes_root(app)?;
+    let Some((project, rest)) = name.split_once('/') else {
+        return Ok((root, name));
+    };
+    let Some(entry) = s.projects.get(project) else {
+        return Ok((root, name));
+    };
+    let own = project_base(&root, s, project);
+    match mount_of(&own, entry, rest) {
+        Some((mount, sub)) => Ok((PathBuf::from(&mount.path), sub)),
+        None => Ok((own, rest)),
+    }
 }
 
 /// Absolute path of a note id.
@@ -210,16 +240,45 @@ fn collect_md_deep(s: &Settings, dir: &Path, prefix: &str, depth: u32, out: &mut
     }
 }
 
-/// `deep: false` skips the walk of projects living outside the notes root (can
-/// be slow on big folders) so the first paint after launch isn't held up by it;
-/// a deep call follows.
+/// Every folder walked besides the notes root, as (id prefix, folder): projects
+/// living elsewhere, and every mount. One list, because a walk that knows about
+/// one and not the other lists a note nowhere — and in search that reads as "no
+/// results" rather than as a folder nobody looked in.
+fn outside_roots(app: &AppHandle, s: &Settings) -> Result<Vec<(String, PathBuf)>, String> {
+    let root = notes_root(app)?;
+    let mut out: Vec<(String, PathBuf)> = s
+        .located_projects()
+        .map(|(name, dir)| (format!("{name}/"), PathBuf::from(dir)))
+        .collect();
+    for (name, entry) in &s.projects {
+        let own = project_base(&root, s, name);
+        for m in &entry.mounts {
+            // Conflicted: the real folder of that name is walked with the
+            // project, and resolution sends its ids there too.
+            if !own.join(&m.at).is_dir() {
+                out.push((format!("{name}/{}/", m.at), PathBuf::from(&m.path)));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Depth already spent by an id prefix, so `MAX_DEPTH` bounds the whole id
+/// rather than only the part below the walk's starting point.
+fn prefix_depth(prefix: &str) -> u32 {
+    prefix.matches('/').count() as u32
+}
+
+/// `deep: false` skips the walk of folders outside the notes root (which can be
+/// slow) so the first paint after launch isn't held up by it; a deep call
+/// follows.
 #[tauri::command]
 pub fn list_notes(app: AppHandle, deep: Option<bool>) -> Result<Vec<FileInfo>, String> {
     let s = settings::settings(&app)?;
     let mut out = list_tree(&s, &notes_root(&app)?)?;
     if deep.unwrap_or(true) {
-        for (name, dir) in s.located_projects() {
-            collect_md_deep(&s, Path::new(dir), &format!("{name}/"), 0, &mut out);
+        for (prefix, dir) in outside_roots(&app, &s)? {
+            collect_md_deep(&s, &dir, &prefix, prefix_depth(&prefix), &mut out);
         }
         out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
     }
@@ -239,9 +298,7 @@ pub struct SearchHit {
 }
 
 /// Every note id paired with its absolute path — the same corpus `list_notes`
-/// enumerates, but resolved once instead of per note. Mounted folders will have
-/// to be walked here too, or their notes are listed and openable yet silently
-/// unsearchable.
+/// enumerates, but resolved once instead of per note.
 fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
     let s = settings::settings(app)?;
     let root = notes_root(app)?;
@@ -252,14 +309,13 @@ fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
             (f.name, path)
         })
         .collect();
-    for (project, dir) in s.located_projects() {
-        let dir = Path::new(dir);
+    for (prefix, dir) in outside_roots(app, &s)? {
         let mut found = Vec::new();
-        collect_md_deep(&s, dir, "", 0, &mut found);
+        collect_md_deep(&s, &dir, "", prefix_depth(&prefix), &mut found);
         out.extend(
             found
                 .into_iter()
-                .map(|f| (format!("{project}/{}", f.name), dir.join(&f.name))),
+                .map(|f| (format!("{prefix}{}", f.name), dir.join(&f.name))),
         );
     }
     Ok(out)
@@ -470,7 +526,13 @@ pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String>
     if let Some(parent) = to_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    fs::rename(resolve_note(&app, &from)?, to_path).map_err(|e| e.to_string())?;
+    // `rename` fails across volumes, which linked folders and mounts make an
+    // ordinary case rather than an exotic one.
+    let from_path = resolve_note(&app, &from)?;
+    if fs::rename(&from_path, &to_path).is_err() {
+        fs::copy(&from_path, &to_path).map_err(|e| e.to_string())?;
+        fs::remove_file(&from_path).map_err(|e| e.to_string())?;
+    }
     let s = settings::settings(&app)?;
     let drafts = drafts_dir(&app)?;
     let draft_from = drafts.join(checked_name(&s, &from)?);
@@ -520,24 +582,24 @@ fn assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Where pasted images for a note go: a project with its own location keeps its
-/// images in its own `assets/` (the folder owns its files); everything else
-/// shares the root `assets/`. Once a mount can own an `assets/` of its own this
-/// needs the note id, not the project name — which mount the note falls under is
-/// what decides.
-fn assets_dir_for(app: &AppHandle, project: Option<&str>) -> Result<PathBuf, String> {
-    if let Some(project) = project {
-        if let Some(base) = settings::settings(app)?
-            .projects
-            .get(project)
-            .and_then(|p| p.path.as_deref())
-        {
-            let dir = Path::new(base).join(ASSETS_DIR);
-            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            return Ok(dir);
-        }
+/// Where pasted images for a note go: a folder outside the notes root keeps its
+/// images in its own `assets/`, because a linked or attached folder owns its
+/// files and travels with them; everything under the notes root shares the root
+/// `assets/`. Keyed on where the note actually resolved, since a mounted note
+/// falls outside its project's own folder.
+fn assets_dir_for(app: &AppHandle, note: Option<&str>) -> Result<PathBuf, String> {
+    let root = notes_root(app)?;
+    let Some(note) = note else {
+        return assets_dir(app);
+    };
+    let s = settings::settings(app)?;
+    let (base, _) = base_of(app, &s, note)?;
+    if !disjoint(&root, &base) {
+        return assets_dir(app);
     }
-    assets_dir(app)
+    let dir = base.join(ASSETS_DIR);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
 }
 
 fn unique_asset(dir: &Path, stem: &str, ext: &str) -> (PathBuf, String) {
@@ -571,8 +633,9 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Save a pasted image. The bytes arrive as the raw IPC body; the file
-/// extension and (percent-encoded) owning project ride in headers. Returns the
-/// asset path relative to the project base, e.g. `assets/img-123.png`.
+/// extension and the (percent-encoded) id of the note being edited ride in
+/// headers. Returns the asset path relative to that note's base,
+/// e.g. `assets/img-123.png`.
 #[tauri::command]
 pub fn save_asset(app: AppHandle, request: Request<'_>) -> Result<String, String> {
     let InvokeBody::Raw(bytes) = request.body() else {
@@ -587,25 +650,21 @@ pub fn save_asset(app: AppHandle, request: Request<'_>) -> Result<String, String
     if !IMAGE_EXTS.contains(&ext.as_str()) {
         return Err(format!("unsupported image type: {ext}"));
     }
-    let project = request
+    let note = request
         .headers()
-        .get("project")
+        .get("note")
         .and_then(|v| v.to_str().ok())
         .map(percent_decode);
-    let dir = assets_dir_for(&app, project.as_deref())?;
+    let dir = assets_dir_for(&app, note.as_deref())?;
     let (path, rel) = unique_asset(&dir, &format!("img-{}", now_ms()), &ext);
     fs::write(path, bytes).map_err(|e| e.to_string())?;
     Ok(rel)
 }
 
-/// Copy an image dropped from the filesystem into `assets/`. Returns the
-/// asset path relative to the project base.
+/// Copy an image dropped from the filesystem into `assets/`. Returns the asset
+/// path relative to the base of the note being edited.
 #[tauri::command]
-pub fn import_asset(
-    app: AppHandle,
-    src: String,
-    project: Option<String>,
-) -> Result<String, String> {
+pub fn import_asset(app: AppHandle, src: String, note: Option<String>) -> Result<String, String> {
     let src = PathBuf::from(src);
     let ext = src
         .extension()
@@ -624,7 +683,7 @@ pub fn import_asset(
         .take(40)
         .collect();
     let stem = if stem.is_empty() { "img".into() } else { stem };
-    let dir = assets_dir_for(&app, project.as_deref())?;
+    let dir = assets_dir_for(&app, note.as_deref())?;
     let (path, rel) = unique_asset(&dir, &format!("{stem}-{}", now_ms()), &ext);
     fs::copy(&src, path).map_err(|e| e.to_string())?;
     Ok(rel)
@@ -738,16 +797,59 @@ fn check_new_project(root: &Path, s: &Settings, name: &str) -> Result<(), String
     Ok(())
 }
 
-/// Whether a folder sits outside the notes root. A location inside it would
-/// give every file below two ids — one from the root walk, one through this
-/// project — and two ids mean two shadow drafts and two tabs that overwrite
-/// each other. Compared case-insensitively, like the filesystem underneath.
-fn outside_root(root: &Path, path: &Path) -> bool {
-    let norm = |p: &Path| p.to_string_lossy().to_lowercase().replace('\\', "/");
-    let root = norm(root);
-    let root = root.trim_end_matches('/');
-    let path = norm(path);
-    path != root && !path.starts_with(&format!("{root}/"))
+/// Whether two folders are unrelated — neither one contains the other. Nesting
+/// is what gives a file two ids (one reached through each folder), and two ids
+/// mean two shadow drafts and two tabs that overwrite each other. Compared
+/// case-insensitively, like the filesystem underneath.
+fn disjoint(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| {
+        p.to_string_lossy()
+            .to_lowercase()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_string()
+    };
+    let (a, b) = (norm(a), norm(b));
+    a != b && !a.starts_with(&format!("{b}/")) && !b.starts_with(&format!("{a}/"))
+}
+
+/// Refuse a folder overlapping one the app already resolves ids from: the notes
+/// root, another project's location, or a mount. `replacing` is the project
+/// whose own location is being repointed, which it is allowed to overlap.
+fn check_location(
+    root: &Path,
+    s: &Settings,
+    path: &Path,
+    replacing: Option<&str>,
+) -> Result<(), String> {
+    let shown = path.display();
+    if !disjoint(root, path) {
+        return Err(format!(
+            "{shown} overlaps the notes folder — its subfolders are projects already, so every \
+             file under it would end up with two names and two sets of unsaved edits"
+        ));
+    }
+    for (name, entry) in &s.projects {
+        if Some(name.as_str()) != replacing {
+            if let Some(dir) = entry.path.as_deref() {
+                if !disjoint(Path::new(dir), path) {
+                    return Err(format!(
+                        "{shown} overlaps the project {name}, so its files would end up with two names"
+                    ));
+                }
+            }
+        }
+        for m in &entry.mounts {
+            if !disjoint(Path::new(&m.path), path) {
+                return Err(format!(
+                    "{shown} overlaps {}, already attached to {name}, so its files would end up \
+                     with two names",
+                    m.at
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Validate a folder about to hold a project and return the location to
@@ -755,17 +857,15 @@ fn outside_root(root: &Path, path: &Path) -> bool {
 fn project_location(
     app: &AppHandle,
     root: &Path,
+    s: &Settings,
     path: &str,
     use_docs: bool,
+    replacing: Option<&str>,
 ) -> Result<String, String> {
     if !Path::new(path).is_dir() {
         return Err(format!("not a folder: {path}"));
     }
-    if !outside_root(root, Path::new(path)) {
-        return Err(format!(
-            "{path} is already in the notes folder — its subfolders are projects already"
-        ));
-    }
+    check_location(root, s, Path::new(path), replacing)?;
     // Preview must be able to load this folder's images via the asset
     // protocol; the static scope only covers the root assets dir. Scoped to
     // the whole picked folder, not just docs/ — links may climb out of it.
@@ -827,7 +927,7 @@ pub fn create_project(app: AppHandle, project: NewProject) -> Result<(), String>
     let Some(path) = project.path else {
         return fs::create_dir_all(root.join(&project.name)).map_err(|e| e.to_string());
     };
-    let path = project_location(&app, &root, &path, project.use_docs)?;
+    let path = project_location(&app, &root, &s, &path, project.use_docs, None)?;
     settings::update(&app, |s| {
         s.projects.insert(
             project.name,
@@ -850,7 +950,10 @@ pub fn link_projects(app: AppHandle, projects: Vec<LinkedProject>) -> Result<(),
     let mut entries = Vec::new();
     for p in projects {
         check_new_project(&root, &s, &p.name)?;
-        entries.push((p.name, project_location(&app, &root, &p.path, p.use_docs)?));
+        entries.push((
+            p.name,
+            project_location(&app, &root, &s, &p.path, p.use_docs, None)?,
+        ));
     }
     settings::update(&app, |s| {
         for (name, path) in entries {
@@ -876,9 +979,10 @@ pub fn link_projects(app: AppHandle, projects: Vec<LinkedProject>) -> Result<(),
 #[tauri::command]
 pub fn set_project_path(app: AppHandle, name: String, path: String) -> Result<(), String> {
     let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
     // Repointing takes the same location rules as creating: this is a project
     // moving, not a different kind of thing.
-    let path = project_location(&app, &root, &path, false)?;
+    let path = project_location(&app, &root, &s, &path, false, Some(&name))?;
     settings::update(&app, |s| {
         let project = s
             .projects
@@ -895,6 +999,122 @@ pub fn set_project_path(app: AppHandle, name: String, path: String) -> Result<()
 pub fn unlink_project(app: AppHandle, name: String) -> Result<(), String> {
     settings::update(&app, |s| {
         s.projects.remove(&name);
+        Ok(())
+    })
+}
+
+// --- Mounts: folders attached into a project ---
+
+/// How deep a mount point may sit inside its project. An id is
+/// `project/<at>/…/file` and `MAX_DEPTH` caps the whole of it, so a deep mount
+/// point would push ordinary files under it past the limit — refused here,
+/// where the reason can be explained, rather than at open time, where it can't.
+const MAX_MOUNT_AT: usize = 4;
+
+/// A mount as the explorer sees it. `conflicted` means a real folder has taken
+/// its name over: the real folder wins, and the mount lists nothing until the
+/// clash is gone.
+#[derive(Serialize)]
+pub struct MountInfo {
+    pub project: String,
+    pub at: String,
+    pub path: String,
+    pub conflicted: bool,
+}
+
+#[tauri::command]
+pub fn list_mounts(app: AppHandle) -> Result<Vec<MountInfo>, String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    let mut out = Vec::new();
+    for (name, entry) in &s.projects {
+        let own = project_base(&root, &s, name);
+        for m in &entry.mounts {
+            out.push(MountInfo {
+                project: name.clone(),
+                at: m.at.clone(),
+                path: m.path.clone(),
+                conflicted: own.join(&m.at).is_dir(),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Whether one mount point is the other or sits inside it. Nested mount points
+/// would make a file below the inner one reachable through both.
+fn nested_at(a: &str, b: &str) -> bool {
+    a == b || a.strip_prefix(b).is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Attach an existing folder into a project at a project-relative name. One
+/// verb — the folder is picked, never created here, because the system folder
+/// picker already creates folders.
+#[tauri::command]
+pub fn add_mount(app: AppHandle, project: String, at: String, path: String) -> Result<(), String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    if !root.join(&project).is_dir() && !s.projects.contains_key(&project) {
+        return Err(format!("no project named {project}"));
+    }
+    let at = at.trim_matches('/').to_string();
+    let segments: Vec<&str> = at.split('/').collect();
+    if !(1..=MAX_MOUNT_AT).contains(&segments.len())
+        || !segments
+            .iter()
+            .all(|s| valid_segment(s) && *s != ASSETS_DIR)
+    {
+        return Err(format!("{at} isn't a usable folder name inside {project}"));
+    }
+    let dir = PathBuf::from(&path);
+    if !dir.is_dir() {
+        return Err(format!("not a folder: {path}"));
+    }
+    check_location(&root, &s, &dir, None)?;
+    if project_base(&root, &s, &project).join(&at).is_dir() {
+        return Err(format!("{project} already has a folder of its own at {at}"));
+    }
+    if let Some(entry) = s.projects.get(&project) {
+        if let Some(m) = entry
+            .mounts
+            .iter()
+            .find(|m| nested_at(&at, &m.at) || nested_at(&m.at, &at))
+        {
+            return Err(format!(
+                "{project} already has a folder attached at {}",
+                m.at
+            ));
+        }
+    }
+    // Preview loads a mounted note's images through the asset protocol, whose
+    // static scope only covers the root assets dir. Re-granted at startup.
+    let _ = app.asset_protocol_scope().allow_directory(&path, true);
+    settings::update(&app, |s| {
+        s.projects
+            .entry(project)
+            .or_default()
+            .mounts
+            .push(Mount { at, path });
+        Ok(())
+    })
+}
+
+/// Detach a folder from a project. The folder and its files stay exactly where
+/// they are; drafts filed under its ids are orphaned, the same trade unlinking
+/// a project already makes.
+#[tauri::command]
+pub fn remove_mount(app: AppHandle, project: String, at: String) -> Result<(), String> {
+    settings::update(&app, |s| {
+        let entry = s
+            .projects
+            .get_mut(&project)
+            .ok_or_else(|| format!("no project named {project}"))?;
+        entry.mounts.retain(|m| m.at != at);
+        // An entry that carried nothing but this mount is noise in the file:
+        // a notes-root project exists because its folder does.
+        if entry.path.is_none() && entry.mounts.is_empty() && entry.mcp.is_none() {
+            s.projects.remove(&project);
+        }
         Ok(())
     })
 }

@@ -636,6 +636,36 @@ body,
   flex-shrink: 0;
 }
 
+/* An attached folder: the link glyph and the real path sit on its own row, and
+   its subtree carries a tint so "this is somewhere else" stays visible without
+   badging every file under it. */
+.mount-glyph {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  opacity: 0.75;
+}
+
+.explorer-folder.mount > summary .explorer-detail {
+  /* A long absolute path must not push the name out; the title has it whole. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Both selectors: the rows below inherit, and the nested summaries need to beat
+   `.explorer summary`'s own color. */
+.explorer-folder.mount,
+.explorer-folder.mount summary {
+  color: #6d6558;
+}
+
 .explorer summary {
   display: flex;
   align-items: center;
@@ -1627,6 +1657,11 @@ body,
 
   .explorer summary {
     color: #b0b0b0;
+  }
+
+  .explorer-folder.mount,
+  .explorer-folder.mount summary {
+    color: #a99d87;
   }
 
   .explorer-recent > summary {

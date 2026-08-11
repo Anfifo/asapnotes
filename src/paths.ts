@@ -4,9 +4,6 @@ export const fileOf = (path: string) => path.split("/").pop() ?? path;
 /** Project (first path segment) of a note path, or null for loose notes. */
 export const projectOf = (path: string) => (path.includes("/") ? path.split("/")[0] : null);
 
-/** Directory segments between the project and the file (deep external notes). */
-export const subdirOf = (path: string) => path.split("/").slice(1, -1).join("/");
-
 /**
  * Relative path from an absolute directory to an absolute file, with forward
  * slashes (markdown link form). Null when no relative path exists — different

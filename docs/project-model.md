@@ -415,6 +415,7 @@ Each step is useful alone and unblocks the next — no step needs the one after 
 3. **Projects as location** — unify notes-root and linked projects, add the
    where-does-it-live prompt to creation. **Done 2026-08-11.**
 4. **Mounts** — resolution both ways, explorer marking, the context-menu entry.
+   **Done 2026-08-11.**
 5. **`files` patterns** — the default is already the behavior, so this is the override path
    plus the floor.
 6. **Consumers**: the MCP grant and `board.canvas` land on top, each in its own item.
@@ -462,6 +463,37 @@ Each step is useful alone and unblocks the next — no step needs the one after 
   **Projects** table where the location — a path, or "In the notes folder" — is the only
   thing that distinguishes them. Naming a _kind_ of project was the last place the model
   still said there were two.
+
+### What step 4 taught (2026-08-11)
+
+- **"The real folder wins" is a rule three walks have to share.** Resolution, the listing
+  walk and the search corpus each decide independently whether a mount is live, so all three
+  now ask the same question (`own.join(at).is_dir()`) — and the frontend, which cannot stat
+  anything, is told the answer instead of deriving mounts from the settings document. That
+  is what `list_mounts` is for: it carries `conflicted` alongside each mount, and both the
+  explorer's marker and the frontend's half of resolution key off it. Deriving the table
+  from `settings.json` would have been one fewer command and a mount that resolves to a
+  folder the backend refuses to read from.
+- **The overlap guard generalized, and caught a case step 3 missed.** `outside_root` became
+  `disjoint` plus `check_location`: the notes root, every project location and every mount
+  path must be pairwise unrelated, since one folder containing another is the whole bug
+  class. Step 3 only checked that a location was not _inside_ the root — a location
+  _containing_ the root was allowed, and would have given every note two ids.
+- **Mount points may not nest either.** Two mounts where one `at` prefixes the other put the
+  files under the inner one inside both, which is the same bug reached through the `at` side
+  rather than the path side. Refused at creation, like the rest.
+- **The four base directories really did collapse.** `assetLink`'s "climb _n_ levels" count
+  became a relative path from whatever base the note resolved through — shorter, and the
+  only version that can be right for a mount, where the number of levels has nothing to do
+  with the id's depth.
+- **A walk now starts at the depth its id prefix already spent**, so `MAX_DEPTH` bounds the
+  whole id. Before, a file 12 levels inside a linked project was listed with a 13-segment id
+  that `checked_name` then refused to open. Mount points are capped at four segments at
+  creation for the same budget, where the refusal can be explained.
+- **Left deliberately:** Settings shows projects but not their mounts — the explorer's
+  context menu is the only surface, since that is where the folders are. Detaching still
+  orphans drafts filed under the mount's ids, the same trade unlinking a project makes, and
+  it should get the same answer whenever that one is settled.
 
 ## Migration
 

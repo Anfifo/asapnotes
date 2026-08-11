@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { FileInfo } from "./notes";
+import { FileInfo, MountInfo } from "./notes";
 import { fileOf, projectOf } from "./paths";
 
 const RECENT_COUNT = 5;
@@ -11,11 +11,14 @@ interface TreeNode {
   files: string[];
 }
 
-function buildTree(ids: string[]): TreeNode {
+/** `mountAts` are the project-relative folders attached into this project:
+ * they get a node whether or not any note was listed under them, because an
+ * empty attached folder is still a folder the user put there. */
+function buildTree(ids: string[], mountAts: string[]): TreeNode {
   const root: TreeNode = { folders: new Map(), files: [] };
-  for (const id of ids) {
+  const folder = (path: string[]) => {
     let node = root;
-    for (const seg of id.split("/").slice(1, -1)) {
+    for (const seg of path) {
       let child = node.folders.get(seg);
       if (!child) {
         child = { folders: new Map(), files: [] };
@@ -23,15 +26,28 @@ function buildTree(ids: string[]): TreeNode {
       }
       node = child;
     }
-    node.files.push(id);
-  }
+    return node;
+  };
+  for (const id of ids) folder(id.split("/").slice(1, -1)).files.push(id);
+  for (const at of mountAts) folder(at.split("/"));
   return root;
 }
+
+/** Small link glyph on an attached folder's own row. */
+const mountGlyph = (
+  <svg className="mount-glyph" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+    <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+  </svg>
+);
 
 interface ExplorerProps {
   notes: FileInfo[];
   drafts: FileInfo[];
   projects: string[];
+  /** Folders attached into projects — shown at their mount point, marked there
+   * and nowhere below it. */
+  mounts: MountInfo[];
   /** Project of the open note — hoisted to the top of the panel. */
   currentProject: string | null;
   openId: string | null;
@@ -69,6 +85,7 @@ export function Explorer({
   notes,
   drafts,
   projects,
+  mounts,
   currentProject,
   openId,
   onSelect,
@@ -118,6 +135,9 @@ export function Explorer({
 
   const loose = notes.filter((n) => !projectOf(n.name));
   const inProject = (p: string) => notes.filter((n) => projectOf(n.name) === p).map((n) => n.name);
+  // Keyed by folder id, so a row only has to ask about itself.
+  const mountByDir = new Map(mounts.map((m) => [`${m.project}/${m.at}`, m]));
+  const atsIn = (p: string) => mounts.filter((m) => m.project === p).map((m) => m.at);
 
   const item = (id: string, showProject = false) => (
     <li
@@ -171,10 +191,24 @@ export function Explorer({
       {[...node.folders.keys()].sort().map((name) => {
         const dir = `${base}/${name}`;
         const holdsCreate = creatingIn === dir || creatingIn?.startsWith(`${dir}/`);
+        // An attached folder says so once, on its own row: inside it the files
+        // genuinely do live together, so marking every descendant would read as
+        // breakage rather than as information.
+        const mount = mountByDir.get(dir);
         return (
-          <details key={name} className="explorer-folder" open={holdsCreate || undefined}>
+          <details
+            key={name}
+            className={mount ? "explorer-folder mount" : "explorer-folder"}
+            open={holdsCreate || undefined}
+          >
             <summary onContextMenu={(e) => onDirContext(e, dir)}>
+              {mount && mountGlyph}
               <span className="explorer-name">{name}</span>
+              {mount && (
+                <span className="explorer-detail" title={mount.path}>
+                  {mount.conflicted ? "hidden by a real folder" : mount.path}
+                </span>
+              )}
               {addBtn(dir)}
             </summary>
             {renderTree(node.folders.get(name)!, dir)}
@@ -209,7 +243,7 @@ export function Explorer({
         <span className="explorer-name">{p}</span>
         {addBtn(p)}
       </summary>
-      {expanded.has(p) && renderTree(buildTree(inProject(p)), p)}
+      {expanded.has(p) && renderTree(buildTree(inProject(p), atsIn(p)), p)}
     </details>
   );
 
@@ -262,7 +296,10 @@ export function Explorer({
               <span className="explorer-name">{currentProject}</span>
               {addBtn(currentProject)}
             </h2>
-            {renderTree(buildTree(inProject(currentProject)), currentProject)}
+            {renderTree(
+              buildTree(inProject(currentProject), atsIn(currentProject)),
+              currentProject,
+            )}
           </section>
         )}
         {recent.length > 0 && (

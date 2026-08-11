@@ -40,14 +40,15 @@ export const revealNote = (name: string) => invoke<void>("reveal_note", { name }
  * instead, never run). Backs Ctrl+Clicked link targets and the explorer's
  * "Open in File Explorer". */
 export const openExternal = (target: string) => invoke<void>("open_external", { target });
-/** Returns the project-base-relative asset path, e.g. "assets/img-123.png".
- * The project rides in a header, so it must survive the ASCII-only rule. */
-export const saveAsset = (bytes: Uint8Array, ext: string, project?: string | null) =>
+/** Returns the asset path relative to the note's base folder, e.g.
+ * "assets/img-123.png". The note id rides in a header, so it must survive the
+ * ASCII-only rule. */
+export const saveAsset = (bytes: Uint8Array, ext: string, note?: string | null) =>
   invoke<string>("save_asset", bytes, {
-    headers: project ? { ext, project: encodeURIComponent(project) } : { ext },
+    headers: note ? { ext, note: encodeURIComponent(note) } : { ext },
   });
-export const importAsset = (src: string, project?: string | null) =>
-  invoke<string>("import_asset", { src, project: project ?? null });
+export const importAsset = (src: string, note?: string | null) =>
+  invoke<string>("import_asset", { src, note: note ?? null });
 export const readNote = (name: string) => invoke<string>("read_note", { name });
 /** File mtime in ms, null if the file doesn't exist. */
 export const noteMtime = (name: string) => invoke<number | null>("note_mtime", { name });
@@ -89,10 +90,30 @@ export const unlinkProject = (name: string) => invoke<void>("unlink_project", { 
 export const setProjectPath = (name: string, path: string) =>
   invoke<void>("set_project_path", { name, path });
 
+/** A folder attached into a project, as the explorer sees it. `conflicted`
+ * means a real folder took that name over — the real folder wins, and the
+ * mount lists nothing until the clash is gone. */
+export interface MountInfo {
+  project: string;
+  /** Project-relative path the folder is attached at. */
+  at: string;
+  /** The absolute folder it points at. */
+  path: string;
+  conflicted: boolean;
+}
+
+export const listMounts = () => invoke<MountInfo[]>("list_mounts");
+/** Attach an existing folder into a project at a project-relative name. */
+export const addMount = (project: string, at: string, path: string) =>
+  invoke<void>("add_mount", { project, at, path });
+/** Detach it again; the folder and its files stay where they are. */
+export const removeMount = (project: string, at: string) =>
+  invoke<void>("remove_mount", { project, at });
+
 // --- Personal settings (app-data settings.json) ---
 
-/** A folder attached into a project at a project-relative name. Carried
- * through, not yet resolved. */
+/** A folder attached into a project at a project-relative name. `listMounts`
+ * is what the app resolves through — it adds the project and the clash check. */
 export interface Mount {
   at: string;
   path: string;

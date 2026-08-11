@@ -10,15 +10,7 @@ import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
 import { NewProject } from "./NewProject";
-import {
-  fileOf,
-  projectOf,
-  relativePath,
-  resolvePath,
-  subdirOf,
-  validFileName,
-  winPath,
-} from "./paths";
+import { fileOf, projectOf, relativePath, resolvePath, validFileName, winPath } from "./paths";
 import { featuresOf, hasFeature, isNoteFile, noteTypeOf, setNoteTypes, viewOf } from "./noteTypes";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
@@ -203,6 +195,9 @@ function App() {
   // in place. Mirrors the entries of settings.json that have a path; the rest
   // live at `<notes root>/<name>`, which is the only difference between them.
   const [projectPaths, setProjectPaths] = useState<Record<string, string>>({});
+  // Folders attached into projects. Kept beside the locations above because
+  // together they are the table every path in this file resolves through.
+  const [mounts, setMounts] = useState<api.MountInfo[]>([]);
   const [scanResults, setScanResults] = useState<api.ProjectCandidate[] | null>(null);
   const [rootPath, setRootPath] = useState("");
   const [open, setOpen] = useState<OpenNote | null>(null);
@@ -295,6 +290,11 @@ function App() {
   modeRef.current = mode;
   const projectPathsRef = useRef<Record<string, string>>({});
   projectPathsRef.current = projectPaths;
+  // Resolution reads live mounts only, longest mount point first — the same
+  // order `mount_of` takes in notes.rs, and a conflicted mount is inert there
+  // too, because the real folder of that name wins.
+  const mountsRef = useRef<api.MountInfo[]>([]);
+  mountsRef.current = mounts.filter((m) => !m.conflicted).sort((a, b) => b.at.length - a.at.length);
   const rootPathRef = useRef("");
   rootPathRef.current = rootPath;
   const noteDirRef = useRef("");
@@ -468,9 +468,7 @@ function App() {
     [flushDraft, showDoc],
   );
 
-  /** Location of a project: its registered folder, else a notes-root subfolder.
-   * The one table the paths below and `noteIdOf` both read — the backend's
-   * `base_of` is the same rule, and the two must not disagree. */
+  /** Location of a project: its registered folder, else a notes-root subfolder. */
   const projectDirOf = useCallback(
     (project: string | null) =>
       project
@@ -479,14 +477,42 @@ function App() {
     [],
   );
 
+  /** The mount owning a project-relative path, longest mount point first. */
+  const mountFor = useCallback(
+    (project: string, rel: string) =>
+      mountsRef.current.find(
+        (m) => m.project === project && (rel === m.at || rel.startsWith(`${m.at}/`)),
+      ) ?? null,
+    [],
+  );
+
+  /** Base directory of a note id, and what is left of the id below it — the
+   * frontend half of the backend's `base_of` in notes.rs. The paths below and
+   * `noteIdOf` all read this one table, in this one order, because a forward
+   * and an inverse that disagree give a file two ids, and two ids mean two
+   * shadow drafts and two tabs that overwrite each other. */
+  const baseOf = useCallback(
+    (id: string): { dir: string; rest: string } => {
+      const [project, ...tail] = id.split("/");
+      // A single segment is a note in the notes root, whatever else claims that
+      // name as a project — the backend resolves it the same way.
+      if (tail.length === 0) return { dir: rootPathRef.current, rest: id };
+      const rel = tail.join("/");
+      const mount = mountFor(project, rel);
+      if (mount) return { dir: mount.path, rest: rel.slice(mount.at.length + 1) };
+      return { dir: projectDirOf(project), rest: rel };
+    },
+    [mountFor, projectDirOf],
+  );
+
   /** Directory holding a note id (forward slashes). */
   const noteDirOf = useCallback(
     (id: string) => {
-      const sub = subdirOf(id);
-      const base = projectDirOf(projectOf(id));
-      return sub ? `${base}/${sub}` : base;
+      const { dir, rest } = baseOf(id);
+      const sub = rest.split("/").slice(0, -1).join("/");
+      return sub ? `${dir}/${sub}` : dir;
     },
-    [projectDirOf],
+    [baseOf],
   );
 
   /** Absolute filesystem path of a note id (Windows separators). */
@@ -495,22 +521,26 @@ function App() {
     [noteDirOf],
   );
 
-  /** Absolute path of a folder id ("" = notes root, else project[/sub…]). */
+  /** Absolute path of a folder id ("" = notes root, else project[/sub…]).
+   * A folder id names a directory, so its first segment is always a project —
+   * unlike a note id, where one segment is a note in the notes root. */
   const absDirOf = useCallback(
     (dir: string) => {
       if (!dir) return winPath(rootPathRef.current);
-      const [project, ...rest] = dir.split("/");
-      return winPath([projectDirOf(project), ...rest].join("/"));
+      const [project, ...tail] = dir.split("/");
+      const rel = tail.join("/");
+      const mount = mountFor(project, rel);
+      if (mount) return winPath(`${mount.path}${rel.slice(mount.at.length)}`);
+      return winPath([projectDirOf(project), ...tail].join("/"));
     },
-    [projectDirOf],
+    [mountFor, projectDirOf],
   );
 
-  /** Note id for an absolute path inside the notes root or a registered
-   * project, null when the path lives outside both. The inverse of the
-   * backend's resolution, and it has to agree with it: bases are tried
-   * longest-first, so a project whose folder sits inside another's can't give
-   * one file two ids — two ids mean two shadow drafts and two tabs that
-   * overwrite each other. */
+  /** Note id for an absolute path inside the notes root, a registered project
+   * or a mount, null when the path lives outside all of them. The inverse of
+   * the backend's resolution, and it has to agree with it: bases are tried
+   * longest-first, so a folder sitting inside another can't give one file two
+   * ids. */
   const noteIdOf = useCallback((abs: string): string | null => {
     const relTo = (base: string) => {
       const rel = base ? relativePath(base, abs) : null;
@@ -520,12 +550,15 @@ function App() {
     // Directly in the root: the loose id, matching the backend, which resolves
     // a single-segment id against the root whatever else claims that folder.
     if (inRoot && !projectOf(inRoot)) return inRoot;
-    const located = Object.entries(projectPathsRef.current).sort(
-      ([, a], [, b]) => b.length - a.length,
-    );
-    for (const [name, dir] of located) {
+    const bases: [string, string][] = [
+      ...Object.entries(projectPathsRef.current).map(
+        ([name, dir]) => [`${name}/`, dir] as [string, string],
+      ),
+      ...mountsRef.current.map((m) => [`${m.project}/${m.at}/`, m.path] as [string, string]),
+    ].sort(([, a], [, b]) => b.length - a.length);
+    for (const [prefix, dir] of bases) {
       const rel = relTo(dir);
-      if (rel) return `${name}/${rel}`;
+      if (rel) return `${prefix}${rel}`;
     }
     return inRoot;
   }, []);
@@ -662,18 +695,23 @@ function App() {
     [],
   );
 
-  /** Note-relative link to a saved asset path (`assets/x.png`). External
-   * projects keep assets in their own folder, so only the note's depth below
-   * the project root matters; root-project notes climb one level to the
-   * shared root `assets/`. */
-  const assetLink = useCallback((rel: string) => {
-    const cur = openRef.current;
-    if (!cur) return rel;
-    const segments = cur.id.split("/");
-    if (segments.length === 1) return rel;
-    const ups = projectPathsRef.current[segments[0]] ? segments.length - 2 : 1;
-    return "../".repeat(ups) + rel;
-  }, []);
+  /** Note-relative link to a saved asset path (`assets/x.png`). A folder
+   * outside the notes root — a linked project's, or a mount's — keeps its own
+   * `assets/`, so the link starts from wherever the note actually resolved;
+   * everything under the root shares the root's. Same rule as
+   * `assets_dir_for` in notes.rs, which is what chose the folder. */
+  const assetLink = useCallback(
+    (rel: string) => {
+      const cur = openRef.current;
+      if (!cur) return rel;
+      const root = rootPathRef.current;
+      const { dir } = baseOf(cur.id);
+      const below = relativePath(root, dir);
+      const owner = below !== null && !below.startsWith("../") ? root : dir;
+      return relativePath(noteDirOf(cur.id), `${owner}/${rel}`) ?? rel;
+    },
+    [baseOf, noteDirOf],
+  );
 
   /** Markdown link for an `@`-mentioned note: relative to the open note's
    * directory, falling back to the app's root-relative id when no relative
@@ -697,7 +735,7 @@ function App() {
         if (ext === "jpeg") ext = "jpg";
         if (ext === "svg+xml") ext = "svg";
         const cur = openRef.current;
-        const rel = await api.saveAsset(bytes, ext, cur ? projectOf(cur.id) : null);
+        const rel = await api.saveAsset(bytes, ext, cur?.id ?? null);
         return assetLink(rel);
       } catch (err) {
         toast(`Couldn't save the pasted image — ${errText(err)}`);
@@ -749,16 +787,18 @@ function App() {
   // else start on a blank capture.
   useEffect(() => {
     void (async () => {
-      const [ns, ds, ps, cfg, root] = await Promise.all([
+      const [ns, ds, ps, ms, cfg, root] = await Promise.all([
         api.listNotes(false),
         api.listDrafts(),
         api.listProjects(),
+        api.listMounts(),
         api.getSettings(),
         api.notesRootPath(),
       ]);
       setNotes(ns);
       setDrafts(ds);
       setProjects(ps);
+      setMounts(ms);
       applySettings(cfg);
       setRootPath(root);
       // Projects living outside the notes root can be big — walk them after
@@ -824,7 +864,7 @@ function App() {
       for (const path of event.payload.paths) {
         if (!IMAGE_FILE.test(path)) continue;
         try {
-          const rel = await api.importAsset(path, projectOf(cur.id));
+          const rel = await api.importAsset(path, cur.id);
           editorRef.current?.insertText(`![](${assetLink(rel)})\n`);
         } catch (err) {
           toast(`Couldn't import that image — ${errText(err)}`);
@@ -839,13 +879,15 @@ function App() {
   // File → Scan folder for projects: pick a folder, find README-marked
   // subfolders, confirm in a sheet, link them in place as external projects.
   const refreshProjects = useCallback(async () => {
-    const [ns, ps, cfg] = await Promise.all([
+    const [ns, ps, ms, cfg] = await Promise.all([
       api.listNotes(),
       api.listProjects(),
+      api.listMounts(),
       api.getSettings(),
     ]);
     setNotes(ns);
     setProjects(ps);
+    setMounts(ms);
     applySettings(cfg);
   }, [applySettings]);
 
@@ -1025,6 +1067,9 @@ function App() {
     const onFocus = () => {
       void api.listNotes().then(setNotes);
       void api.listDrafts().then(setDrafts);
+      // Mounts come back from the backend rather than from the settings
+      // document, because whether one is conflicted is a filesystem question.
+      void api.listMounts().then(setMounts);
       void api
         .getSettings(true)
         .then(applySettings)
@@ -1529,12 +1574,47 @@ function App() {
         : ["sep" as const, { label: "Discard draft", run: () => void discardDraft(id) }]),
     ]);
 
+  /** Attach an existing folder into a project ("add virtual folder"): pick it,
+   * and it lands under the clicked heading under its own name. One verb — the
+   * picker is where folders get created. */
+  const addVirtualFolder = async (dir: string) => {
+    const picked = await openFolderDialog({ directory: true, title: "Folder to attach" });
+    if (typeof picked !== "string") return;
+    const [project, ...rest] = dir.split("/");
+    const name = picked.split(/[\\/]/).filter(Boolean).pop() ?? "";
+    try {
+      await api.addMount(project, [...rest, name].join("/"), picked);
+    } catch (err) {
+      toast(`Couldn't attach that folder — ${errText(err)}`);
+      return;
+    }
+    await refreshProjects();
+  };
+
+  const detachVirtualFolder = async (mount: api.MountInfo) => {
+    try {
+      await api.removeMount(mount.project, mount.at);
+    } catch (err) {
+      toast(`Couldn't detach that folder — ${errText(err)}`);
+      return;
+    }
+    await refreshProjects();
+  };
+
   /** Right-click on a project or folder heading. Folders open in File Explorer
    * rather than being selected in their parent — their contents are the point. */
-  const explorerDirMenu = (e: React.MouseEvent, dir: string) =>
+  const explorerDirMenu = (e: React.MouseEvent, dir: string) => {
+    const [project, ...rest] = dir.split("/");
+    const mount = mounts.find((m) => m.project === project && m.at === rest.join("/"));
     openContextMenu(e, [
       { label: "New note here", run: () => startExplorerCreate(dir) },
-      "sep",
+      // Attaching needs a project to attach to, which the notes-root heading
+      // ("") isn't.
+      ...(dir ? [{ label: "Add virtual folder…", run: () => void addVirtualFolder(dir) }] : []),
+      ...(mount
+        ? [{ label: "Detach virtual folder", run: () => void detachVirtualFolder(mount) }]
+        : []),
+      "sep" as const,
       { label: "Copy path", run: () => void writeText(absDirOf(dir)) },
       {
         label: "Open in File Explorer",
@@ -1544,6 +1624,7 @@ function App() {
             .catch((err: unknown) => toast(`Couldn't open that folder — ${errText(err)}`)),
       },
     ]);
+  };
 
   /** Right-click on the explorer's empty space. */
   const explorerBodyMenu = (e: React.MouseEvent) =>
@@ -1593,6 +1674,7 @@ function App() {
             notes={notes}
             drafts={drafts}
             projects={projects}
+            mounts={mounts}
             currentProject={currentProject}
             openId={open?.id ?? null}
             onSelect={openFromExplorer}

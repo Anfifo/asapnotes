@@ -50,13 +50,21 @@ mod desktop {
             None,
         ))?;
 
-        // Registered project locations: let the asset protocol serve their
-        // images (preview); newly added ones are granted in
-        // add_external_projects. This is also the first settings read, so any
-        // migration off external_projects.json happens here.
+        // Every folder outside the notes root that notes can live in — project
+        // locations and mounts — so the asset protocol can serve their images
+        // in preview. The grant is runtime state, so it is made again here on
+        // every launch, not only when the folder is added. This is also the
+        // first settings read, so any migration off external_projects.json
+        // happens here.
         if let Ok(settings) = crate::settings::settings(app.handle()) {
+            let scope = app.asset_protocol_scope();
             for (_, dir) in settings.located_projects() {
-                let _ = app.asset_protocol_scope().allow_directory(dir, true);
+                let _ = scope.allow_directory(dir, true);
+            }
+            for entry in settings.projects.values() {
+                for mount in &entry.mounts {
+                    let _ = scope.allow_directory(&mount.path, true);
+                }
             }
         }
         // Only a release build should register itself to run at login; in dev this
@@ -161,6 +169,9 @@ pub fn run() {
             notes::link_projects,
             notes::unlink_project,
             notes::set_project_path,
+            notes::list_mounts,
+            notes::add_mount,
+            notes::remove_mount,
         ])
         .setup(|app| {
             #[cfg(desktop)]

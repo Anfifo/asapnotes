@@ -173,42 +173,12 @@ The AI (or anyone) working on this repo keeps this file current while working:
       folder, or create one elsewhere and link it?~~ **Answered 2026-08-10 in
       [docs/project-model.md](project-model.md): pick.** One verb — mount an
       existing folder at a name — because the system folder picker already creates
-      folders, so a second flow would be a second code path for nothing. (b) is
-      unblocked: mounts persist in the app-data `settings.json` project entry
-      (never in the project file — they carry absolute machine paths). Explorer
-      marking is settled too: badge + real path on the **mount root only**, subtle
-      inherited tint on its subtree — inside a mounted folder the files really do
-      live together, so badging every descendant reads as breakage. 2026-08-10: the
-      `mounts` key now exists in `settings.json` and round-trips untouched, so (b) only
-      waits on step 4 of the project-model implementation (resolution both ways).
-- [ ] **Per-project file config ("virtual folders") + new-project location**
-      (2026-08-09) — decided: **design-doc only for now**, folded into the
-      workspace/project-model design item below; no code yet (it shapes sync
-      and MCP scope). The idea: (a) creating a project asks where it lives
-      (notes root vs. picked directory — today silently a root subfolder,
-      external only via scan); (b) projects get a config of which files are
-      in/out — a virtual grouping so notes can attach to a project **without
-      living in its repository**. Payoff: team-syncable project notes that
-      never enter the repo (pairs with the cloud-sync direction). Likely the
-      continuation of the cut-off "per-project settings somehow and…" thought.
-      2026-08-09 addition: the explorer should **color these virtual entries
-      differently** — files/folders shown under a project but not physically
-      living in its tree must read distinctly from what's really there.
-      **2026-08-10: designed in [docs/project-model.md](project-model.md)** — both
-      halves answered. (a) creation asks notes root vs. picked folder, with a
-      "use the repository's `docs/`" option when `.git` is present, so a manual
-      pick lands where a scanned repo would. (b) virtual grouping is
-      **folder-granular mounts, never per-file** — per-file membership is exactly
-      the manifest [folders are projects](decisions/2026-08-07-folders-are-projects.md)
-      rejected. The unification worth remembering: _a project is a location plus
-      zero or more mounts_, so notes-root projects, linked folders, and virtual
-      folders stop being three different things and today's external mapping
-      becomes the degenerate case. Ids keep their shape, so drafts, tabs, palette
-      and search need no migration.
-      **2026-08-11: half (a) shipped** with step 3 — creation asks where the project
-      lives, including the repository-`docs/` option. What's left of this item is (b),
-      the virtual grouping, which is step 4.
-
+      folders, so a second flow would be a second code path for nothing.
+      **2026-08-11: (b) shipped with step 4** — "Add virtual folder…" on a project or
+      folder heading picks a folder and attaches it under its own name; the mount root
+      carries a link glyph and its real path, its subtree a tint, and "Detach virtual
+      folder" is on the same menu. **(a) New folder is still open** — a real directory
+      on disk, which needs a Rust command and a `kind` on the inline create row.
 - [ ] **Settings rework: menubar entry, theme, file-type config, per-project config**
       (2026-08-09) — captured design intent, needs design before code. (a) **Settings
       moves to the top**: its own menubar entry; Help probably stops being a top-level
@@ -800,21 +770,15 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       sidecar also sees only what a project's file rules list, so exclusions are an
       access boundary, not just a display one. (b) and (c) still need the tool-surface
       doc.
-- [ ] **Project model — implementation, steps 4–6** (2026-08-10) — the design is
+- [ ] **Project model — implementation, steps 5–6** (2026-08-10) — the design is
       [docs/project-model.md](project-model.md), promoted to
       [a project is a location plus mounts](decisions/2026-08-10-a-project-is-a-location-plus-mounts.md)
       and [config splits by trust](decisions/2026-08-10-config-splits-by-trust.md); the doc
       carries the order and the cost-to-existing-code list. **Steps 1–2 landed 2026-08-10**
-      (see the settings-rework item above), **step 3 on 2026-08-11** (below). Remaining, each
-      useful alone: **(4) mounts** — resolution both ways,
-      explorer marking, the context-menu entry; **(5) `files` patterns** — the override path
+      (see the settings-rework item above), **step 3 and step 4 on 2026-08-11** (below).
+      Remaining, each useful alone: **(5) `files` patterns** — the override path
       plus the floor; **(6) consumers** — the MCP grant and `board.canvas`, each its own
-      item. Traps to carry forward, all listed in the doc: `note_paths` must learn about
-      mounts or mounted notes are listed and openable yet silently unsearchable;
-      `assets_dir_for` needs the note id, not the project name; `move_note`'s `fs::rename`
-      needs a copy-then-delete fallback across volumes; `MAX_DEPTH` counts id segments, so
-      cap mount `at` depth at creation where the error can be explained; removing a mount
-      orphans drafts filed under its ids.
+      item.
 
   **2026-08-11 — step 3 landed: projects as location.** Both halves, pending hands-on check.
   **Creation is now its own thing**: a sheet (`src/NewProject.tsx`) asking name + where it
@@ -843,6 +807,34 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
   Gates all clean. Pending hands-on: create in the notes folder, create from a picked repo
   (docs checkbox), the refusal message when picking inside the notes root, Settings'
   Projects table in both themes.
+
+  **2026-08-11 — step 4 landed: mounts.** Resolution both ways, the walks, the explorer, and
+  the context-menu entry, all pending hands-on check. Right-click a project or folder heading
+  → **"Add virtual folder…"** picks a folder and attaches it under its own name (nested
+  headings give a nested `at`, as designed); the mount root shows a link glyph and its real
+  path, its subtree a tint, and the same menu detaches it again. New `add_mount` /
+  `remove_mount` / `list_mounts`.
+  **Resolution:** `base_of` gained the doc's rule — the deepest mount point prefixing an id
+  wins, then the project's own location, then the notes root — and `noteIdOf` inverts the
+  same table, longest base first. `list_notes` and `search_notes` walk one shared
+  `outside_roots` list (linked projects _and_ mounts), so a mounted note can't be listed and
+  openable yet unsearchable. `assets_dir_for` now takes the note id, and the frontend's four
+  base-directory computations became one `baseOf`, which is what let `assetLink` stop
+  counting `../` levels.
+  **Three guards, all at creation where the reason can be explained:** mount paths must be
+  disjoint from the notes root, every project location and every other mount (`outside_root`
+  generalized to `disjoint` + `check_location` — which also caught a case step 3 missed, a
+  location _containing_ the notes root); mount points may not nest inside each other; `at` is
+  capped at four segments because `MAX_DEPTH` counts id segments. A real folder appearing at
+  a mount's name wins over the mount everywhere — resolution, listing, search — and the row
+  says so.
+  Also on the way: `move_note` falls back to copy-then-delete when `fs::rename` fails across
+  volumes, and every walk now starts at the depth its id prefix already spent (before, a file
+  twelve levels inside a linked project was listed with an id `checked_name` then refused).
+  Gates all clean. Pending hands-on: attach a folder to a project and open a note in it,
+  paste an image into that note (it should land in the mount's own `assets/`), search for
+  text only present there, Ctrl+Click a link into it, then detach. Known trades: detaching
+  orphans drafts filed under its ids; Settings' Projects table doesn't list mounts.
 
 ## Pending / future direction
 
