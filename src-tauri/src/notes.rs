@@ -812,6 +812,20 @@ pub fn delete_draft(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Discarding is different from cleaning up: a discarded draft is the only
+/// copy of that content, so it goes to the recycle bin like every other
+/// deletion, while `delete_draft` stays the silent removal for content that
+/// is safe elsewhere (a just-saved note's draft).
+#[tauri::command]
+pub fn discard_draft(app: AppHandle, id: String) -> Result<(), String> {
+    let s = settings::settings(&app)?;
+    let path = drafts_dir(&app)?.join(checked_name(&app, &s, &id)?);
+    if path.exists() {
+        trash::delete(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = notes_root(app)?.join(ASSETS_DIR);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

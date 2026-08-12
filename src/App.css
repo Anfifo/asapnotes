@@ -1236,6 +1236,22 @@ body,
   cursor: default;
 }
 
+/* Close-confirm sheet — a question, not a settings page: narrower, one line
+   of body text that must survive a long note name. */
+.close-confirm {
+  width: min(24rem, 88vw);
+}
+
+.close-confirm p {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.close-discard:hover {
+  color: #c0392b;
+}
+
 /* New-project sheet */
 
 .np-name {

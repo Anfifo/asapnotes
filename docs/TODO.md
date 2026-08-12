@@ -91,6 +91,22 @@ The AI (or anyone) working on this repo keeps this file current while working:
       story, no pruning code). Rejected: dated drafts-trash pruned after N days — a
       second, hidden deletion policy in an app whose one rule is "deletion means the
       recycle bin".
+      **Picked A and implemented 2026-08-12, gates clean, pending hands-on check.**
+      Closing a tab that still holds unsaved content — dirty buffer when it's the
+      active tab, a shadow draft when it's in the background — now raises an in-app
+      Save / Discard / Cancel sheet (`CloseConfirm.tsx`; Enter saves, Esc cancels).
+      Save runs the one existing save path (a background tab activates first, so
+      name derivation and the changed-on-disk guard both apply) and closes only if
+      the save really happened. Discard flushes the buffer into the draft and moves
+      the draft to the recycle bin — new Rust `discard_draft`; `delete_draft` stays
+      the silent cleanup for content that's safe elsewhere — and the explorer's
+      discard-with-confirm now recycles the same way instead of hard-deleting. A
+      never-typed untitled tab closes silently and its empty draft is removed, so
+      empty untitled drafts stop accumulating. Deliberately left alone: bulk closes
+      (Close others / saved / all) keep today's leave-a-draft-behind behavior — one
+      decision per deliberate close, not a modal stack. Pending hands-on: the
+      sheet's feel, a discarded draft landing in the recycle bin, saving from a
+      background tab, and Cancel returning focus to the editor.
 
 - [ ] **Allow closing the last tab → welcome panel** (2026-08-12) — requested: today
       the last untitled note can't be closed; make it closable. With zero tabs open,
@@ -113,7 +129,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
       a short shortcuts primer (Ctrl+K palette, Ctrl+P switcher, the global summon
       hotkey) so it doubles as first-run orientation. Summon with the panel up:
       **auto-create a fresh untitled note** (the stated lean) — one `openRef.current
-    === null → newNote()` check in the show/summon handler, keeping "summon lands in
+  === null → newNote()` check in the show/summon handler, keeping "summon lands in
       a ready-to-type note" an invariant rather than a special case. Startup is
       untouched: something always opens (restored tab / draft / recent note / blank),
       so the panel appears only after a deliberate last-tab close. Implementation

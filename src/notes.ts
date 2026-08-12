@@ -67,6 +67,9 @@ export const readDraft = (id: string) => invoke<string>("read_draft", { id });
 export const writeDraft = (id: string, content: string) =>
   invoke<void>("write_draft", { id, content });
 export const deleteDraft = (id: string) => invoke<void>("delete_draft", { id });
+/** Recycle-bin a draft — for discarding the only copy of some content, where
+ * deleteDraft is the silent cleanup once content is safe elsewhere. */
+export const discardDraft = (id: string) => invoke<void>("discard_draft", { id });
 
 export const scanProjects = (dir: string) => invoke<ProjectCandidate[]>("scan_projects", { dir });
 

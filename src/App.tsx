@@ -5,6 +5,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm as confirmDialog, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
@@ -282,6 +283,8 @@ function App() {
     return saved > 0 ? clampZoom(saved) : 1;
   });
   const [theme, setThemeState] = useState<Theme>(getTheme);
+  // Tab held at the close confirm (Save / Discard / Cancel), null when none.
+  const [closeAsk, setCloseAsk] = useState<string | null>(null);
 
   const editorRef = useRef<EditorHandle>(null);
   const contentRef = useRef("");
@@ -624,10 +627,10 @@ function App() {
   const save = useCallback(
     async (asName?: string) => {
       const cur = openRef.current;
-      if (!cur) return;
+      if (!cur) return null;
       cancelAutosave();
       const doc = contentRef.current;
-      if (!cur.name && !asName && doc.trim() === "") return;
+      if (!cur.name && !asName && doc.trim() === "") return null;
       let name = cur.name ?? asName ?? null;
       if (!name) {
         const project = projectOf(cur.id);
@@ -643,7 +646,7 @@ function App() {
             `"${fileOf(cur.name)}" changed on disk since you opened it. Overwrite those changes?`,
             { title: "Note changed on disk", kind: "warning" },
           );
-          if (!ok) return;
+          if (!ok) return null;
         }
       }
       await api.saveNote(name, doc);
@@ -654,6 +657,9 @@ function App() {
       retagOpen(cur.id, { id: name, name });
       setDirty(false);
       setNotes(await api.listNotes());
+      // The id the note now lives under — callers that close after saving
+      // need it, since an untitled tab changed identity on the way.
+      return name;
     },
     [retagOpen],
   );
@@ -970,7 +976,7 @@ function App() {
       void newNote();
     } else if (mod && key === "w") {
       e.preventDefault();
-      if (openRef.current) closeTab(openRef.current.id);
+      if (openRef.current) requestCloseTab(openRef.current.id);
     } else if (e.ctrlKey && e.key === "Tab") {
       e.preventDefault();
       cycleTab(e.shiftKey);
@@ -1425,17 +1431,77 @@ function App() {
   /** Activate a tab — reload from draft/file so its name self-corrects. */
   const openTabItem = (id: string) => openItem({ id, isNote: noteNames.has(id) }, draftIds);
 
-  /** Close a tab; closing the active one activates its neighbor (or a fresh
-   * note when it was the last). Unsaved edits stay behind as a draft. */
-  const closeTab = (id: string) => {
-    const idx = tabs.findIndex((t) => t.id === id);
+  /** Drop tabs; when the active one goes, activate its neighbor (or a fresh
+   * note when it was the last). Unsaved edits stay behind as a draft — the
+   * asking flavor is requestCloseTab. Takes a list so a just-saved tab can be
+   * closed under both its identities (untitled id and saved name), whichever
+   * the pending retag has reached; reads tabsRef rather than the render
+   * closure so callers that awaited in between stay correct. */
+  const closeTabs = (ids: string[]) => {
+    const cur = tabsRef.current;
+    const idx = cur.findIndex((t) => ids.includes(t.id));
     if (idx < 0) return;
-    const rest = tabs.filter((t) => t.id !== id);
+    const rest = cur.filter((t) => !ids.includes(t.id));
     setTabs(rest);
-    if (openRef.current?.id === id) {
+    if (openRef.current && ids.includes(openRef.current.id)) {
       if (rest.length > 0) void openTabItem(rest[Math.min(idx, rest.length - 1)].id);
       else void newNote();
     }
+  };
+  const closeTab = (id: string) => closeTabs([id]);
+
+  /** Close a tab, stopping to ask when its content would otherwise live on
+   * only as a shadow draft: Save / Discard / Cancel. Dirty buffer means ask
+   * when the tab is active; a draft means ask when it's in the background.
+   * A never-typed untitled tab closes silently and its empty draft goes too. */
+  const requestCloseTab = (id: string) => {
+    if (openRef.current?.id === id) {
+      if (openRef.current.name === null && contentRef.current.trim() === "") {
+        cancelAutosave();
+        void api.deleteDraft(id);
+        setDrafts((d) => d.filter((x) => x.name !== id));
+        closeTab(id);
+      } else if (dirtyRef.current) {
+        setCloseAsk(id);
+      } else {
+        closeTab(id);
+      }
+      return;
+    }
+    if (draftIds.has(id)) setCloseAsk(id);
+    else closeTab(id);
+  };
+
+  /** "Save" on the close confirm. A background tab activates first so the one
+   * save path runs, name derivation and the changed-on-disk guard included; a
+   * save that didn't happen (guard declined, error) keeps the tab open. */
+  const closeAskSave = async (id: string) => {
+    setCloseAsk(null);
+    try {
+      if (openRef.current?.id !== id) await openTabItem(id);
+      const saved = await save();
+      if (saved) closeTabs([id, saved]);
+    } catch (err) {
+      toast(`Couldn't save that note — ${errText(err)}`);
+    }
+  };
+
+  /** "Discard" on the close confirm: flush the buffer into the draft first so
+   * the recycle bin holds exactly what was discarded, then trash it. */
+  const closeAskDiscard = async (id: string) => {
+    setCloseAsk(null);
+    try {
+      if (openRef.current?.id === id) {
+        cancelAutosave();
+        await api.writeDraft(id, contentRef.current);
+      }
+      await api.discardDraft(id);
+    } catch (err) {
+      toast(`Couldn't discard that draft — ${errText(err)}`);
+      return;
+    }
+    setDrafts((d) => d.filter((x) => x.name !== id));
+    closeTab(id);
   };
 
   const cycleTab = (backwards: boolean) => {
@@ -1488,7 +1554,8 @@ function App() {
   };
 
   /** Throw away an unsaved untitled draft — unlike deleteNote, this content
-   * exists nowhere else, hence its own sterner confirm. */
+   * exists nowhere else, hence its own sterner confirm (and the recycle bin
+   * underneath it, like every other deletion). */
   const discardDraft = async (id: string) => {
     const ok = await confirmDialog(
       `Discard draft "${fileOf(id).replace(/\.md$/, "")}"? Its content is not saved anywhere.`,
@@ -1496,7 +1563,7 @@ function App() {
     );
     if (!ok) return;
     if (openRef.current?.id === id) cancelAutosave();
-    await api.deleteDraft(id);
+    await api.discardDraft(id);
     setDrafts((d) => d.filter((x) => x.name !== id));
     closeTab(id);
   };
@@ -1559,7 +1626,7 @@ function App() {
 
   const tabContextMenu = (e: React.MouseEvent, t: OpenNote) =>
     openContextMenu(e, [
-      { label: "Close", detail: "Ctrl+W", run: () => closeTab(t.id) },
+      { label: "Close", detail: "Ctrl+W", run: () => requestCloseTab(t.id) },
       { label: "Close others", run: () => closeOtherTabs(t.id) },
       { label: "Close saved", run: closeSavedTabs },
       { label: "Close all", run: closeAllTabs },
@@ -1780,6 +1847,10 @@ function App() {
     }
   };
 
+  // The tab the close confirm is about; a tab that vanished by other means
+  // (deleted elsewhere) takes the dialog with it.
+  const closeAskTab = closeAsk ? tabs.find((t) => t.id === closeAsk) : undefined;
+
   return (
     <div className="app">
       <MenuBar
@@ -1871,7 +1942,7 @@ function App() {
                       if (active) startRename();
                     }}
                     onAuxClick={(e) => {
-                      if (e.button === 1) closeTab(t.id);
+                      if (e.button === 1) requestCloseTab(t.id);
                     }}
                     onContextMenu={(e) => tabContextMenu(e, t)}
                   >
@@ -1902,7 +1973,7 @@ function App() {
                       title="Close tab (Ctrl+W)"
                       onClick={(e) => {
                         e.stopPropagation();
-                        closeTab(t.id);
+                        requestCloseTab(t.id);
                       }}
                     >
                       ×
@@ -2024,6 +2095,18 @@ function App() {
           }}
           onClose={() => {
             setSettingsOpen(false);
+            editorRef.current?.focus();
+          }}
+        />
+      )}
+      {closeAskTab && (
+        <CloseConfirm
+          label={closeAskTab.name ? fileOf(closeAskTab.name).replace(/\.md$/, "") : "Untitled note"}
+          untitled={closeAskTab.name === null}
+          onSave={() => void closeAskSave(closeAskTab.id)}
+          onDiscard={() => void closeAskDiscard(closeAskTab.id)}
+          onCancel={() => {
+            setCloseAsk(null);
             editorRef.current?.focus();
           }}
         />

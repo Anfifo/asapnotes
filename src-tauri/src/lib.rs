@@ -165,6 +165,7 @@ pub fn run() {
             notes::read_draft,
             notes::write_draft,
             notes::delete_draft,
+            notes::discard_draft,
             notes::save_asset,
             notes::import_asset,
             notes::scan_projects,
