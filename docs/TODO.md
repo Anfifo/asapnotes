@@ -58,6 +58,40 @@ The AI (or anyone) working on this repo keeps this file current while working:
       especially the path callout on an associated mount — and tabs closing when
       their folder is deleted.
 
+- [ ] **Confirm before closing an unsaved note/change** (2026-08-12) — requested: closing
+      a tab holding an unsaved temporary note (or unsaved changes to a saved note) should
+      raise the usual "are you sure?" confirmation instead of discarding silently. On
+      confirm, the content should still be recoverable for a few days if possible — but
+      recovery may require digging (e.g. the recycle bin / a trash-like holding area),
+      not a first-class UI. Design notes: shadow drafts already autosave every edit to
+      the app-data drafts folder, so the pieces exist — decide whether "discard" moves
+      the draft to the recycle bin (matching `delete_note`'s never-hard-delete rule) or
+      to a dated drafts-trash area pruned after N days. Interacts with the existing
+      explorer discard-with-confirm on unsaved drafts and with the "empty untitled
+      drafts accumulate" polish item.
+      _2026-08-12 design pass (proposal, awaiting a pick — no code):_ a load-bearing
+      correction to the premise first: **closing a tab today loses nothing.**
+      `closeTab` deliberately leaves the shadow draft behind (and activating the
+      neighbor flushes any pending debounce first), so the note reopens dirty from its
+      draft later. The actual problem is that this safety is _invisible_ — the note
+      looks gone, and untitled drafts pile up in the drafts folder unannounced (the
+      accumulation polish item is the same root). Two candidate shapes:
+      **(A) make close a decision point** — a tab whose buffer is dirty (or an
+      untitled tab with non-empty content) raises a three-way choice on close:
+      _Save_ (existing save path; untitled gets its derived name), _Discard_ (draft →
+      recycle bin, reusing the `trash`-crate rule; a new `discard_draft` moves rather
+      than `fs::remove`s), _Cancel_. Needs an in-app modal — the native dialog plugin
+      is two-button — but the app already has sheet patterns. Drafts stop
+      accumulating, recovery is the recycle bin (no N-day pruning area to build or
+      explain). **(B) keep the current always-keep-a-draft behavior and surface it** —
+      a toast ("kept as draft") on close and a visible drafts affordance; zero dialogs,
+      zero data risk, but drafts keep accumulating and the requested confirm never
+      appears. Recommendation: **A** — it's what was asked, it fixes accumulation as a
+      side effect, and the recycle bin beats a bespoke drafts-trash (one recovery
+      story, no pruning code). Rejected: dated drafts-trash pruned after N days — a
+      second, hidden deletion policy in an app whose one rule is "deletion means the
+      recycle bin".
+
 - [ ] **Allow closing the last tab → welcome panel** (2026-08-12) — requested: today
       the last untitled note can't be closed; make it closable. With zero tabs open,
       the editor area shows a **welcome panel**: a start screen listing the main
@@ -70,6 +104,26 @@ The AI (or anyone) working on this repo keeps this file current while working:
       as a default state. (If the window is summoned while the welcome panel is up,
       decide: keep showing it, or auto-create a fresh untitled note — the requested
       intent leans to a new note being the quick default.)
+      _2026-08-12 design pass (proposal, awaiting a pick — no code):_ the zero-tab
+      state becomes real: `closeTab`'s last-tab branch stops calling `newNote()` and
+      instead clears `open` to null; the editor area renders a `WelcomePanel` whenever
+      `open` is null (today that's only the pre-startup instant). Panel content:
+      the main actions as clickable rows reusing existing callbacks (new note, scan a
+      folder for projects, associate a virtual folder, the top ~5 recent notes), then
+      a short shortcuts primer (Ctrl+K palette, Ctrl+P switcher, the global summon
+      hotkey) so it doubles as first-run orientation. Summon with the panel up:
+      **auto-create a fresh untitled note** (the stated lean) — one `openRef.current
+    === null → newNote()` check in the show/summon handler, keeping "summon lands in
+      a ready-to-type note" an invariant rather than a special case. Startup is
+      untouched: something always opens (restored tab / draft / recent note / blank),
+      so the panel appears only after a deliberate last-tab close. Implementation
+      caution: chrome paths that assume a note is open need a sweep — `canPreview`/
+      `canFormat` default to true with nothing open, the status bar/menus/title
+      readouts render from `open` — each needs a sane zero-tab presentation, and
+      Ctrl+W with the panel up should do nothing rather than throw. Alternative
+      considered: the welcome panel as a persistent pseudo-tab — rejected, it
+      re-introduces "the tab you can't close", which is the complaint this item
+      exists to fix.
 
 ## Today (2026-08-11)
 
@@ -90,15 +144,68 @@ The AI (or anyone) working on this repo keeps this file current while working:
       aren't being presented as markdown. Needs a repro to pin down where (explorer
       display, editor features, or type resolution) — suspect the note-type registry
       move, since `isMarkdown` was replaced by registry lookups. Diagnose before fixing.
+      _2026-08-12 read-only diagnosis pass — ruled out, so the repro session starts
+      ahead:_ (1) the registry data on this machine is healthy (`settings.json` has
+      `md`/`markdown` → view `markdown` with all five features); (2) startup ordering
+      is safe — `setNoteTypes` runs inside the same awaited `Promise.all` as the
+      restored-tab open, so the registry is filled before the first editor mounts;
+      (3) resolution handles case and separators (`extOf` lowercases and only needs
+      the last dot; Rust side is `eq_ignore_ascii_case`); (4) no `.asapnotes.json`
+      exists in any linked project, so `files`-rules interplay isn't it; (5) drafts
+      are flat `untitled-*.md` ids. Two structural weak points found (neither proven
+      to be the report): the registry is **module state mutated outside React** —
+      `setNoteTypes` triggers no re-render itself and today rides on `applySettings`'
+      sibling `setState`s; and the editor's extensions are **frozen at mount, rebuilt
+      only by `docKey`** — a type/feature change arriving between mount and the next
+      open (e.g. a hand-edit of `settings.json` reloading on focus) updates the chrome
+      but not the open editor's surface. Next step is a live repro: when it happens,
+      check whether the _chrome_ (toolbar/preview eye) also thinks it's not markdown —
+      that splits type resolution from a stale editor mount in one look.
 - [ ] **Default exclusions miss compiled output** (2026-08-11) — reported: some compiled
       JSON artifacts still show up despite the ignore rules. The default rule set
       (registry allowlist + `SKIP_DIRS`) needs to be smarter about generated/build
       output — identify what leaked through and extend the defaults (per-project
       `.asapnotes.json` overrides already exist as the escape hatch).
+      _2026-08-12 diagnosis — the leak is identified (walk simulated read-only over
+      the three linked projects with the exact skip rules):_ the dominant source is
+      **.NET build output**: `bin/` and `obj/` are not in `SKIP_DIRS`, so
+      `*.deps.json`, `*.runtimeconfig.json`, `project.assets.json`, nuget dgspecs,
+      staticwebassets caches — dozens per project — all list. Smaller leaks:
+      `*.egg-info/` (Python packaging metadata: `SOURCES.txt`, `requires.txt`…),
+      `package-lock.json` (generated lockfiles at every JS package root), and
+      rotating `logs/app-*.log` trees. Also found on the way: **dot-files with
+      allowlisted extensions (`.prettierrc.json`) are listed but unopenable** — the
+      walk has no leading-dot rule for files, while `checked_name` rejects any id
+      segment starting with a dot, so they show in the explorer and error on click.
+      Proposed fix (pending the go-ahead, one edit in `notes.rs`): add `bin` and
+      `obj` to `SKIP_DIRS`; skip directories whose name ends `.egg-info`; give files
+      the same leading-dot skip directories already have (also fixes the unopenable
+      rows); and skip `package-lock.json` by name as the one generated _file_ the
+      extension allowlist can't express. Judgment call left open: `logs/` dirs —
+      `.log` was deliberately allowlisted, so either accept rotating logs as content
+      or skip dirs named `logs` and lean on `.asapnotes.json` re-include; leaning
+      skip, since a dir full of dated rotating files is generated output by any
+      reading. `package.json`/`tsconfig.json` remain visible on purpose — hand-written
+      config is arguably content, and hiding it is what per-project rules are for.
 - [ ] **Dropdown/popup text size: smaller default + customizable** (2026-08-11) —
       feedback: dropdowns/popups (menus, palette, context menus) read too big. Make
       their text size a user setting, and set the default ~20% smaller than today
       without breaking layout (check padding/row heights still line up at the new size).
+      _2026-08-12 design pass (proposal, awaiting a pick — no code):_ the survey
+      explains the feedback precisely: **palette rows have no font-size of their own**
+      — `.palette li` inherits the root 16px, ~20% larger than every other piece of
+      chrome (menubar/dropdowns/context menus sit at 0.8rem, explorer 0.85rem, the
+      palette's own input at 0.95rem). So "20% smaller" and "consistent with the rest
+      of the app" are the same fix. Proposal: one token, `--popup-font-size`, default
+      `0.8rem`, consumed by the three popup surfaces (menu dropdowns, context menus,
+      palette rows — the mention dropdown already follows the palette); their paddings
+      and row heights switch from rem to `em` so geometry tracks the font size and no
+      per-size layout audit is needed. The user setting is a small stepped control in
+      Settings → Appearance (e.g. 85% / 100% / 115% applied to the token), stored in
+      `appearance` alongside theme/zoom with the same localStorage boot-mirror
+      dual-write. Alternative considered: scale each surface separately (palette-only
+      fix now, menus untouched) — cheaper, but the feedback names all three, and one
+      token is the difference between a setting and three.
 
 ## Today (2026-08-10)
 
