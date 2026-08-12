@@ -157,6 +157,7 @@ pub fn run() {
             notes::save_note,
             notes::move_note,
             notes::create_folder,
+            notes::delete_folder,
             notes::delete_note,
             notes::reveal_note,
             notes::open_external,
@@ -176,6 +177,7 @@ pub fn run() {
             notes::add_mount,
             notes::create_virtual_folder,
             notes::remove_mount,
+            notes::delete_mount,
         ])
         .setup(|app| {
             #[cfg(desktop)]

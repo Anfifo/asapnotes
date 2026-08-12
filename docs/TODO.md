@@ -14,6 +14,50 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Today (2026-08-12)
 
+- [ ] **Option to delete folders and virtual folders** (2026-08-12) — requested, not
+      designed yet. Folder headings have create/attach verbs but no removal: a real
+      folder can't be deleted from the explorer at all, and a virtual folder only
+      offers "Detach", which leaves the backing directory behind in the
+      virtual-folders home. Wanted: delete on both, following `delete_note`'s
+      never-hard-delete rule (recycle bin via the `trash` crate). _Decided
+      2026-08-12:_ delete always raises a **confirm that says the folder and its
+      contents are really being deleted** (even though it goes to the recycle bin —
+      the warning talks about deletion, recoverability is the safety net, not the
+      pitch); for a virtual folder whose backing directory lives **outside the
+      virtual-folders home** (an associated mount pointing at a folder the user
+      owns elsewhere), the same popup additionally reminds where the real folder
+      is and that it's that folder being trashed — "Delete" on any virtual folder
+      means detach + trash the backing folder, with plain "Detach" staying as the
+      keep-the-files option. Open tabs/drafts under the deleted subtree need the
+      same closing treatment `delete_note` does.
+      **Implemented 2026-08-12, pending hands-on check.** New Rust `delete_folder`
+      (resolves like note ids, so a real folder inside a mount trashes inside the
+      backing directory; refuses the mount point itself — that's `delete_mount` —
+      and top-level folders, which are projects) and `delete_mount` (trash the
+      backing folder, then the same detach `remove_mount` does); both hard-remove
+      the drafts subtree, the way `delete_note` removes one note's draft.
+      `MountInfo` gained `external` (backing folder outside the virtual-folders
+      home) so the confirm on an associated mount can add "Its files live in
+      <path> — that folder is what gets deleted." Menu wiring: subfolder headings
+      get "Delete folder"; a mount heading gets "Delete virtual folder" beside
+      "Detach" — except a conflicted mount, where the visible folder is the real
+      one that took the name, so its entry is "Delete folder". After a delete the
+      frontend closes every tab under the subtree (the active one hands off to a
+      neighbor or a fresh note), drops session-only `newFolders` entries, and
+      re-lists notes+drafts. Deliberately excluded: project headings — a project's
+      lifecycle (unlink, and someday delete) is its own thing.
+      **Backend verified end-to-end 2026-08-12** against a live app instance
+      (isolated second instance, commands driven over the webview's devtools
+      protocol): all guards fire with their messages (top-level refused, missing
+      folder refused, mount point refused), a deleted subfolder + its draft
+      subtree go while a sibling note stays, `external` reads false for a
+      home-backed mount and true for an associated one, both `delete_mount`
+      variants detach cleanly (no settings residue), and all three deleted
+      folders landed in the recycle bin with their original paths. Still needs
+      eyes (UI half only): the three context-menu entries, the confirm wording —
+      especially the path callout on an associated mount — and tabs closing when
+      their folder is deleted.
+
 - [ ] **Allow closing the last tab → welcome panel** (2026-08-12) — requested: today
       the last untitled note can't be closed; make it closable. With zero tabs open,
       the editor area shows a **welcome panel**: a start screen listing the main

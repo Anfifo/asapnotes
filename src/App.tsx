@@ -1501,6 +1501,41 @@ function App() {
     closeTab(id);
   };
 
+  /** Close every tab under a deleted subtree and re-list what's on disk — the
+   * folder counterpart of the tab/draft cleanup deleteNote does for one note. */
+  const closeDeletedSubtree = async (dir: string) => {
+    const inside = (id: string) => id.startsWith(`${dir}/`);
+    const cur = openRef.current;
+    if (cur && inside(cur.id)) cancelAutosave();
+    const keep = tabs.filter((t) => !inside(t.id));
+    setTabs(keep);
+    if (cur && inside(cur.id)) {
+      if (keep.length > 0) void openTabItem(keep[0].id);
+      else void newNote();
+    }
+    setNewFolders((ds) => ds.filter((d) => d !== dir && !inside(d)));
+    setNotes(await api.listNotes());
+    setDrafts(await api.listDrafts());
+  };
+
+  /** Recycle-bin delete of a folder and everything in it, after a confirm that
+   * talks plainly about deletion — recoverability is the safety net, not the
+   * pitch. */
+  const deleteFolder = async (dir: string) => {
+    const ok = await confirmDialog(`Delete "${fileOf(dir)}" and everything inside it?`, {
+      title: "Delete folder",
+      kind: "warning",
+    });
+    if (!ok) return;
+    try {
+      await api.deleteFolder(dir);
+    } catch (err) {
+      toast(`Couldn't delete that folder — ${errText(err)}`);
+      return;
+    }
+    await closeDeletedSubtree(dir);
+  };
+
   const openContextMenu = (e: React.MouseEvent, entries: MenuEntry[]) => {
     e.preventDefault();
     // Targets nest (row inside folder inside panel body) — innermost menu wins.
@@ -1657,6 +1692,29 @@ function App() {
     await refreshProjects();
   };
 
+  /** Delete a virtual folder outright — detach it *and* recycle-bin its
+   * backing folder ("Detach" stays as the keep-the-files option). When that
+   * folder is one the user owns elsewhere, the confirm says where it is. */
+  const deleteVirtualFolder = async (mount: api.MountInfo) => {
+    const name = mount.at.split("/").pop() ?? mount.at;
+    const where = mount.external
+      ? `\n\nIts files live in ${mount.path} — that folder is what gets deleted.`
+      : "";
+    const ok = await confirmDialog(`Delete "${name}" and everything inside it?${where}`, {
+      title: "Delete virtual folder",
+      kind: "warning",
+    });
+    if (!ok) return;
+    try {
+      await api.deleteMount(mount.project, mount.at);
+    } catch (err) {
+      toast(`Couldn't delete that folder — ${errText(err)}`);
+      return;
+    }
+    await closeDeletedSubtree(`${mount.project}/${mount.at}`);
+    await refreshProjects();
+  };
+
   /** Right-click on a project or folder heading. Folders open in File Explorer
    * rather than being selected in their parent — their contents are the point. */
   const explorerDirMenu = (e: React.MouseEvent, dir: string) => {
@@ -1676,9 +1734,19 @@ function App() {
             { label: "Associate virtual folder…", run: () => void associateVirtualFolder(dir) },
           ]
         : []),
+      // Detach keeps the files where they are; Delete recycle-bins them. On a
+      // conflicted mount the real folder is what's visible, so plain folder
+      // deletion is what its Delete does.
       ...(mount
-        ? [{ label: "Detach virtual folder", run: () => void detachVirtualFolder(mount) }]
-        : []),
+        ? [
+            { label: "Detach virtual folder", run: () => void detachVirtualFolder(mount) },
+            mount.conflicted
+              ? { label: "Delete folder", run: () => void deleteFolder(dir) }
+              : { label: "Delete virtual folder", run: () => void deleteVirtualFolder(mount) },
+          ]
+        : rest.length > 0
+          ? [{ label: "Delete folder", run: () => void deleteFolder(dir) }]
+          : []),
       "sep" as const,
       { label: "Copy path", run: () => void writeText(absDirOf(dir)) },
       {

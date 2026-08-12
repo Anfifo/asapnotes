@@ -37,6 +37,8 @@ export const notesRootPath = () => invoke<string>("notes_root_path");
 export const moveNote = (from: string, to: string) => invoke<void>("move_note", { from, to });
 /** Create a real folder inside a project (`dir` is its would-be id path). */
 export const createFolder = (dir: string) => invoke<void>("create_folder", { dir });
+/** Recycle-bin a folder and everything in it; drafts under it go too. */
+export const deleteFolder = (dir: string) => invoke<void>("delete_folder", { dir });
 /** Recycle bin, not hard delete; the note's draft goes with it. */
 export const deleteNote = (name: string) => invoke<void>("delete_note", { name });
 export const revealNote = (name: string) => invoke<void>("reveal_note", { name });
@@ -105,6 +107,9 @@ export interface MountInfo {
   /** The absolute folder it points at. */
   path: string;
   conflicted: boolean;
+  /** Backed by a folder outside the virtual-folders home — one the user owns
+   * elsewhere, which deletion warnings call out by path. */
+  external: boolean;
 }
 
 export const listMounts = () => invoke<MountInfo[]>("list_mounts");
@@ -120,6 +125,10 @@ export const createVirtualFolder = (project: string, at: string) =>
 /** Detach it again; the folder and its files stay where they are. */
 export const removeMount = (project: string, at: string) =>
   invoke<void>("remove_mount", { project, at });
+/** Delete it outright: the backing folder goes to the recycle bin, then the
+ * mount is detached. */
+export const deleteMount = (project: string, at: string) =>
+  invoke<void>("delete_mount", { project, at });
 
 // --- Personal settings (app-data settings.json) ---
 

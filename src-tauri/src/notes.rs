@@ -728,6 +728,45 @@ pub fn create_folder(app: AppHandle, dir: String) -> Result<(), String> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
 
+/// Move a folder and everything in it to the recycle bin (never a hard
+/// delete — same rule as `delete_note`); shadow drafts filed under its ids go
+/// with it. Top-level folders are projects and are not deletable here.
+#[tauri::command]
+pub fn delete_folder(app: AppHandle, dir: String) -> Result<(), String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    let segments: Vec<&str> = dir.split('/').collect();
+    if !(2..MAX_DEPTH as usize).contains(&segments.len())
+        || !segments.iter().all(|s| valid_segment(s))
+        || segments[0] == ASSETS_DIR
+    {
+        return Err(format!("invalid folder name: {dir}"));
+    }
+    let (project, rest) = dir.split_once('/').expect("two segments checked");
+    // The mount point itself is a virtual folder and deleting it means
+    // `delete_mount` — except a conflicted mount, which is inert: the real
+    // folder that took its name is what's visible, so it is what's deleted.
+    if s.projects
+        .get(project)
+        .is_some_and(|e| e.mounts.iter().any(|m| m.at == rest))
+        && !project_base(&root, &s, project).join(rest).is_dir()
+    {
+        return Err(format!(
+            "{dir} is a virtual folder — delete or detach it instead"
+        ));
+    }
+    let (base, sub) = base_of(&app, &s, &dir)?;
+    let path = base.join(sub);
+    if !path.is_dir() {
+        return Err(format!("no folder at {dir}"));
+    }
+    trash::delete(&path).map_err(|e| e.to_string())?;
+    // Drafts are app-managed shadow copies, removed outright like
+    // `delete_note` removes one note's draft.
+    let _ = fs::remove_dir_all(drafts_dir(&app)?.join(&dir));
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_drafts(app: AppHandle) -> Result<Vec<FileInfo>, String> {
     // Deep walk: drafts mirror ids like `project/docs/x.md`. Default rules on
@@ -1213,19 +1252,23 @@ const MAX_MOUNT_AT: usize = 4;
 
 /// A mount as the explorer sees it. `conflicted` means a real folder has taken
 /// its name over: the real folder wins, and the mount lists nothing until the
-/// clash is gone.
+/// clash is gone. `external` means the backing folder lives outside the
+/// virtual-folders home — a folder the user owns elsewhere, which deletion
+/// warnings call out by path.
 #[derive(Serialize)]
 pub struct MountInfo {
     pub project: String,
     pub at: String,
     pub path: String,
     pub conflicted: bool,
+    pub external: bool,
 }
 
 #[tauri::command]
 pub fn list_mounts(app: AppHandle) -> Result<Vec<MountInfo>, String> {
     let root = notes_root(&app)?;
     let s = settings::settings(&app)?;
+    let home = virtual_folders_root(&app, &s)?;
     let mut out = Vec::new();
     for (name, entry) in &s.projects {
         let own = project_base(&root, &s, name);
@@ -1235,6 +1278,7 @@ pub fn list_mounts(app: AppHandle) -> Result<Vec<MountInfo>, String> {
                 at: m.at.clone(),
                 path: m.path.clone(),
                 conflicted: own.join(&m.at).is_dir(),
+                external: !Path::new(&m.path).starts_with(&home),
             });
         }
     }
@@ -1369,4 +1413,25 @@ pub fn remove_mount(app: AppHandle, project: String, at: String) -> Result<(), S
         }
         Ok(())
     })
+}
+
+/// Delete a virtual folder outright: move its backing folder to the recycle
+/// bin (never a hard delete — same rule as `delete_note`), then detach it.
+/// Plain detach (`remove_mount`) stays as the keep-the-files option.
+#[tauri::command]
+pub fn delete_mount(app: AppHandle, project: String, at: String) -> Result<(), String> {
+    let s = settings::settings(&app)?;
+    let mount = s
+        .projects
+        .get(&project)
+        .and_then(|e| e.mounts.iter().find(|m| m.at == at))
+        .ok_or_else(|| format!("no folder attached at {at} in {project}"))?;
+    // A backing folder already gone by other means shouldn't block the detach.
+    if Path::new(&mount.path).exists() {
+        trash::delete(&mount.path).map_err(|e| e.to_string())?;
+    }
+    // Drafts are app-managed shadow copies, removed outright like
+    // `delete_note` removes one note's draft.
+    let _ = fs::remove_dir_all(drafts_dir(&app)?.join(&project).join(&at));
+    remove_mount(app, project, at)
 }
