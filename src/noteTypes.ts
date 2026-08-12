@@ -70,3 +70,18 @@ export const featuresOf = (path: string): Feature[] => {
 /** Editing surface for a path. */
 export const viewOf = (path: string): ViewId =>
   noteTypeOf(path)?.view === "markdown" ? "markdown" : "text";
+
+/** Tint ids the app defines per theme (as `--tint-*` in App.css). */
+const TINTS = ["blue", "amber", "rose", "purple", "green", "orange", "gray", "teal"];
+
+/** CSS color for a path's type: a theme-aware tint when `color` names one, a
+ * literal when the user wrote one, null when the type is colorless. */
+export function colorOf(path: string): string | null {
+  const color = noteTypeOf(path)?.color;
+  if (!color) return null;
+  if (color.startsWith("#")) return color;
+  return TINTS.includes(color) ? `var(--tint-${color})` : null;
+}
+
+/** Glyph id for a path's type, null when it declares none. */
+export const iconOf = (path: string): string | null => noteTypeOf(path)?.icon ?? null;

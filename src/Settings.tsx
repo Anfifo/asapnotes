@@ -9,6 +9,11 @@ const THEMES: [Theme, string][] = [
   ["system", "System"],
 ];
 
+const TINTS: ["full" | "icon", string][] = [
+  ["full", "Icon + extension"],
+  ["icon", "Icon only"],
+];
+
 const KEYBINDS: [string, string][] = [
   ["Ctrl+Alt+A", "Summon / hide (global)"],
   ["Ctrl+N / Ctrl+T", "New note (tab)"],
@@ -65,6 +70,9 @@ interface SettingsProps {
   onChangeProjectPath: (name: string) => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+  /** Where a note type's color lands on explorer rows. */
+  explorerTint: "full" | "icon";
+  onExplorerTintChange: (tint: "full" | "icon") => void;
   onClose: () => void;
 }
 
@@ -75,6 +83,8 @@ export function Settings({
   onChangeProjectPath,
   theme,
   onThemeChange,
+  explorerTint,
+  onExplorerTintChange,
   onClose,
 }: SettingsProps) {
   const [version, setVersion] = useState("");
@@ -123,6 +133,23 @@ export function Settings({
                       className={value === theme ? "active" : undefined}
                       aria-pressed={value === theme}
                       onClick={() => onThemeChange(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td>File-type color</td>
+              <td>
+                <div className="segmented" role="group" aria-label="File-type color">
+                  {TINTS.map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={value === explorerTint ? "active" : undefined}
+                      aria-pressed={value === explorerTint}
+                      onClick={() => onExplorerTintChange(value)}
                     >
                       {label}
                     </button>

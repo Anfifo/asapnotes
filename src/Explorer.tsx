@@ -1,5 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
+import { FileIcon } from "./fileIcons";
 import { FileInfo, MountInfo } from "./notes";
+import { colorOf, iconOf } from "./noteTypes";
 import { fileOf, projectOf } from "./paths";
 
 const RECENT_COUNT = 5;
@@ -83,6 +85,8 @@ interface ExplorerProps {
   onResize: (width: number) => void;
   /** Drag finished — the moment to persist the width. */
   onResizeEnd: () => void;
+  /** Where a type's color lands on a row: icon + extension, or icon only. */
+  tint: "full" | "icon";
 }
 
 /** Side panel: the open note's project first, then recent files (collapsed
@@ -113,6 +117,7 @@ export function Explorer({
   width,
   onResize,
   onResizeEnd,
+  tint,
 }: ExplorerProps) {
   const noteNames = new Set(notes.map((n) => n.name));
   const draftIds = new Set(drafts.map((d) => d.name));
@@ -152,18 +157,37 @@ export function Explorer({
     ...newFolders.filter((d) => projectOf(d) === p).map((d) => d.slice(p.length + 1)),
   ];
 
-  const item = (id: string, showProject = false) => (
-    <li
-      key={id}
-      className={id === openId ? "current" : undefined}
-      onClick={() => onSelect(id, noteNames.has(id))}
-      onContextMenu={(e) => onContext(e, id, noteNames.has(id))}
-    >
-      <span className="explorer-name">{fileOf(id).replace(/\.md$/, "")}</span>
-      {showProject && projectOf(id) && <span className="explorer-detail">{projectOf(id)}</span>}
-      {draftIds.has(id) && <span className="dirty">●</span>}
-    </li>
-  );
+  const item = (id: string, showProject = false) => {
+    const file = fileOf(id);
+    const dot = file.lastIndexOf(".");
+    const stem = dot > 0 ? file.slice(0, dot) : file;
+    // `.md` stays hidden as it always has; every other extension shows.
+    const ext = dot > 0 && file.slice(dot) !== ".md" ? file.slice(dot) : "";
+    const color = colorOf(id);
+    return (
+      <li
+        key={id}
+        className={id === openId ? "current" : undefined}
+        onClick={() => onSelect(id, noteNames.has(id))}
+        onContextMenu={(e) => onContext(e, id, noteNames.has(id))}
+      >
+        <FileIcon icon={iconOf(id)} color={color} />
+        <span className="explorer-name">
+          {stem}
+          {ext &&
+            (tint === "icon" ? (
+              <span className="explorer-ext mute">{ext}</span>
+            ) : (
+              <span className="explorer-ext" style={color ? { color } : undefined}>
+                {ext}
+              </span>
+            ))}
+        </span>
+        {showProject && projectOf(id) && <span className="explorer-detail">{projectOf(id)}</span>}
+        {draftIds.has(id) && <span className="dirty">●</span>}
+      </li>
+    );
+  };
 
   /** Hover-revealed "new note in this folder" button for a heading row. */
   const addBtn = (dir: string) => (

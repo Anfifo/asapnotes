@@ -68,6 +68,10 @@ pub struct Appearance {
     pub zoom: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub explorer: Option<ExplorerAppearance>,
+    /// Where a note type's color lands on an explorer row: `full` (icon and
+    /// extension, the default) or `icon` (extension stays in the muted ink).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explorer_tint: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -120,7 +124,7 @@ impl Project {
 
 /// One note format: which extensions it claims, how it opens, and what the
 /// chrome may offer for it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NoteType {
     pub id: String,
@@ -129,7 +133,10 @@ pub struct NoteType {
     pub extensions: Vec<String>,
     /// Id of an editing surface the app implements.
     pub view: String,
+    /// Id of a glyph the app ships; unknown ids fall back to the plain file.
     pub icon: Option<String>,
+    /// Id of a tint the app defines per theme (`blue`, `amber`, `rose`, …), or
+    /// a literal `#rrggbb` for someone who accepts it won't adapt to themes.
     pub color: Option<String>,
     /// Affordance names from the app's closed set; anything else is ignored.
     pub features: Vec<String>,
@@ -138,7 +145,52 @@ pub struct NoteType {
 /// The shipped registry. Written into `settings.json` on first launch so it is
 /// there to be edited, and the union of these extensions is the note allowlist
 /// on both sides of the IPC boundary — one list, not two kept in sync.
+///
+/// One type per icon/color family rather than one catch-all "plain text",
+/// so the explorer can tell a data file from a log from a config — the
+/// extension union is the same either way.
 fn default_note_types() -> Vec<NoteType> {
+    let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+    let plain = |id: &str, name: &str, exts: &[&str], icon: &str, color: Option<&str>| NoteType {
+        id: id.into(),
+        name: name.into(),
+        extensions: strings(exts),
+        view: "text".into(),
+        icon: Some(icon.into()),
+        color: color.map(Into::into),
+        features: Vec::new(),
+    };
+    vec![
+        NoteType {
+            id: "markdown".into(),
+            name: "Markdown".into(),
+            extensions: strings(&["md", "markdown"]),
+            view: "markdown".into(),
+            icon: Some("file-text".into()),
+            color: Some("blue".into()),
+            features: strings(&["live-preview", "preview", "mentions", "format", "images"]),
+        },
+        plain("text", "Plain text", &["txt", "text"], "file", None),
+        plain("json", "JSON", &["json"], "file-json", Some("amber")),
+        plain("yaml", "YAML", &["yaml", "yml"], "file-code", Some("rose")),
+        plain(
+            "config",
+            "Config",
+            &["toml", "ini", "cfg"],
+            "file-code",
+            Some("purple"),
+        ),
+        plain("csv", "CSV", &["csv"], "file-spreadsheet", Some("green")),
+        plain("xml", "XML", &["xml"], "file-code", Some("orange")),
+        plain("log", "Log", &["log"], "file-terminal", Some("gray")),
+        plain("latex", "LaTeX", &["tex"], "file-text", Some("teal")),
+    ]
+}
+
+/// The registry as first shipped: two types, no colors. Kept only so `load`
+/// can tell "still on the shipped defaults" from "hand-edited" — the former is
+/// upgraded in place, the latter is never touched.
+fn v1_note_types() -> Vec<NoteType> {
     let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
     vec![
         NoteType {
@@ -236,10 +288,20 @@ fn load(app: &AppHandle) -> Result<Loaded, String> {
     if path.exists() {
         let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
         return Ok(match serde_json::from_str::<Settings>(&data) {
-            Ok(settings) => Loaded {
-                settings: Arc::new(settings),
-                error: None,
-            },
+            Ok(mut settings) => {
+                // A file still carrying the first shipped registry verbatim is
+                // upgraded to the current one; any hand-edit means the whole
+                // list belongs to the user. A failed write only postpones this
+                // — the in-memory upgrade already happened and will be retried.
+                if settings.note_types == v1_note_types() {
+                    settings.note_types = default_note_types();
+                    let _ = write(&path, &settings);
+                }
+                Loaded {
+                    settings: Arc::new(settings),
+                    error: None,
+                }
+            }
             Err(e) => Loaded {
                 settings: Arc::new(Settings::default()),
                 error: Some(format!("settings.json: {e}")),

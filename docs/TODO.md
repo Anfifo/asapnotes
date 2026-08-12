@@ -156,6 +156,59 @@ The AI (or anyone) working on this repo keeps this file current while working:
       into settings-rework (b) below: the note-type registry already carries `icon`
       and `color` per type in `settings.json`, but nothing renders them yet — this
       is the rendering half, and those fields should be its source of truth.
+      _2026-08-12: icon source researched and recommended — **Lucide (ISC license)**._
+      ISC permits copy/modify/distribute for any purpose (keep the copyright notice
+      in copies); its `file-*` family covers the registry's needs (`file-text`,
+      `file-json`, `file-code`, `file-spreadsheet`, `file-cog`, `file-terminal`, …);
+      and it is already the app's icon idiom — the toolbar's inline stroke SVGs and
+      the registry's existing `icon` ids (`file-text`, `file`) are of exactly this
+      shape, so no second visual language enters the repo. Icons land as inline
+      `currentColor` SVGs like the toolbar's (no dependency added). One design
+      consequence to decide with the rendering: today the registry has only two
+      types (markdown, text), so per-extension "classic" icons (json ≠ csv ≠ yaml)
+      mean splitting the plain-text entry into a few finer types (e.g. data/config/
+      log) — which the registry supports as pure data. Colors are values in the
+      registry's `color` field; pick them tuned against both themes the way the
+      syntax palette was, not lifted from any product's theme.
+      _2026-08-12: a three-way candidate sheet (quiet icons + tinted extension /
+      both tinted / icon-only tint, real explorer metrics, light+dark, size ladder,
+      live contrast table; tints drawn from the `--syn-*` palette) is published and
+      awaiting a pick — no repo assets touched until one lands._
+      **Picked 2026-08-12: full tint (icon + extension) is the default, with an
+      icon-only-tint option in Settings → Appearance** (that section already exists —
+      the theme picker lives there — so no need to defer the option). Implementation
+      plan, agreed to build next:
+      (1) **Registry split** — the shipped `noteTypes` grow from two entries to a
+      handful (markdown / text / data / config / log / …) so per-extension icons and
+      colors have a type to live on; pure data change in `default_note_types()`.
+      Existing `settings.json` files hold the old two-type registry, so a one-shot
+      migration replaces `noteTypes` **only when it deep-equals the old shipped
+      defaults** — a hand-customized registry is never overwritten.
+      (2) **Color is a token id, not a hex** — same rule as `view`/`icon`: the
+      registry's `color` names an in-tree tint slot (`blue`, `amber`, `rose`,
+      `purple`, `green`, `orange`, `gray`, `teal`), each defined per theme in
+      `App.css`, because one literal color can't be right on both grounds (the
+      syntax-palette work proved it). A value starting with `#` passes through
+      as-is for users who want it anyway. Tint values are the candidate sheet's,
+      reusing `--syn-*` where an association exists.
+      (3) **Rendering** — explorer rows (Recent included) get an inline Lucide
+      stroke SVG (in-tree glyph table keyed by the registry's `icon` id) plus an
+      extension span carrying the tint; `.md` stays stripped as today, so markdown
+      rows show a tinted icon and no suffix. Search results / tabs / palette rows
+      deliberately not in this pass.
+      (4) **The option** — `appearance.explorerTint: "full" | "icon"` (default
+      `full`), dual-written like theme/zoom, one segmented control in Settings →
+      Appearance; `icon` renders the extension in the row's muted detail ink.
+      **Implemented 2026-08-12, gates clean, migration verified against the live
+      settings.json** (the file upgraded to the nine-type registry on relaunch —
+      markdown/text/json/yaml/config/csv/xml/log/latex, colors as tint ids).
+      Explorer rows (Recent included) now render the glyph + tinted extension;
+      `.md` stays stripped, so markdown rows show a blue icon and no suffix.
+      Deliberately left alone: search results, tabs, palette rows, and the
+      mention dropdown still render plain names — worth one look at the explorer
+      before deciding whether they should follow. Pending hands-on: eyeball rows
+      in both themes, flip File-type color to "Icon only" in Settings and back,
+      and restart once to confirm the choice sticks.
 - [ ] **Bug: `.md` files not showing as markdown** (2026-08-11) — reported: `.md` files
       aren't being presented as markdown. Needs a repro to pin down where (explorer
       display, editor features, or type resolution) — suspect the note-type registry

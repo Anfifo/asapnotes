@@ -155,6 +155,8 @@ export interface Appearance {
   theme?: string | null;
   zoom?: number | null;
   explorer?: { width?: number | null; pinned?: boolean | null } | null;
+  /** Where a note type's color lands on an explorer row: "full" | "icon". */
+  explorerTint?: string | null;
 }
 
 export interface Settings {

@@ -23,6 +23,19 @@
   --syn-property: #6b3fc4;
   --syn-variable: #2f6099;
   --syn-punct: #767676;
+
+  /* File-type tints the note-type registry's `color` ids name. Two values per
+     tint (here and in the dark block) because one literal can't be readable on
+     both panel grounds; drawn from the syntax palette where an association
+     exists, so explorer and editor speak one color system. */
+  --tint-blue: #2f6099;
+  --tint-amber: #8a6a00;
+  --tint-rose: #b3403a;
+  --tint-purple: #6b3fc4;
+  --tint-green: #2c7a34;
+  --tint-orange: #9a5518;
+  --tint-gray: #6e6e6e;
+  --tint-teal: #10736b;
 }
 
 html,
@@ -627,6 +640,28 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* File-type glyph before the name. Rows align on baselines; the icon has no
+   baseline of its own, so it centers itself against the row instead. */
+.file-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  align-self: center;
+  color: #8a8a8a; /* types without a tint stay this muted ink */
+}
+
+.file-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Extension suffix inside the name; the tint arrives inline from the type's
+   registry color. `mute` is the icon-only setting, where it recedes instead. */
+.explorer-ext.mute {
+  color: #a3a3a3;
 }
 
 .explorer-detail {
@@ -1556,10 +1591,27 @@ body,
   --syn-variable: #8fb8e8;
   --syn-punct: #969696;
 
+  --tint-blue: #8fb8e8;
+  --tint-amber: #dcbf5a;
+  --tint-rose: #e58880;
+  --tint-purple: #bda6f0;
+  --tint-green: #79c97e;
+  --tint-orange: #e0a05c;
+  --tint-gray: #a0a0a0;
+  --tint-teal: #5cc7bb;
+
   .explorer,
   .top-panel,
   .content-panel {
     background: #2f2f2f;
+  }
+
+  .file-icon {
+    color: #9a9a9a;
+  }
+
+  .explorer-ext.mute {
+    color: #8f8f8f;
   }
 
   .tabbar {

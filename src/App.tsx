@@ -283,6 +283,9 @@ function App() {
     return saved > 0 ? clampZoom(saved) : 1;
   });
   const [theme, setThemeState] = useState<Theme>(getTheme);
+  // Where a note type's color lands on explorer rows; settings-file only (no
+  // boot mirror — rows paint after the first data round trip anyway).
+  const [explorerTint, setExplorerTint] = useState<"full" | "icon">("full");
   // Tab held at the close confirm (Save / Discard / Cancel), null when none.
   const [closeAsk, setCloseAsk] = useState<string | null>(null);
 
@@ -348,6 +351,7 @@ function App() {
     theme,
     zoom,
     explorer: { width: explorerWidth, pinned: explorerPinned },
+    explorerTint,
   };
 
   /** Write appearance to settings.json. `patch` carries the value the caller
@@ -793,6 +797,8 @@ function App() {
         setExplorerPinnedState(explorer.pinned);
         localStorage.setItem("explorerPinned", explorer.pinned ? "1" : "0"); // mirror only
       }
+      const tint = settings.appearance.explorerTint;
+      if (tint === "full" || tint === "icon") setExplorerTint(tint);
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
     },
@@ -1909,6 +1915,7 @@ function App() {
             pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
             onCollapse={() => setExplorerOpen(false)}
+            tint={explorerTint}
             width={explorerWidth}
             // The drag ranges up to the dock limit (docked) or nearly the whole
             // window (floating) — it can never cross the auto-collapse
@@ -2092,6 +2099,11 @@ function App() {
             setTheme(next);
             setThemeState(next);
             persistAppearance({ theme: next });
+          }}
+          explorerTint={explorerTint}
+          onExplorerTintChange={(next) => {
+            setExplorerTint(next);
+            persistAppearance({ explorerTint: next });
           }}
           onClose={() => {
             setSettingsOpen(false);
