@@ -651,7 +651,7 @@ body,
 }
 
 .explorer-folder.mount > summary .explorer-detail {
-  /* A long absolute path must not push the name out; the title has it whole. */
+  /* The conflict warning yields to the name in a narrow panel. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

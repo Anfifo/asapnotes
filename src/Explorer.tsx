@@ -220,13 +220,11 @@ export function Explorer({
             className={mount ? "explorer-folder mount" : "explorer-folder"}
             open={holdsCreate || undefined}
           >
-            <summary onContextMenu={(e) => onDirContext(e, dir)}>
+            <summary onContextMenu={(e) => onDirContext(e, dir)} title={mount?.path}>
               {mount && mountGlyph}
               <span className="explorer-name">{name}</span>
-              {mount && (
-                <span className="explorer-detail" title={mount.path}>
-                  {mount.conflicted ? "hidden by a real folder" : mount.path}
-                </span>
+              {mount?.conflicted && (
+                <span className="explorer-detail">hidden by a real folder</span>
               )}
               {addBtn(dir)}
             </summary>
