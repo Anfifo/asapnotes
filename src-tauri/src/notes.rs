@@ -40,7 +40,16 @@ use tauri::{AppHandle, Manager};
 const ASSETS_DIR: &str = "assets";
 const IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
 /// Directories never walked when listing or scanning folders.
-const SKIP_DIRS: [&str; 5] = ["node_modules", "target", "dist", "build", "out"];
+const SKIP_DIRS: [&str; 8] = [
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    "bin",
+    "obj",
+    "logs",
+];
 const MAX_DEPTH: u32 = 12;
 
 #[derive(Serialize)]
@@ -208,12 +217,19 @@ fn now_ms() -> u64 {
 /// match, the registry allowlist decides. A re-include past the allowlist is
 /// subject to the floor, which needs the file's size.
 fn listed(s: &Settings, rules: &Rules, rel: &str, name: &str, entry: &fs::DirEntry) -> bool {
+    // Dot-files never list: ids can't express them (`valid_segment`), so a
+    // listed row would only error on open. Same rule directories already have.
+    if name.starts_with('.') {
+        return false;
+    }
     match rules.verdict(rel, false) {
         Verdict::Exclude => false,
         Verdict::Include => {
             s.is_note(name) || floor_ok(name, entry.metadata().map(|m| m.len()).unwrap_or(0))
         }
-        Verdict::Default => s.is_note(name),
+        // Generated lockfiles are the one machine-written *file* the extension
+        // allowlist can't express; a project's `!` rule can pull one back in.
+        Verdict::Default => s.is_note(name) && !name.eq_ignore_ascii_case("package-lock.json"),
     }
 }
 
@@ -267,7 +283,10 @@ fn list_tree(s: &Settings, base: &Path) -> Result<Vec<FileInfo>, String> {
 }
 
 fn skip_dir(name: &str) -> bool {
-    name.starts_with('.') || SKIP_DIRS.contains(&name.to_ascii_lowercase().as_str())
+    let lower = name.to_ascii_lowercase();
+    // `.egg-info` folders are Python packaging metadata — generated output
+    // whose files (`SOURCES.txt`, `requires.txt`, …) all pass the allowlist.
+    name.starts_with('.') || lower.ends_with(".egg-info") || SKIP_DIRS.contains(&lower.as_str())
 }
 
 /// Recursively collect note files. Tolerant by design: unreadable directories
