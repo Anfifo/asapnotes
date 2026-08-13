@@ -628,8 +628,8 @@ body,
   display: flex;
   align-items: baseline;
   gap: 0.4rem;
-  /* Left padding aligns file names with folder names past the chevron. */
-  padding: 0.15rem 0.4rem 0.15rem 1.1rem;
+  /* Same left inset as heading rows: the file icon sits in the chevron's column. */
+  padding: 0.15rem 0.4rem;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -748,6 +748,28 @@ body,
 .explorer details > ul,
 .explorer details > details {
   margin-left: 0.8rem;
+  position: relative; /* anchors the indent guide */
+}
+
+/* Indent guides: one hairline per nesting level, spanning exactly the
+   subtree's height. Drawn 4px left of the container's edge — under the parent
+   chevron's center; sibling containers abut, so their segments join into one
+   continuous line. A pseudo-element rather than a border, so rows never shift. */
+.explorer details > ul::before,
+.explorer details > details::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* The guides on the open note's path answer "where am I" in quiet amber. */
+.explorer details > ul.trail::before,
+.explorer details > details.trail::before {
+  background: rgba(138, 106, 0, 0.55);
 }
 
 /* "Recent" is a collapsible section — its summary wears the section-header look. */
@@ -1835,6 +1857,16 @@ body,
 
   .explorer summary {
     color: #b0b0b0;
+  }
+
+  .explorer details > ul::before,
+  .explorer details > details::before {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .explorer details > ul.trail::before,
+  .explorer details > details.trail::before {
+    background: rgba(220, 191, 90, 0.5);
   }
 
   .explorer-folder.mount,

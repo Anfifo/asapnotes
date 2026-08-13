@@ -168,6 +168,38 @@ The AI (or anyone) working on this repo keeps this file current while working:
       tell what's inside vs. outside an expanded folder. Draw a vertical guide line per
       nesting level that follows the indentation, so where a folder's subtree ends is
       visible at a glance.
+      _2026-08-13 design pass (candidate sheet published, awaiting a pick — no code):_
+      the mechanism falls out of how the tree already nests — indentation is
+      `margin-left: 0.8rem` on the `details > ul` / `details > details` subtree
+      containers, so a guide is a pseudo-element on those two selectors (1px, absolutely
+      positioned 4px left of the container edge, i.e. under the parent chevron's center,
+      spanning the container's full height). Sibling containers at a level abut, so the
+      segments join into one continuous line per subtree; no markup change, no JS, no
+      layout shift (not a border). Three candidates on the sheet, real explorer metrics,
+      light+dark: **(A) always-on hairlines** — rgba(0,0,0,.10) light /
+      rgba(255,255,255,.12) dark; one CSS rule; **(B) hairlines only while the pointer
+      is over the tree** — quieter at rest, but the confused glance usually precedes the
+      pointer, so the information is missing exactly when asked for; **(C) A plus an
+      active trail** — the guides on the open note's path in quiet amber; needs one
+      class from `renderTree` (it knows the open id); composes on top of A later.
+      The sheet also carries an ink ladder (.06/.10/.16 light, .08/.12/.20 dark) and a
+      12.8px-vs-16px indent comparison. Recommendation was A (smallest step); **picked
+      2026-08-13: C**, plus one correction from the sheet — the space before the file
+      icon read as dead air.
+      **Implemented 2026-08-13, gates clean, pending hands-on check.** The guides are
+      the one pseudo-element rule on the two nested-container selectors (middle ink:
+      rgba(0,0,0,.10) light / rgba(255,255,255,.12) dark); `renderTree` computes one
+      `trail` flag per level from the open note's id and stamps it on every container
+      at that level — all of a level's containers jointly draw one line, so a partial
+      class would read as a broken guide (amber: rgba(138,106,0,.55) /
+      rgba(220,191,90,.5)). Indent stays 12.8px. The dead air was `.explorer li`'s
+      1.1rem left padding — it aligned file *names* with folder names before icons
+      existed; now file rows share the heading rows' 0.4rem inset, so the icon sits in
+      the chevron's column. Known consequence, deliberate: the Recent list is a
+      `details > ul` like any other, so it draws a guide too — consistent, but worth
+      one look. Pending hands-on: expand two sibling folders and check the boundary
+      reads at a glance, open a note deep in a mount and check the amber trail, both
+      themes, and the tighter file-row inset next to headings.
 - [ ] **Explorer: file-type icons + colored extensions** (2026-08-11) — suggestion:
       each file row gets the classic icon for its type before the name, provided the
       icons come from a freely-licensed source (the repo is going public, so no

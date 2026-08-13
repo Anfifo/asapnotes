@@ -229,41 +229,46 @@ export function Explorer({
     </li>
   );
 
-  const renderTree = (node: TreeNode, base: string): ReactNode => (
-    <>
-      {[...node.folders.keys()].sort().map((name) => {
-        const dir = `${base}/${name}`;
-        const holdsCreate = creatingIn === dir || creatingIn?.startsWith(`${dir}/`);
-        // An attached folder says so once, on its own row: inside it the files
-        // genuinely do live together, so marking every descendant would read as
-        // breakage rather than as information.
-        const mount = mountByDir.get(dir);
-        return (
-          <details
-            key={name}
-            className={mount ? "explorer-folder mount" : "explorer-folder"}
-            open={holdsCreate || undefined}
-          >
-            <summary onContextMenu={(e) => onDirContext(e, dir)} title={mount?.path}>
-              {mount && mountGlyph}
-              <span className="explorer-name">{name}</span>
-              {mount?.conflicted && (
-                <span className="explorer-detail">hidden by a real folder</span>
-              )}
-              {addBtn(dir)}
-            </summary>
-            {renderTree(node.folders.get(name)!, dir)}
-          </details>
-        );
-      })}
-      {(node.files.length > 0 || creatingIn === base) && (
-        <ul>
-          {creatingIn === base && createRow(base)}
-          {node.files.map((id) => item(id))}
-        </ul>
-      )}
-    </>
-  );
+  const renderTree = (node: TreeNode, base: string): ReactNode => {
+    // The containers directly under `base` jointly draw one guide line; it
+    // turns amber when the open note lives somewhere below.
+    const trail = openId?.startsWith(`${base}/`) ? " trail" : "";
+    return (
+      <>
+        {[...node.folders.keys()].sort().map((name) => {
+          const dir = `${base}/${name}`;
+          const holdsCreate = creatingIn === dir || creatingIn?.startsWith(`${dir}/`);
+          // An attached folder says so once, on its own row: inside it the files
+          // genuinely do live together, so marking every descendant would read as
+          // breakage rather than as information.
+          const mount = mountByDir.get(dir);
+          return (
+            <details
+              key={name}
+              className={(mount ? "explorer-folder mount" : "explorer-folder") + trail}
+              open={holdsCreate || undefined}
+            >
+              <summary onContextMenu={(e) => onDirContext(e, dir)} title={mount?.path}>
+                {mount && mountGlyph}
+                <span className="explorer-name">{name}</span>
+                {mount?.conflicted && (
+                  <span className="explorer-detail">hidden by a real folder</span>
+                )}
+                {addBtn(dir)}
+              </summary>
+              {renderTree(node.folders.get(name)!, dir)}
+            </details>
+          );
+        })}
+        {(node.files.length > 0 || creatingIn === base) && (
+          <ul className={trail ? "trail" : undefined}>
+            {creatingIn === base && createRow(base)}
+            {node.files.map((id) => item(id))}
+          </ul>
+        )}
+      </>
+    );
+  };
 
   const projectSection = (p: string) => (
     <details
