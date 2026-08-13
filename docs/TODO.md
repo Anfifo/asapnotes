@@ -129,7 +129,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
       a short shortcuts primer (Ctrl+K palette, Ctrl+P switcher, the global summon
       hotkey) so it doubles as first-run orientation. Summon with the panel up:
       **auto-create a fresh untitled note** (the stated lean) — one `openRef.current
-  === null → newNote()` check in the show/summon handler, keeping "summon lands in
+=== null → newNote()` check in the show/summon handler, keeping "summon lands in
       a ready-to-type note" an invariant rather than a special case. Startup is
       untouched: something always opens (restored tab / draft / recent note / blank),
       so the panel appears only after a deliberate last-tab close. Implementation
@@ -140,6 +140,27 @@ The AI (or anyone) working on this repo keeps this file current while working:
       considered: the welcome panel as a persistent pseudo-tab — rejected, it
       re-introduces "the tab you can't close", which is the complaint this item
       exists to fix.
+      **Picked and implemented 2026-08-13, gates clean, pending hands-on check.**
+      New `WelcomePanel.tsx` (start actions / top-5 recents merged notes+drafts /
+      shortcuts primer, muted styling in both themes) renders whenever the new
+      `welcome` state is set — a state of its own rather than `open === null`,
+      because null is also the pre-startup instant and the panel must never
+      flash during startup. Every close path that empties the strip lands there
+      (last-tab close, Close all, Close saved, deleting the folder holding the
+      only tabs); summon with the panel up auto-creates a fresh note, as picked.
+      Chrome sweep: preview eye / format toolbar / Format menu hide (the editor
+      clears its own status readout on unmount, so the status bar empties too);
+      the search pill already fell back to "Search"; Ctrl+W already no-ops.
+      Two deviations from the sketch: "associate a virtual folder" is not among
+      the actions — it needs a target project, which the zero-tab state doesn't
+      have — so the target-less "New project…" and "Settings" stand in; and the
+      bulk closes land on the panel too, keeping "zero tabs ⇔ welcome panel" an
+      invariant instead of a special case. Note: an earlier unmerged take on
+      this item exists on the `worktree-welcome-panel` branch (2026-08-12, base
+      five commits stale); this implementation supersedes it and folded in its
+      recents dedupe — the branch and its worktree can be deleted.
+      Pending hands-on: close the last tab, click each action and a recent,
+      summon past the panel, both themes.
 
 ## Today (2026-08-11)
 
@@ -256,6 +277,16 @@ The AI (or anyone) working on this repo keeps this file current while working:
       skip, since a dir full of dated rotating files is generated output by any
       reading. `package.json`/`tsconfig.json` remain visible on purpose — hand-written
       config is arguably content, and hiding it is what per-project rules are for.
+      **Implemented 2026-08-13 as proposed (with the `logs/` skip), gates + tests
+      clean, pending hands-on check.** `SKIP_DIRS` gained `bin`/`obj`/`logs`,
+      `skip_dir` learned the `.egg-info` suffix, and `listed` — the one file gate
+      both walks and the scan counts share — rejects dot-files outright (ids can't
+      express them, so a listed row could only error on open) and skips
+      `package-lock.json` under default rules only, so a project's `!` pattern can
+      still pull a lockfile back in, exactly like a `!`-matched folder still
+      descends past `SKIP_DIRS`. Pending hands-on: refocus with a .NET repo linked
+      and watch the `bin/`/`obj/` artifact rows vanish; `.prettierrc.json` should
+      no longer list.
 - [ ] **Dropdown/popup text size: smaller default + customizable** (2026-08-11) —
       feedback: dropdowns/popups (menus, palette, context menus) read too big. Make
       their text size a user setting, and set the default ~20% smaller than today
@@ -275,6 +306,23 @@ The AI (or anyone) working on this repo keeps this file current while working:
       dual-write. Alternative considered: scale each surface separately (palette-only
       fix now, menus untouched) — cheaper, but the feedback names all three, and one
       token is the difference between a setting and three.
+      **Picked and implemented 2026-08-13, gates clean, pending hands-on check.**
+      `--popup-font-size` (default 0.8rem) now drives menu dropdowns, context
+      menus, palette rows, and the mention dropdown, with their paddings/gaps/
+      min-widths converted to `em` so geometry follows the size. One survey
+      correction discovered on the way: context menus were not at 0.8rem — the
+      menubar's dropdowns inherit it from the menubar, but `.ctx-menu` renders at
+      the pointer outside that scope and sat at the root 16px, so context menus
+      shrink the full ~20% too (their padding values were converted so the
+      default is pixel-identical for the surfaces that were already 0.8rem).
+      Palette section headers and `.menu-detail` scale relative to the token.
+      The setting: Settings → Appearance → "Popup text size" (Small 85% /
+      Default / Large 115%), `appearance.popupScale` in settings.json with the
+      localStorage boot-mirror dual-write; one `style.setProperty` on the root
+      element is the whole apply mechanism. Deliberately left alone: the
+      palette's input (0.95rem) and footer hints — the feedback names row text,
+      not the query box. Pending hands-on: open menu/context menu/palette at
+      each step, check row alignment and hover pills at 85%.
 
 ## Today (2026-08-10)
 
