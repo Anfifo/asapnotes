@@ -37,6 +37,12 @@ pub struct Settings {
     /// The note-type registry. `view` and `icon` are ids into in-tree tables,
     /// so this data can add a format but never a view.
     pub note_types: Vec<NoteType>,
+    /// Personal `.gitignore`-syntax patterns applied to every walk, matched
+    /// against the path inside each project (or the notes root). A project's
+    /// `.asapnotes.json` `files` list is appended after these — one ordered
+    /// list, last match wins, so the project file is the override.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
     /// Where "New virtual folder" creates its backing folders. Absent means
     /// `virtual` in app data. A machine path, so it lives here and never in a
     /// project file.
@@ -51,6 +57,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             projects: BTreeMap::new(),
             note_types: default_note_types(),
+            files: Vec::new(),
             virtual_folders_root: None,
         }
     }
@@ -152,6 +159,20 @@ pub struct NoteType {
     pub color: Option<String>,
     /// Affordance names from the app's closed set; anything else is ignored.
     pub features: Vec<String>,
+    /// Whether the walks show this type uninvited. An unlisted type keeps its
+    /// view, icon and color and stays openable — a `!` pattern (personal or
+    /// per-project) pulls it back in with everything intact. Absent means
+    /// listed, so a hand-edited registry keeps behaving as it always has.
+    #[serde(default = "listed_default", skip_serializing_if = "is_true")]
+    pub listed: bool,
+}
+
+fn listed_default() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 /// The shipped registry. Written into `settings.json` on first launch so it is
@@ -160,8 +181,71 @@ pub struct NoteType {
 ///
 /// One type per icon/color family rather than one catch-all "plain text",
 /// so the explorer can tell a data file from a log from a config — the
-/// extension union is the same either way.
+/// extension union is the same either way. Only the authored-prose types are
+/// `listed` by default: config, data and log files exist beside notes without
+/// being notes, so they stay out of the walks until a pattern opts them in.
 fn default_note_types() -> Vec<NoteType> {
+    let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+    let plain =
+        |id: &str, name: &str, exts: &[&str], icon: &str, color: Option<&str>, listed| NoteType {
+            id: id.into(),
+            name: name.into(),
+            extensions: strings(exts),
+            view: "text".into(),
+            icon: Some(icon.into()),
+            color: color.map(Into::into),
+            features: Vec::new(),
+            listed,
+        };
+    vec![
+        NoteType {
+            id: "markdown".into(),
+            name: "Markdown".into(),
+            extensions: strings(&["md", "markdown"]),
+            view: "markdown".into(),
+            icon: Some("file-text".into()),
+            color: Some("blue".into()),
+            features: strings(&["live-preview", "preview", "mentions", "format", "images"]),
+            listed: true,
+        },
+        plain("text", "Plain text", &["txt", "text"], "file", None, true),
+        plain("json", "JSON", &["json"], "file-json", Some("amber"), false),
+        plain(
+            "yaml",
+            "YAML",
+            &["yaml", "yml"],
+            "file-code",
+            Some("rose"),
+            false,
+        ),
+        plain(
+            "config",
+            "Config",
+            &["toml", "ini", "cfg"],
+            "file-code",
+            Some("purple"),
+            false,
+        ),
+        plain(
+            "csv",
+            "CSV",
+            &["csv"],
+            "file-spreadsheet",
+            Some("green"),
+            false,
+        ),
+        plain("xml", "XML", &["xml"], "file-code", Some("orange"), false),
+        plain("log", "Log", &["log"], "file-terminal", Some("gray"), false),
+        plain("latex", "LaTeX", &["tex"], "file-text", Some("teal"), true),
+    ]
+}
+
+/// The registry as shipped 2026-08-12: nine types, everything listed —
+/// `listed` didn't exist yet, so a file from that era parses to exactly this.
+/// A frozen snapshot like [`v1_note_types`] (literal on purpose — deriving it
+/// from the live defaults would drift the moment they change), kept so `load`
+/// can upgrade untouched defaults without touching a hand-edited registry.
+fn v2_note_types() -> Vec<NoteType> {
     let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
     let plain = |id: &str, name: &str, exts: &[&str], icon: &str, color: Option<&str>| NoteType {
         id: id.into(),
@@ -171,6 +255,7 @@ fn default_note_types() -> Vec<NoteType> {
         icon: Some(icon.into()),
         color: color.map(Into::into),
         features: Vec::new(),
+        listed: true,
     };
     vec![
         NoteType {
@@ -181,6 +266,7 @@ fn default_note_types() -> Vec<NoteType> {
             icon: Some("file-text".into()),
             color: Some("blue".into()),
             features: strings(&["live-preview", "preview", "mentions", "format", "images"]),
+            listed: true,
         },
         plain("text", "Plain text", &["txt", "text"], "file", None),
         plain("json", "JSON", &["json"], "file-json", Some("amber")),
@@ -213,6 +299,7 @@ fn v1_note_types() -> Vec<NoteType> {
             icon: Some("file-text".into()),
             color: None,
             features: strings(&["live-preview", "preview", "mentions", "format", "images"]),
+            listed: true,
         },
         NoteType {
             id: "text".into(),
@@ -225,6 +312,7 @@ fn v1_note_types() -> Vec<NoteType> {
             icon: Some("file".into()),
             color: None,
             features: Vec::new(),
+            listed: true,
         },
     ]
 }
@@ -246,6 +334,14 @@ impl Settings {
     /// this file.
     pub fn is_note(&self, file: &str) -> bool {
         self.type_for(file).is_some()
+    }
+
+    /// Whether a walk shows this file uninvited: its type exists *and* wants
+    /// listing. Everything else about an unlisted type keeps working —
+    /// `is_note` still claims it, so it opens, saves and drafts; only the
+    /// default visibility differs, and patterns can re-include it.
+    pub fn is_listed(&self, file: &str) -> bool {
+        self.type_for(file).is_some_and(|t| t.listed)
     }
 
     /// Registered projects that carry a location of their own (name → folder).
@@ -301,11 +397,13 @@ fn load(app: &AppHandle) -> Result<Loaded, String> {
         let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
         return Ok(match serde_json::from_str::<Settings>(&data) {
             Ok(mut settings) => {
-                // A file still carrying the first shipped registry verbatim is
-                // upgraded to the current one; any hand-edit means the whole
-                // list belongs to the user. A failed write only postpones this
-                // — the in-memory upgrade already happened and will be retried.
-                if settings.note_types == v1_note_types() {
+                // A file still carrying a shipped registry verbatim (either
+                // generation) is upgraded to the current one; any hand-edit
+                // means the whole list belongs to the user. A failed write
+                // only postpones this — the in-memory upgrade already
+                // happened and will be retried.
+                if settings.note_types == v1_note_types() || settings.note_types == v2_note_types()
+                {
                     settings.note_types = default_note_types();
                     let _ = write(&path, &settings);
                 }
@@ -409,4 +507,47 @@ pub fn set_appearance(app: AppHandle, appearance: Appearance) -> Result<(), Stri
         s.appearance = appearance;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unlisted_types_stay_notes() {
+        let s = Settings::default();
+        // Config-ish types: openable, savable — just not shown uninvited.
+        assert!(s.is_note("data.json"));
+        assert!(!s.is_listed("data.json"));
+        assert!(s.is_note("app.toml"));
+        assert!(!s.is_listed("app.toml"));
+        // The authored-prose types list as always.
+        assert!(s.is_listed("note.md"));
+        assert!(s.is_listed("note.txt"));
+        assert!(s.is_listed("paper.tex"));
+        // Unknown extension: not a note at all.
+        assert!(!s.is_note("main.rs"));
+        assert!(!s.is_listed("main.rs"));
+    }
+
+    #[test]
+    fn registry_without_listed_field_parses_as_listed() {
+        // A registry entry written before `listed` existed must keep its old
+        // behavior — absent means listed, so only shipped defaults hide types.
+        let json = r#"{"id":"json","name":"JSON","extensions":["json"],"view":"text"}"#;
+        let t: NoteType = serde_json::from_str(json).expect("parses");
+        assert!(t.listed);
+    }
+
+    #[test]
+    fn v2_era_registry_matches_the_migration_snapshot() {
+        // What `load` sees for an untouched 2026-08-12 settings.json: the
+        // then-shipped registry serialized without `listed`, parsed today.
+        let data = serde_json::to_string(&v2_note_types()).expect("serializes");
+        assert!(!data.contains("listed"), "listed:true must not serialize");
+        let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
+        assert_eq!(parsed, v2_note_types());
+        // And the upgrade is a real change, so migration isn't a no-op.
+        assert_ne!(v2_note_types(), default_note_types());
+    }
 }

@@ -33,6 +33,9 @@ export interface NoteType {
   icon: string | null;
   color: string | null;
   features: string[];
+  /** Whether the walks show this type uninvited; absent means yes. The
+   * backend owns the filtering — carried here so the shape matches the file. */
+  listed?: boolean;
 }
 
 let registry: NoteType[] = [];

@@ -6,6 +6,8 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm as confirmDialog, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ChangesView } from "./Changes";
+import { changedNotes, SeenTarget } from "./changesLedger";
+import { DiffLens } from "./DiffLens";
 import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
@@ -37,6 +39,14 @@ interface OpenNote {
 
 const AUTOSAVE_MS = 500;
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+// The changes lens: one note read with its external edits marked, opened as a
+// read-only tab. The prefix can't collide with a note id — ':' is not a legal
+// filename character here. Only ever one such tab exists at a time.
+const DIFF_PREFIX = "changes:";
+const isDiffTab = (id: string) => id.startsWith(DIFF_PREFIX);
+/** The note a lens tab reads. */
+const diffNoteOf = (id: string) => id.slice(DIFF_PREFIX.length);
 
 const EXPLORER_DEFAULT_W = 224;
 const EXPLORER_MIN_W = 168;
@@ -197,6 +207,10 @@ function App() {
   const [notes, setNotes] = useState<api.FileInfo[]>([]);
   const [drafts, setDrafts] = useState<api.FileInfo[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
+  // Registered projects whose folder is gone from disk. The walks list
+  // nothing there, so without this an unplugged or deleted root reads as an
+  // empty project — the explorer marks the heading instead.
+  const [missingProjects, setMissingProjects] = useState<string[]>([]);
   // Projects carrying a location of their own: name → absolute folder, linked
   // in place. Mirrors the entries of settings.json that have a path; the rest
   // live at `<notes root>/<name>`, which is the only difference between them.
@@ -212,7 +226,10 @@ function App() {
   const [tabs, setTabs] = useState<OpenNote[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("tabs") ?? "[]") as OpenNote[];
-      return Array.isArray(stored) ? stored.filter((t) => t && typeof t.id === "string") : [];
+      // Diff tabs are session-temporary and never restored.
+      return Array.isArray(stored)
+        ? stored.filter((t) => t && typeof t.id === "string" && !isDiffTab(t.id))
+        : [];
     } catch {
       return [];
     }
@@ -537,20 +554,57 @@ function App() {
     [flushDraft, showDoc],
   );
 
+  /** Open a note (or draft) into the editor; false when its file could not be
+   * read. Every activation path funnels through here, so the vanished-file
+   * case fails loud in one place: toast, drop the tab, leave the current doc
+   * standing — never a silently dead row that outlives its file. */
   const openItem = useCallback(
-    async (item: { id: string; isNote: boolean }, draftIds: Set<string>) => {
+    async (item: { id: string; isNote: boolean }, draftIds: Set<string>): Promise<boolean> => {
       await flushDraft();
       const hasDraft = draftIds.has(item.id);
-      // No draft and no saved file (an untouched untitled tab) — nothing on disk to read.
-      const content = hasDraft
-        ? await api.readDraft(item.id)
-        : item.isNote
-          ? await api.readNote(item.id)
-          : "";
+      let content: string;
+      try {
+        // No draft and no saved file (an untouched untitled tab) — nothing on disk to read.
+        content = hasDraft
+          ? await api.readDraft(item.id)
+          : item.isNote
+            ? await api.readNote(item.id)
+            : "";
+      } catch {
+        toast(`Couldn't open "${fileOf(item.id)}" — its file is gone`);
+        setTabs((ts) => ts.filter((t) => t.id !== item.id));
+        return false;
+      }
       showDoc({ id: item.id, name: item.isNote ? item.id : draftName(item.id) }, content, hasDraft);
       editorRef.current?.focus();
+      return true;
     },
-    [flushDraft, showDoc],
+    [flushDraft, showDoc, toast],
+  );
+
+  /** Open the read-only lens tab for one note's recent changes. Not a note:
+   * nothing to load or autosave — it renders straight from the history store.
+   * There is only ever one lens tab: opening another note's changes retargets
+   * the one that's up, so the strip never fills with them. */
+  const openDiffTab = useCallback(
+    async (note: string) => {
+      await flushDraft();
+      const id = `${DIFF_PREFIX}${note}`;
+      const tab = { id, name: null };
+      contentRef.current = "";
+      setOpen(tab);
+      setWelcome(false);
+      setTabs((ts) => {
+        const at = ts.findIndex((t) => isDiffTab(t.id));
+        if (at < 0) return [...ts, tab];
+        return ts[at].id === id ? ts : ts.map((t, i) => (i === at ? tab : t));
+      });
+      setDirty(false);
+      setMode("edit");
+      setPaletteOpen(null);
+      trackMtime(null);
+    },
+    [flushDraft, trackMtime],
   );
 
   /** Location of a project: its registered folder, else a notes-root subfolder. */
@@ -649,10 +703,11 @@ function App() {
   }, []);
 
   /** Follow a Ctrl+Clicked editor target: URLs → browser; paths resolving to
-   * a note → open in-app; other paths → OS default (relative ones resolve
-   * against the open note's directory, like images do). */
+   * a note → open in-app; other paths → OS default. Relative ones resolve
+   * against `from` — the open note's directory, except in the changes lens,
+   * which reads a note that isn't the open one. */
   const openLink = useCallback(
-    (target: string) => {
+    (target: string, from?: string) => {
       void (async () => {
         try {
           if (/^(https?:\/\/|mailto:)/i.test(target)) {
@@ -661,7 +716,7 @@ function App() {
           }
           const abs = /^[a-z]:[\\/]/i.test(target)
             ? target.replace(/\\/g, "/")
-            : resolvePath(noteDirRef.current, target);
+            : resolvePath(from ?? noteDirRef.current, target);
           const id = noteIdOf(abs);
           if (id && isNoteFile(id)) {
             await openItem({ id, isNote: true }, new Set(draftsRef.current.map((d) => d.name)));
@@ -699,7 +754,7 @@ function App() {
   const save = useCallback(
     async (asName?: string) => {
       const cur = openRef.current;
-      if (!cur) return null;
+      if (!cur || isDiffTab(cur.id)) return null;
       cancelAutosave();
       const doc = contentRef.current;
       if (!cur.name && !asName && doc.trim() === "") return null;
@@ -740,7 +795,7 @@ function App() {
   const changeProject = useCallback(
     async (target: string | null) => {
       const cur = openRef.current;
-      if (!cur || target === projectOf(cur.id)) return;
+      if (!cur || isDiffTab(cur.id) || target === projectOf(cur.id)) return;
       const newId = (target ? `${target}/` : "") + fileOf(cur.id);
       if (cur.name) {
         try {
@@ -767,7 +822,8 @@ function App() {
   );
 
   const togglePreview = useCallback(() => {
-    if (!openRef.current || !hasFeature(openRef.current.id, "preview")) return;
+    const cur = openRef.current;
+    if (!cur || isDiffTab(cur.id) || !hasFeature(cur.id, "preview")) return;
     if (modeRef.current === "edit") {
       setInitialDoc(contentRef.current);
       setMode("preview");
@@ -776,12 +832,15 @@ function App() {
     }
   }, []);
 
-  /** Resolve a relative image src against the open note's directory (for live preview). */
-  const resolveImage = useCallback(
-    (src: string) =>
-      /^[a-z][a-z0-9+.-]*:/i.test(src) ? src : convertFileSrc(resolvePath(noteDirRef.current, src)),
+  /** Resolve a relative image src against a note directory (for live preview). */
+  const imageIn = useCallback(
+    (dir: string, src: string) =>
+      /^[a-z][a-z0-9+.-]*:/i.test(src) ? src : convertFileSrc(resolvePath(dir, src)),
     [],
   );
+
+  /** The open note's own images — what the editor and the preview render. */
+  const resolveImage = useCallback((src: string) => imageIn(noteDirRef.current, src), [imageIn]);
 
   /** Note-relative link to a saved asset path (`assets/x.png`). A folder
    * outside the notes root — a linked project's, or a mount's — keeps its own
@@ -806,6 +865,8 @@ function App() {
    * path exists (target on another drive). */
   const mentionLink = useCallback(
     (id: string) => {
+      // Link text is prose, not chrome — the default extension stays out of
+      // it even though the app's surfaces show it.
       const label = fileOf(id).replace(/\.md$/, "");
       const target = relativePath(noteDirRef.current, `${noteDirOf(id)}/${fileOf(id)}`) ?? id;
       // CommonMark: destinations with spaces (or parens) need <> wrapping.
@@ -890,6 +951,26 @@ function App() {
     [applyZoom, toast],
   );
 
+  /** Adopt a project listing: names for every consumer, plus which registered
+   * roots are gone from disk — the explorer says so on their headings. */
+  const applyProjects = useCallback((ps: api.ProjectInfo[]) => {
+    setProjects(ps.map((p) => p.name));
+    setMissingProjects(ps.filter((p) => p.missing).map((p) => p.name));
+  }, []);
+
+  // A notes root on an unreachable drive fails every refresh call on every
+  // focus — report once per distinct message (the settings read has the same
+  // rule); a successful re-list clears it so a recurrence surfaces again.
+  const refreshErrorRef = useRef<string | null>(null);
+  const reportRefreshError = useCallback(
+    (err: unknown) => {
+      const msg = errText(err);
+      if (msg !== refreshErrorRef.current) toast(`Couldn't read your notes — ${msg}`);
+      refreshErrorRef.current = msg;
+    },
+    [toast],
+  );
+
   // Snapshot what changed on disk behind the app's back, then re-read the
   // ledger — the scan is what makes the count honest, and the window slides,
   // so both run together. Best-effort by design: a failing history store
@@ -902,68 +983,124 @@ function App() {
       .catch(() => {});
   }, []);
 
+  // Seen marks: applied optimistically to the summaries (the ledger dims and
+  // the badge drops at once), persisted to the backend's seen ledger, and
+  // journaled so Ctrl+Z can walk marks back one action at a time.
+  const seenUndoRef = useRef<{ items: SeenTarget[]; seen: boolean }[]>([]);
+  const seenRedoRef = useRef<{ items: SeenTarget[]; seen: boolean }[]>([]);
+
+  const applySeen = useCallback(
+    (items: SeenTarget[], seen: boolean) => {
+      const keys = new Set(items.map((i) => `${i.atMs}:${i.note}`));
+      setChanges((cs) => cs.map((c) => (keys.has(`${c.atMs}:${c.note}`) ? { ...c, seen } : c)));
+      void api
+        .setChangesSeen(items, seen)
+        .catch((err: unknown) => toast(`Couldn't save the seen mark — ${errText(err)}`));
+    },
+    [toast],
+  );
+
+  const markSeen = useCallback(
+    (items: SeenTarget[], seen: boolean) => {
+      if (items.length === 0) return;
+      seenUndoRef.current.push({ items, seen });
+      seenRedoRef.current = [];
+      applySeen(items, seen);
+    },
+    [applySeen],
+  );
+
+  /** Walk the last seen-mark back (or forward again); false when the stack is
+   * empty, so the caller can leave the key event alone. */
+  const undoSeen = useCallback(
+    (redo: boolean) => {
+      const from = redo ? seenRedoRef.current : seenUndoRef.current;
+      const to = redo ? seenUndoRef.current : seenRedoRef.current;
+      const batch = from.pop();
+      if (!batch) return false;
+      to.push(batch);
+      applySeen(batch.items, redo ? batch.seen : !batch.seen);
+      return true;
+    },
+    [applySeen],
+  );
+
   // Startup: recover the most recent draft; else open the most recent note;
   // else start on a blank capture.
   useEffect(() => {
     void (async () => {
-      const [ns, ds, ps, ms, cfg, root] = await Promise.all([
-        api.listNotes(false),
-        api.listDrafts(),
-        api.listProjects(),
-        api.listMounts(),
-        api.getSettings(),
-        api.notesRootPath(),
-      ]);
-      setNotes(ns);
-      setDrafts(ds);
-      setProjects(ps);
-      setMounts(ms);
-      applySettings(cfg);
-      setRootPath(root);
-      // Projects living outside the notes root can be big — walk them after
-      // the first paint.
-      void api.listNotes().then(setNotes);
-      // Same reasoning for the changes scan: it reads only what changed, but
-      // the first paint shouldn't wait for even that.
-      refreshChanges();
-      // Restored tabs win: reopen the last active one (content loads here, the
-      // rest stay lazy). A tab whose note vanished is dropped and we fall back.
-      const restored = tabsRef.current;
-      if (restored.length > 0) {
-        const activeId = localStorage.getItem("activeTab");
-        const target = restored.find((t) => t.id === activeId) ?? restored[0];
-        try {
-          const hasDraft = ds.some((d) => d.name === target.id);
-          const content = hasDraft ? await api.readDraft(target.id) : await api.readNote(target.id);
-          showDoc(
-            { id: target.id, name: hasDraft ? draftName(target.id) : target.id },
-            content,
-            hasDraft,
-          );
-          return;
-        } catch {
-          setTabs((ts) => ts.filter((t) => t.id !== target.id));
+      try {
+        const [ns, ds, ps, ms, cfg, root] = await Promise.all([
+          api.listNotes(false),
+          api.listDrafts(),
+          api.listProjects(),
+          api.listMounts(),
+          api.getSettings(),
+          api.notesRootPath(),
+        ]);
+        setNotes(ns);
+        setDrafts(ds);
+        applyProjects(ps);
+        setMounts(ms);
+        applySettings(cfg);
+        setRootPath(root);
+        // Projects living outside the notes root can be big — walk them after
+        // the first paint. A failure here already failed the shallow list.
+        void api
+          .listNotes()
+          .then(setNotes)
+          .catch(() => {});
+        // Same reasoning for the changes scan: it reads only what changed, but
+        // the first paint shouldn't wait for even that.
+        refreshChanges();
+        // Restored tabs win: reopen the last active one (content loads here, the
+        // rest stay lazy). A tab whose note vanished is dropped and we fall back.
+        const restored = tabsRef.current;
+        if (restored.length > 0) {
+          const activeId = localStorage.getItem("activeTab");
+          const target = restored.find((t) => t.id === activeId) ?? restored[0];
+          try {
+            const hasDraft = ds.some((d) => d.name === target.id);
+            const content = hasDraft
+              ? await api.readDraft(target.id)
+              : await api.readNote(target.id);
+            showDoc(
+              { id: target.id, name: hasDraft ? draftName(target.id) : target.id },
+              content,
+              hasDraft,
+            );
+            return;
+          } catch {
+            setTabs((ts) => ts.filter((t) => t.id !== target.id));
+          }
         }
-      }
-      if (ds.length > 0) {
-        const draft = ds[0];
-        const content = await api.readDraft(draft.name);
-        showDoc({ id: draft.name, name: draftName(draft.name) }, content, true);
-      } else if (ns.length > 0) {
-        const content = await api.readNote(ns[0].name);
-        showDoc({ id: ns[0].name, name: ns[0].name }, content, false);
-      } else {
+        if (ds.length > 0) {
+          const draft = ds[0];
+          const content = await api.readDraft(draft.name);
+          showDoc({ id: draft.name, name: draftName(draft.name) }, content, true);
+        } else if (ns.length > 0) {
+          const content = await api.readNote(ns[0].name);
+          showDoc({ id: ns[0].name, name: ns[0].name }, content, false);
+        } else {
+          showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
+        }
+      } catch (err) {
+        // A notes root on an unreachable drive fails the first listing: name
+        // the problem and land on a blank capture — never a forever-blank
+        // window. Nothing here needs the root until the first save.
+        toast(`Couldn't load your notes — ${errText(err)}`);
         showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
       }
     })();
-  }, [showDoc, applySettings, refreshChanges]);
+  }, [showDoc, applySettings, applyProjects, refreshChanges, toast]);
 
-  // Tabs (and which one is active) survive restarts.
+  // Tabs (and which one is active) survive restarts — diff tabs excepted,
+  // they show a window that will have moved on by the next boot.
   useEffect(() => {
-    localStorage.setItem("tabs", JSON.stringify(tabs));
+    localStorage.setItem("tabs", JSON.stringify(tabs.filter((t) => !isDiffTab(t.id))));
   }, [tabs]);
   useEffect(() => {
-    if (open) localStorage.setItem("activeTab", open.id);
+    if (open && !isDiffTab(open.id)) localStorage.setItem("activeTab", open.id);
   }, [open]);
 
   // Tabs shrink to fit rather than scroll; when even minimum widths overflow,
@@ -1008,10 +1145,10 @@ function App() {
       api.getSettings(),
     ]);
     setNotes(ns);
-    setProjects(ps);
+    applyProjects(ps);
     setMounts(ms);
     applySettings(cfg);
-  }, [applySettings]);
+  }, [applySettings, applyProjects]);
 
   const scanForProjects = useCallback(async () => {
     const dir = await openFolderDialog({ directory: true, title: "Scan a folder for projects" });
@@ -1086,7 +1223,7 @@ function App() {
     } else if (e.ctrlKey && e.key === "Tab") {
       e.preventDefault();
       cycleTab(e.shiftKey);
-    } else if (mod && key === "k") {
+    } else if ((mod && key === "k") || (mod && e.shiftKey && key === "p")) {
       e.preventDefault();
       setPaletteOpen((o) => (o === "commands" ? null : "commands"));
       if (paletteOpen === "commands") editorRef.current?.focus();
@@ -1112,6 +1249,14 @@ function App() {
     } else if (mod && key === "0") {
       e.preventDefault();
       setZoom(1);
+    } else if (mod && (key === "z" || key === "y")) {
+      // Seen-mark undo/redo — only when text editing doesn't own the key
+      // (CodeMirror and inputs keep their own history), and only while there
+      // is a mark to walk. Otherwise the key falls through untouched.
+      const t = e.target as Element;
+      if (!t.closest(".cm-editor") && !t.closest("input, textarea")) {
+        if (undoSeen(key === "y" || e.shiftKey)) e.preventDefault();
+      }
     } else if (e.key === "Escape") {
       if (document.querySelector(".menu-drop")) {
         // An open menubar dropdown or context menu owns Esc.
@@ -1187,11 +1332,19 @@ function App() {
   // the app runs works, with no watcher and no idle cost.
   useEffect(() => {
     const onFocus = () => {
-      void api.listNotes().then(setNotes);
-      void api.listDrafts().then(setDrafts);
-      // Mounts come back from the backend rather than from the settings
-      // document, because whether one is conflicted is a filesystem question.
-      void api.listMounts().then(setMounts);
+      void api
+        .listNotes()
+        .then((ns) => {
+          refreshErrorRef.current = null;
+          setNotes(ns);
+        })
+        .catch(reportRefreshError);
+      void api.listDrafts().then(setDrafts).catch(reportRefreshError);
+      // Projects and mounts come back from the backend rather than from the
+      // settings document, because whether one is conflicted or missing is a
+      // filesystem question.
+      void api.listProjects().then(applyProjects).catch(reportRefreshError);
+      void api.listMounts().then(setMounts).catch(reportRefreshError);
       // The same signal catches what other tools wrote to the notes while the
       // app wasn't looking — this is what fills the recent-changes view.
       refreshChanges();
@@ -1201,15 +1354,31 @@ function App() {
         .catch((err: unknown) => toast(`Couldn't read settings — ${errText(err)}`));
       // A broken .asapnotes.json falls back to default rules in the walks;
       // this is where it becomes visible instead of reading as missing notes.
-      void api.projectConfigErrors().then((errs) => {
-        for (const e of errs) if (!configErrorsRef.current.includes(e)) toast(e);
-        configErrorsRef.current = errs;
-      });
+      void api
+        .projectConfigErrors()
+        .then((errs) => {
+          for (const e of errs) if (!configErrorsRef.current.includes(e)) toast(e);
+          configErrorsRef.current = errs;
+        })
+        .catch(reportRefreshError);
       const name = openRef.current?.name;
       if (!name) return;
       void (async () => {
         const mtime = await api.noteMtime(name).catch(() => null);
-        if (mtime === null || openRef.current?.name !== name) return;
+        const cur = openRef.current;
+        if (!cur || cur.name !== name) return;
+        if (mtime === null) {
+          // The file vanished from disk, and a clean buffer has no draft —
+          // the buffer is the only copy left. Dirty + draft re-arm the
+          // close-confirm and draft safety nets; Ctrl+S recreates the file,
+          // since the save guard reads a missing file as no conflict.
+          if (!dirtyRef.current) {
+            setDirty(true);
+            await api.writeDraft(cur.id, contentRef.current);
+            upsertDraft(cur.id);
+          }
+          return;
+        }
         if (openMtimeRef.current === null) {
           openMtimeRef.current = mtime; // adopt — no reference point yet
         } else if (mtime !== openMtimeRef.current && !dirtyRef.current) {
@@ -1221,11 +1390,11 @@ function App() {
           openMtimeRef.current = mtime;
         }
         // Dirty + changed: leave the stale mtime so the save guard fires.
-      })();
+      })().catch((err: unknown) => toast(`Couldn't re-check the open note — ${errText(err)}`));
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [applySettings, toast, refreshChanges]);
+  }, [applySettings, applyProjects, reportRefreshError, toast, refreshChanges]);
 
   // `summoned` carries the hotkey-press epoch ms from Rust; the next animation
   // frame approximates when the shown window actually painted.
@@ -1251,12 +1420,12 @@ function App() {
   // `@`-mention candidates: saved notes, minus the one being edited.
   const mentionItems = notes
     .filter((n) => n.name !== open?.name)
-    .map((n) => ({ id: n.name, label: n.name.replace(/\.md$/, "") }));
+    .map((n) => ({ id: n.name, label: n.name }));
   const noteEntries: NoteEntry[] = [
     ...notes.map((n) => ({
       kind: "note" as const,
       id: n.name,
-      label: n.name.replace(/\.md$/, ""),
+      label: n.name,
       detail: draftIds.has(n.name) ? "unsaved edits" : undefined,
       isNote: true,
     })),
@@ -1265,7 +1434,7 @@ function App() {
       .map((d) => ({
         kind: "note" as const,
         id: d.name,
-        label: d.name.replace(/\.md$/, ""),
+        label: d.name,
         detail: "draft",
         isNote: false,
       })),
@@ -1274,16 +1443,19 @@ function App() {
   // Affordances the open note's type declares. Nothing open is two states:
   // the pre-startup instant keeps the chrome (something markdown is about to
   // open, and hiding it would flash), the welcome panel drops it.
-  const canPreview = open ? hasFeature(open.id, "preview") : !welcome;
-  const canFormat = open ? hasFeature(open.id, "format") : !welcome;
+  const diffOpen = open !== null && isDiffTab(open.id);
+  const canPreview = open ? !diffOpen && hasFeature(open.id, "preview") : !welcome;
+  const canFormat = open ? !diffOpen && hasFeature(open.id, "format") : !welcome;
   // The open note's real directory (for resolving relative image links).
-  const currentProject = open ? projectOf(open.id) : null;
-  const noteDir = open ? noteDirOf(open.id) : rootPath;
+  const currentProject = open && !diffOpen ? projectOf(open.id) : null;
+  // A projectless open note hoists the loose files as the explorer's top pane.
+  const looseCurrent = open !== null && !diffOpen && !currentProject;
+  const noteDir = open && !diffOpen ? noteDirOf(open.id) : rootPath;
   noteDirRef.current = noteDir;
 
   const startRename = () => {
-    if (!open) return;
-    setRenameValue(open.name ? fileOf(open.name).replace(/\.md$/, "") : "");
+    if (!open || isDiffTab(open.id)) return;
+    setRenameValue(open.name ? fileOf(open.name) : "");
     setRenaming(true);
   };
 
@@ -1537,6 +1709,20 @@ function App() {
     if (!explorerDocked) setExplorerOpen(false);
   };
 
+  /** The changed notes as the ledger orders them — the lens steps through
+   * this sequence when one note's changes run out. */
+  const changedOrder = changedNotes(changes);
+
+  /** Ledger row → that note's lens; "Read through" (null) starts at the top of
+   * the ledger. Same floating-panel etiquette as opening a file: a floating
+   * explorer closes behind it. */
+  const openChangesLens = (note: string | null) => {
+    const target = note ?? changedOrder[0];
+    if (!target) return;
+    void openDiffTab(target);
+    if (!explorerDocked) setExplorerOpen(false);
+  };
+
   /** Open the note a search hit belongs to and jump to its line. Unlike the
    * file tree, a floating panel stays open — clicking through several results
    * in a row is the whole point of the view. */
@@ -1549,8 +1735,12 @@ function App() {
     void openItem({ id: note, isNote: true }, draftIds);
   };
 
-  /** Activate a tab — reload from draft/file so its name self-corrects. */
-  const openTabItem = (id: string) => openItem({ id, isNote: noteNames.has(id) }, draftIds);
+  /** Activate a tab — reload from draft/file so its name self-corrects.
+   * False when the tab's file is gone (openItem toasted and dropped it). */
+  const openTabItem = (id: string): Promise<boolean> =>
+    isDiffTab(id)
+      ? openDiffTab(diffNoteOf(id)).then(() => true)
+      : openItem({ id, isNote: noteNames.has(id) }, draftIds);
 
   /** Enter the zero-tab state: flush any pending draft, drop the editor
    * surface, show the welcome panel. Reached only by closes that empty the
@@ -1566,6 +1756,20 @@ function App() {
     trackMtime(null);
   };
 
+  /** Activate the survivor nearest `idx`, walking on when a tab's file is
+   * gone (openTabItem toasts and drops it), down to the welcome panel when
+   * none can open — the strip must never show a closed tab as active with no
+   * way to Ctrl+W out of it. */
+  const handOff = async (rest: OpenNote[], idx: number) => {
+    const left = [...rest];
+    while (left.length > 0) {
+      const i = Math.min(idx, left.length - 1);
+      if (await openTabItem(left[i].id)) return;
+      left.splice(i, 1);
+    }
+    showWelcome();
+  };
+
   /** Drop tabs; when the active one goes, activate its neighbor (or the
    * welcome panel when it was the last). Unsaved edits stay behind as a draft
    * — the asking flavor is requestCloseTab. Takes a list so a just-saved tab
@@ -1579,17 +1783,42 @@ function App() {
     const rest = cur.filter((t) => !ids.includes(t.id));
     setTabs(rest);
     if (openRef.current && ids.includes(openRef.current.id)) {
-      if (rest.length > 0) void openTabItem(rest[Math.min(idx, rest.length - 1)].id);
-      else showWelcome();
+      void handOff(rest, idx);
     }
   };
   const closeTab = (id: string) => closeTabs([id]);
+
+  /** The lens belongs to the changes flow, not to the tab strip: it goes when
+   * that flow is left — the explorer switching views, Esc, or the lens handing
+   * over to the real note. */
+  const closeLens = () => {
+    const ids = tabsRef.current.filter((t) => isDiffTab(t.id)).map((t) => t.id);
+    if (ids.length > 0) closeTabs(ids);
+  };
+
+  const changeExplorerView = (view: "files" | "search" | "changes") => {
+    setExplorerView(view);
+    if (view !== "changes") closeLens();
+  };
+
+  /** The lens hands over to the note it was reading: open it (at the change on
+   * screen), then drop the lens tab — by then it is a background tab, so this
+   * can't run the close-and-hand-off dance. */
+  const openNoteFromLens = (note: string, line?: number) => {
+    if (line !== undefined) pendingLine.current = line;
+    void openItem({ id: note, isNote: true }, draftIds).then(closeLens);
+  };
 
   /** Close a tab, stopping to ask when its content would otherwise live on
    * only as a shadow draft: Save / Discard / Cancel. Dirty buffer means ask
    * when the tab is active; a draft means ask when it's in the background.
    * A never-typed untitled tab closes silently and its empty draft goes too. */
   const requestCloseTab = (id: string) => {
+    // A diff tab holds no content of its own — nothing to save or discard.
+    if (isDiffTab(id)) {
+      closeTab(id);
+      return;
+    }
     if (openRef.current?.id === id) {
       if (openRef.current.name === null && contentRef.current.trim() === "") {
         cancelAutosave();
@@ -1613,7 +1842,9 @@ function App() {
   const closeAskSave = async (id: string) => {
     setCloseAsk(null);
     try {
-      if (openRef.current?.id !== id) await openTabItem(id);
+      // A background tab that failed to activate (file and draft gone) was
+      // dropped by openTabItem — saving now would save the wrong note.
+      if (openRef.current?.id !== id && !(await openTabItem(id))) return;
       const saved = await save();
       if (saved) closeTabs([id, saved]);
     } catch (err) {
@@ -1648,8 +1879,9 @@ function App() {
   };
 
   const closeOtherTabs = (id: string) => {
-    setTabs((ts) => ts.filter((t) => t.id === id));
-    if (openRef.current?.id !== id) void openTabItem(id);
+    const keep = tabsRef.current.filter((t) => t.id === id);
+    setTabs(keep);
+    if (openRef.current?.id !== id) void handOff(keep, 0);
   };
 
   const closeAllTabs = () => {
@@ -1662,10 +1894,7 @@ function App() {
     const cur = openRef.current;
     const keep = tabs.filter((t) => draftIds.has(t.id) || (cur?.id === t.id && dirty));
     setTabs(keep);
-    if (cur && !keep.some((t) => t.id === cur.id)) {
-      if (keep.length > 0) void openTabItem(keep[0].id);
-      else showWelcome();
-    }
+    if (cur && !keep.some((t) => t.id === cur.id)) void handOff(keep, 0);
   };
 
   /** Recycle-bin delete (after a native confirm); the note's draft and open
@@ -1693,7 +1922,7 @@ function App() {
    * underneath it, like every other deletion). */
   const discardDraft = async (id: string) => {
     const ok = await confirmDialog(
-      `Discard draft "${fileOf(id).replace(/\.md$/, "")}"? Its content is not saved anywhere.`,
+      `Discard draft "${fileOf(id)}"? Its content is not saved anywhere.`,
       { title: "Discard draft", kind: "warning" },
     );
     if (!ok) return;
@@ -1711,10 +1940,7 @@ function App() {
     if (cur && inside(cur.id)) cancelAutosave();
     const keep = tabs.filter((t) => !inside(t.id));
     setTabs(keep);
-    if (cur && inside(cur.id)) {
-      if (keep.length > 0) void openTabItem(keep[0].id);
-      else showWelcome();
-    }
+    if (cur && inside(cur.id)) void handOff(keep, 0);
     setNewFolders((ds) => ds.filter((d) => d !== dir && !inside(d)));
     setNotes(await api.listNotes());
     setDrafts(await api.listDrafts());
@@ -1770,8 +1996,8 @@ function App() {
 
   /** Rename from the explorer: open the note, then edit its name in the tab. */
   const renameFromExplorer = async (id: string) => {
-    await openItem({ id, isNote: true }, draftIds);
-    setRenameValue(fileOf(id).replace(/\.md$/, ""));
+    if (!(await openItem({ id, isNote: true }, draftIds))) return;
+    setRenameValue(fileOf(id));
     setRenaming(true);
   };
 
@@ -1780,7 +2006,11 @@ function App() {
     setExplorerView("files");
     // Creation targeting the Notes panel reopens it, the way creation into a
     // collapsed project expands it — the input has to be visible to be used.
-    if (hideNotes && dir.split("/")[0] !== currentProject) setHideNotes(false);
+    // Root creation while the loose pane is hoisted lands there instead, so
+    // the Notes panel can stay closed.
+    if (hideNotes && !(dir === "" && looseCurrent) && dir.split("/")[0] !== currentProject) {
+      setHideNotes(false);
+    }
     setExplorerCreateKind(kind);
     setExplorerCreate(dir);
   };
@@ -2009,7 +2239,7 @@ function App() {
       .slice(0, 5)
       .map(([id]) => ({
         id,
-        label: fileOf(id).replace(/\.md$/, ""),
+        label: fileOf(id),
         detail: projectOf(id) ?? (noteNames.has(id) ? undefined : "draft"),
         isNote: noteNames.has(id),
       }));
@@ -2020,7 +2250,13 @@ function App() {
       <MenuBar
         menus={menus}
         searchLabel={
-          open ? (open.name ? fileOf(open.name).replace(/\.md$/, "") : "Untitled") : "Search"
+          open
+            ? diffOpen
+              ? `± ${fileOf(diffNoteOf(open.id))}`
+              : open.name
+                ? fileOf(open.name)
+                : "Untitled"
+            : "Search"
         }
         onSearch={() => setPaletteOpen("commands")}
         onHide={hideWindow}
@@ -2042,8 +2278,10 @@ function App() {
             notes={notes}
             drafts={drafts}
             projects={projects}
+            missingProjects={missingProjects}
             mounts={mounts}
             currentProject={currentProject}
+            looseCurrent={looseCurrent}
             openId={open?.id ?? null}
             onSelect={openFromExplorer}
             onContext={explorerContextMenu}
@@ -2062,7 +2300,7 @@ function App() {
             onCreateCancel={() => setExplorerCreate(null)}
             newFolders={newFolders}
             view={explorerView}
-            onViewChange={setExplorerView}
+            onViewChange={changeExplorerView}
             searchSlot={
               <SearchView
                 focusToken={searchFocus}
@@ -2073,11 +2311,13 @@ function App() {
             changesSlot={
               <ChangesView
                 summaries={changes}
-                onOpenLine={openHit}
-                onError={(msg) => toast(`Recent changes — ${msg}`)}
+                onOpenLens={openChangesLens}
+                onOpenNote={(note) => openFromExplorer(note, true)}
+                onMarkSeen={markSeen}
+                onMenu={openContextMenu}
               />
             }
-            changesCount={new Set(changes.map((c) => c.note)).size}
+            changesCount={new Set(changes.filter((c) => !c.seen).map((c) => c.note)).size}
             pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
             onCollapse={() => setExplorerOpen(false)}
@@ -2119,11 +2359,16 @@ function App() {
             <div className="tabbar" ref={tabbarRef}>
               {tabs.map((t) => {
                 const active = open?.id === t.id;
+                const diffNote = isDiffTab(t.id) ? diffNoteOf(t.id) : null;
                 return (
                   <div
                     key={t.id}
                     className={active ? "tab active" : "tab"}
-                    title={t.name ?? "Unsaved note — double-click to name"}
+                    title={
+                      isDiffTab(t.id)
+                        ? `Recent changes — ${diffNote}`
+                        : (t.name ?? "Unsaved note — double-click to name")
+                    }
                     onClick={() => {
                       if (!active) void openTabItem(t.id);
                     }}
@@ -2149,7 +2394,16 @@ function App() {
                       />
                     ) : (
                       <span className="tab-label">
-                        {t.name ? fileOf(t.name).replace(/\.md$/, "") : "Untitled"}
+                        {isDiffTab(t.id) ? (
+                          <>
+                            <span className="tab-diff">±</span>
+                            {diffNote && fileOf(diffNote)}
+                          </>
+                        ) : t.name ? (
+                          fileOf(t.name)
+                        ) : (
+                          "Untitled"
+                        )}
                       </span>
                     )}
                     {(active ? dirty : draftIds.has(t.id)) && (
@@ -2215,10 +2469,28 @@ function App() {
           <div
             className="content-panel"
             onContextMenu={(e) => {
-              if (mode === "edit") openContextMenu(e, editEntries);
+              // The Edit menu talks to the editor, which a diff tab doesn't have.
+              if (mode === "edit" && !diffOpen) openContextMenu(e, editEntries);
             }}
           >
-            {open && (
+            {open && diffOpen && (
+              <DiffLens
+                note={diffNoteOf(open.id)}
+                order={changedOrder}
+                events={changes
+                  .filter((c) => c.note === diffNoteOf(open.id))
+                  .map(({ note, atMs }) => ({ note, atMs }))}
+                seen={changes.filter((c) => c.note === diffNoteOf(open.id)).every((c) => c.seen)}
+                resolveImage={(src) => imageIn(noteDirOf(diffNoteOf(open.id)), src)}
+                onOpenLens={(note) => void openDiffTab(note)}
+                onOpenNote={openNoteFromLens}
+                onOpenLink={(target) => openLink(target, noteDirOf(diffNoteOf(open.id)))}
+                onMarkSeen={markSeen}
+                onClose={closeLens}
+                onError={(msg) => toast(`Recent changes — ${msg}`)}
+              />
+            )}
+            {open && !diffOpen && (
               <Editor
                 ref={editorRef}
                 docKey={docKey}
@@ -2304,7 +2576,7 @@ function App() {
       )}
       {closeAskTab && (
         <CloseConfirm
-          label={closeAskTab.name ? fileOf(closeAskTab.name).replace(/\.md$/, "") : "Untitled note"}
+          label={closeAskTab.name ? fileOf(closeAskTab.name) : "Untitled note"}
           untitled={closeAskTab.name === null}
           onSave={() => void closeAskSave(closeAskTab.id)}
           onDiscard={() => void closeAskDiscard(closeAskTab.id)}

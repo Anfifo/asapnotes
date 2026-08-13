@@ -192,6 +192,132 @@ The AI (or anyone) working on this repo keeps this file current while working:
       each of the three states in both themes, drill-in on a note an agent
       really edited, a deletion pill expand, `↗` jump landing right, and the
       empty state after seven quiet days.
+      _2026-08-13 follow-up (requested + designed via two picked options,
+      implemented, gates + tests clean, pending hands-on):_ **(a) the diff
+      opens as a document, not inside the panel** — clicking a ledger row (or
+      "Read through ›") opens a read-only diff tab in the editor area
+      (`changes:<note id>`, or bare `changes:` for the all-notes stream; `:`
+      can't occur in a note id, so the prefix can't collide). The panel is now
+      the ledger alone — the in-panel drill-in/stream states are gone, their
+      hunk rendering moved into the new `DiffDoc` (same `chg-*` idiom, sticky
+      totals strip, readable column). Diff tabs are real tabs (strip, Ctrl+W,
+      Ctrl+Tab, middle-click) marked `±` in amber, but never persisted across
+      restarts and guarded out of every note-only path (save, rename,
+      move-to-project, preview, drafts, close-confirm, Edit context menu).
+      **(b) seen marks** — a `seen.json` ledger beside the snapshots ((note,
+      timestamp) pairs; new command `set_changes_seen`; pruned with the same
+      age cutoff), summaries carry a `seen` flag, and the `±` badge counts
+      unseen notes only. Marking: hover `✓` on a ledger row, right-click menus
+      on rows / day headers / panel body / diff-doc note headers (mark row,
+      day, all, note as seen or unseen), and a strip toggle on the diff doc.
+      Seen rows dim in place (opacity + persistent green check) — history
+      stays browsable, chosen over hide/collapse. **Ctrl+Z walks marks back**
+      (Ctrl+Shift+Z / Ctrl+Y forward): an app-level undo journal of mark
+      batches, optimistic UI + backend write, active only when CodeMirror or
+      an input doesn't own the key — a row-toggle marks only the events it
+      actually flipped, so undo restores exactly one click's worth. Pending
+      hands-on: open-diff-from-row, the all-notes stream tab, tab behaviors
+      (close/cycle/restart drops it), mark/unmark at each menu level, Ctrl+Z
+      in panel vs editor, badge arithmetic, both themes.
+- [ ] **Rework the recent-changes diff view: rendered markdown with changes
+      highlighted** (2026-08-13) — requested, builds on the recent-changes item
+      above. Opening a note's changes should show the note as it normally reads —
+      the markdown formatting still applied, the same file, fully readable — not
+      a raw diff document; the changes are marked on top of that rendering
+      (added text highlighted in green), so the eye finds what's different
+      without losing the note itself. Also requested: while the diff is on
+      screen, a small popup at the bottom offering "jump to the next
+      difference", so walking through a long note's changes doesn't mean
+      scrolling and hunting. The rendered view should also **auto-close** —
+      opening another note's changes or leaving the changes flow closes it,
+      rather than diff tabs piling up in the strip. Not designed yet — open
+      points: how deletions appear in a rendered view (the pill idiom may
+      carry over), how highlights map onto formatted output when the change
+      is inside markup (a heading, a list item, a code fence), and whether
+      this replaces the current hunk view or sits beside it as the default
+      lens.
+      _Added 2026-08-13, same rework:_ the ledger panel almost always crops
+      the file name — the name and its project share one row line, so the
+      project label eats the width. Wanted: group the ledger by project as
+      sections (a small project heading, file rows beneath it), so the file
+      name gets the full line to itself.
+      _2026-08-14 design pass (candidate sheet published, five decisions,
+      all picked — no code at the time):_ the surface question was the fork,
+      because the app has two "reads like a note" surfaces. **(A) rendered
+      preview** (the eye's markdown-it output) marks whole blocks — a
+      reworded clause washes its paragraph, and with no line numbers the
+      jump lands on an element; **(B) the editor read-only** (live preview:
+      sized headings, real bullets, images, markers dimmed) marks exact
+      lines and gets scroll-to-line, links and images for free; **(C) B with
+      word-level marks** — a whisper of wash on the line, the changed words
+      carrying the color, from the diff crate's inline-change API.
+      **Picked: C** (with the note that word marks must not introduce stray
+      spacing — the sheet's own C tile had a whitespace bug that read as
+      indentation). Other four: the hunk document is **replaced**, not kept
+      behind a toggle; the ledger groups as **project sections with a day
+      stamp on the row** (over day-groups-with-project-subheads, and over
+      two-line rows); the lens is **one reusable ± tab**, not an overlay;
+      deletions stay the **pill** expanding to muted rose, and the jump
+      control is the **named pill with keys** (`Change 2 of 7`, F8 /
+      Shift+F8), with a scrollbar tick map left as a later add. Sub-calls:
+      baseline is the **window's oldest snapshot** (not "since last seen" —
+      the document must not move under a mark click), and the lens is
+      **read-only** in v1 (the marks stand against a snapshot).
+      **Implemented 2026-08-14 as picked, all gates + tests clean (32),
+      verified end-to-end live.** Backend: one new command `note_lens`
+      (history.rs) returning the note as of the last external edit in the
+      window, the added lines with **UTF-16** column ranges of the changed
+      words (byte offsets would land a mark early on any line with an em
+      dash — there is a test), the removed runs anchored after the surviving
+      line above them, and `ownEditsSince` for when the user has saved since.
+      Word ranges come from `similar`'s inline-change API (new `inline`
+      feature): a wholly new line comes through unemphasized, which is
+      exactly the "no ranges = mark the whole line" case. Retired with the
+      hunk document: `change_details`, `hunks`, `DiffLine`, `Hunk`, and
+      `external_pairs`' now-unused `only` parameter. Frontend: new
+      `DiffLens.tsx` — a read-only, non-focusable CodeMirror carrying the
+      same `livePreview` + markdown extensions the editor mounts, with the
+      marks as line/mark/block-widget decorations (the three primitives
+      livePreview already uses); deletion pills are widgets that expand in
+      place through a state effect; the jump control walks each run of added
+      or removed lines and, past either end, steps to the next changed note
+      — so "Read through ›" needs no mode of its own. Opening lands on the
+      first change (`y: "nearest"`, so an already-visible one doesn't
+      scroll). `changesLedger.ts` now owns the ledger shape (project
+      sections, relative stamp, the note order the lens steps through) since
+      both the panel and App read it. Lifecycle: `openDiffTab` retargets the
+      one ± tab instead of appending, and the lens closes when the explorer
+      leaves the changes view, on Esc, or when it hands over to the real
+      note ("Open note ›" opens it at the change on screen). Live check
+      (second instance driven over the webview devtools protocol, scratch
+      note edited outside the app): `+3 −3` with the single word "red"
+      marked on the reworded line, the brand-new bullet marked whole, two
+      deletion pills expanding and collapsing, the ledger showing three
+      project sections with stamps, the ± tab retargeting rather than
+      stacking as the jump crossed into the next note, and the tab going
+      when the explorer switched back to Files. Pending hands-on: both
+      themes, a long note's jump walk, images/links inside the lens, and how
+      the whisper-wash reads next to the word marks at real reading size.
+- [ ] **Projectless note hoists the loose files as a top pane** (2026-08-13) —
+      requested: a note in no project should get the same explorer treatment a
+      project note gets — the top pane shows all projectless files (saved and
+      drafts) instead of the column starting at Recent. Picked over hoisting
+      inside the Notes panel (no split-drag, no consistent header there).
+      **Implemented 2026-08-13, gates clean, pending hands-on.** New
+      `looseCurrent` state (open note exists, isn't a diff tab, has no
+      project) drives a pseudo-project pane titled "No project" (the project
+      selector's wording): all loose notes + loose drafts merged one-entry-
+      per-name, newest first like Recent; same pane surface, split-drag
+      share, `+` button, and root context menu as a real project. While
+      hoisted, the loose list leaves the Notes panel (the same exclusion the
+      current project gets), Recent keeps its normal collapsed spot below,
+      and root-targeted creation (`New note` on the bar, "New note here" on
+      the root) puts its inline input in the hoisted pane without reopening a
+      closed Notes panel. Pending hands-on: switch tabs project↔loose↔diff
+      and watch the pane swap, drafts (untitled + named) listed and opening,
+      create row landing in the pane, split drag + hidden-Notes fill, both
+      themes.
+- [ ] **Audit: things removed outside the app — notes, folders, roots**
       (2026-08-13) — requested: audit what happens when a note, folder, project root,
       or a virtual folder's backing directory is removed outside the app (another
       tool, a `git clean`, an unplugged drive) — nothing notifies us. Cases to walk:
@@ -201,6 +327,153 @@ The AI (or anyone) working on this repo keeps this file current while working:
       For each: does it error sanely (toast, tab closes, entry drops) or misbehave
       (silent zombie rows, resurrection-on-save, crash)? Fix list comes out of the
       audit — this item is the check.
+      _2026-08-13 audit run (code walk over notes.rs / App.tsx / Explorer.tsx /
+      history.rs; every backend claim verified live against a driven second
+      instance on the real corpus — a scratch note created, hard-deleted outside
+      the app, then each command exercised. Findings below, fix list at the end,
+      awaiting a pick — no fixes coded):_
+      **(1) Open tab whose file is gone.** Half is deliberate and works: the
+      focus re-sync sees mtime `null` and leaves the buffer alone, the save
+      guard treats `null` as no-conflict, so Ctrl+S silently recreates the file
+      (verified live) — the documented "named draft keeps its name" design.
+      The other half misbehaves: **activating** any tab whose file is gone (no
+      draft) is a silent no-op — `openItem`'s `readNote` rejection is uncaught
+      in every activation path (tab click, Ctrl+Tab, palette, explorer row,
+      and `closeTabs`' neighbor handoff), so no toast, and the tab stays;
+      tabs persist across restarts, so the row fails silently forever until
+      manually closed. Worse: closing the active tab when its **neighbor's**
+      file is gone leaves a zombie — the tab is removed, the handoff fails
+      silently, `open` still points at the closed tab, the editor keeps
+      showing it with no active tab in the strip, and Ctrl+W no-ops from
+      there. Also: since a clean buffer has no draft, the vanished note's
+      content lives only in that buffer — switching away or closing loses it
+      with no ask. **Delete** on a vanished note errors with the app's
+      ugliest message (verified: ``Error during a `trash` operation: … Class
+not registered (0x80070002)``) and errors _before_ the draft/history
+      cleanup, so the draft survives and the tab stays — the user's intent
+      (be rid of it) fails. **Rename/move** toasts a raw io error ("The
+      system cannot find the file specified. (os error 2)") — sane, unhelpful.
+      **(2) Linked project root gone:** the walks skip unreadable dirs by
+      design, so the project's notes silently vanish while the heading stays
+      (it comes from the registry) — indistinguishable from an empty project;
+      no signal anywhere. Startup handles the _active_ restored tab vanishing
+      (drops it, falls back) but background restored tabs become (1)'s zombie
+      rows. Creating a note into the missing root quietly re-creates the
+      directory (`create_dir_all` on the save path). **(3) Mount backing
+      folder gone:** same silent-empty (the mount heading stays via bareDirs,
+      and it is not "conflicted"); `delete_mount` is the one command that
+      already handles a gone backing folder gracefully. **(4) Drafts pointing
+      at deleted notes — sane by design:** the draft keeps listing, opens from
+      draft content, titlebar keeps the name, Ctrl+S recreates the file. One
+      gap: the files tree derives from notes only, so once the note is gone
+      the draft is reachable only via the palette (and Recent while fresh).
+      **(5) Notes root gone:** `notes_root()` re-creates it on every command,
+      so a deleted root comes back empty, silently. Root on an _unreachable_
+      drive: every command errs, and the startup effect has no catch — the
+      app sits on the blank pre-startup screen forever with no toast; the
+      focus-handler refresh chains (`listNotes().then(setNotes)` etc.) also
+      lack catches. **(6) History store:** `scan_changes` skips missing files
+      silently (verified); prune never removes a note's latest snapshot, so a
+      vanished note's last-known content stays in the store indefinitely —
+      accepted (tiny, and a recreated note then diffs against its
+      pre-deletion content), recorded so it isn't rediscovered.
+      _Fix list (proposed order):_ **(a)** tab activation fails loud and
+      cleans up — catch the `readNote` failure, toast "its file is gone",
+      drop the tab, and make `closeTabs`' handoff skip to the next survivor
+      (or welcome) instead of leaving the zombie active state; **(b)**
+      `delete_note`/`delete_folder` treat already-gone as already-deleted —
+      guard `exists()` like `delete_mount` does, skip the trash call but
+      still clean draft + history and return Ok so the tab closes; **(c)**
+      the focus re-sync, on seeing the open note's mtime go `null`, marks the
+      buffer dirty and writes the draft — the buffer is the only copy, and
+      this re-arms the close-confirm and draft safety nets; **(d)** missing
+      project/mount roots say so: `list_mounts` gains `missing` beside
+      `conflicted`, the explorer shows the same quiet detail treatment
+      ("folder is missing"), projects likewise; **(e)** catch around the
+      startup effect (toast + land on a usable state instead of a
+      forever-blank window) and on the focus-handler refresh chains;
+      **(f)** cosmetic: friendlier rename/move message for a gone file
+      ("its file is gone — save first to recreate it").
+      **Implemented 2026-08-13, all six in order, gates + tests clean,
+      pending hands-on check.** (a) every activation path funnels through
+      `openItem`, which now catches the read failure, toasts ("its file is
+      gone"), and drops the tab; a new `handOff` walks the surviving tabs
+      (welcome panel when none opens) and replaces every neighbor-activation
+      — close, Close others, Close saved, deleted-subtree — so the zombie
+      active state can't arise; the close-confirm's Save and the explorer
+      rename bail out when activation failed rather than acting on the wrong
+      tab. (b) `delete_note`/`delete_folder` guard `exists()` like
+      `delete_mount`: already-gone skips the trash call, still cleans draft +
+      history, returns Ok so the tab closes. (c) the focus re-sync, on the
+      open note's mtime going `null` with a clean buffer, sets dirty and
+      writes the draft — the only copy is back under the close-confirm and
+      draft safety nets. (d) `list_mounts` gained `missing` beside
+      `conflicted`; `list_projects` now returns `{name, missing}` (true only
+      for a registered root — a notes-root project exists because its folder
+      was just listed); the focus refresh re-lists projects so the flag
+      tracks reality; the explorer shows the quiet "folder is missing" detail
+      on project headings (current pane included) and on non-conflicted mount
+      rows. (e) the startup effect is caught — toast + a blank capture
+      instead of the forever-blank window — and the focus refresh chains
+      report through one toast deduped by message (cleared on a successful
+      re-list, the settings-error rule). (f) `move_note` answers a gone
+      source with "its file is gone — save first to recreate it", surfaced by
+      rename and move-to-project alike. Pending hands-on: delete a note
+      externally then click its tab (toast, tab drops), close the active tab
+      beside a vanished neighbor (hands off to a survivor, never a zombie),
+      delete a vanished note/folder from the app (succeeds, cleans up),
+      remove a project root and a mount backing folder and refocus (headings
+      say "folder is missing"), refocus with the open note deleted (dirty dot
+      appears, draft written), rename it (friendly message), and start with
+      the notes root unreachable (toast + blank note, not a blank window).
+- [ ] **Show the `.md` extension everywhere** (2026-08-13) — requested: the default
+      extension was the one suffix chrome hid (explorer rows, tabs, palette, welcome
+      recents, the title pill, rename prefill, search and changes headings all
+      stripped it). Picked: **always show, everywhere** — over an Appearance setting
+      and over explorer-rows-only. **Implemented 2026-08-13, gates clean, pending
+      hands-on check.** One rule now — names render as they are on disk — so `.md`
+      shows (tinted in the explorer like every other extension) and the old
+      asymmetry where `.markdown` showed but `.md` didn't is gone. One deliberate
+      exception: an `@`-mention's inserted link text still strips `.md` — that's
+      prose in the note, not chrome (commented at the site). Rename prefills the
+      full name; typing a bare name still gets `.md` appended, a typed
+      registry-claimed extension still sticks. Pending hands-on: explorer rows in
+      both tint modes and themes, tab widths with several tabs open, palette and
+      mention-dropdown rows, and a rename round-trip.
+- [ ] **Config/data files stop listing by default + personal ignore patterns**
+      (2026-08-13) — requested: `.json` (and config files generally) shouldn't show
+      uninvited; the settings-rework item recorded exactly this lean in 2026-08-09
+      ("JSON and other non-text formats stay excluded unless someone opts them in")
+      but the registry shipped them allowlisted — this closes that drift. Picked:
+      **both** mechanisms in one pass. **Implemented 2026-08-13, gates + tests
+      clean (27), pending hands-on check.** (1) Registry entries carry `listed`
+      (absent = true, so a hand-edited registry keeps behaving): markdown / text /
+      latex stay listed, json / yaml / config / csv / xml / log don't. An unlisted
+      type keeps its view, icon, color and openability — `is_note` still claims it,
+      only the walks' default-verdict gate moved to the new `is_listed`. Third
+      registry migration hop: an untouched v1 or v2 (2026-08-12, frozen literally
+      as `v2_note_types`) registry upgrades in place; any hand-edit is never
+      touched. (2) settings.json gains personal `files` patterns (gitignore
+      syntax): `walk_rules` compiles them ahead of a project's `.asapnotes.json`
+      list — one ordered list, last match wins, so the portable project file
+      overrides the personal layer; the notes root's own files get the personal
+      layer alone. Bad personal patterns report through the `project_config_errors`
+      channel ("settings.json files: …"), skipped in walks like project ones.
+      Re-include still works end to end: a `!**/*.json` (either layer) lists json
+      with its amber icon and tint intact. Accepted gap, extending the recorded
+      drafts one: drafts of unlisted types don't list (the drafts walk keeps
+      default rules on purpose). Hand-edit only — the registry/patterns UI stays
+      with the settings-rework item's (b). Pending hands-on: relaunch once
+      (settings.json should gain the `"listed": false` flags via migration), the
+      `.deps.json`-class rows and loose jsons vanish everywhere (tree, search,
+      scan counts, Recent), a project `!` re-include pulls one back tinted, a
+      personal pattern in settings.json hides something on refocus, and a garbage
+      pattern toasts once.
+- [ ] **Ctrl+Shift+P opens the command palette** (2026-08-13) — requested: same as
+      Ctrl+K. Implemented (one keydown branch, ahead of plain Ctrl+P so the note
+      switcher doesn't swallow it), gates clean, pending hands-on. Ctrl+K stays
+      the advertised shortcut in menus and the welcome primer. Pure task noise —
+      delete on check.
 - [ ] **File menu: surface the virtual-folder options** (2026-08-13) — requested: the
       many virtual-folder verbs that exist today (New folder, New virtual folder,
       Associate virtual folder…, Detach, Delete virtual folder) are reachable only by

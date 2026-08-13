@@ -110,6 +110,33 @@ pub fn rules_for(location: &Path) -> (Rules, Option<String>) {
     }
 }
 
+/// Compile the personal pattern layer (`files` in the app-data settings file)
+/// alone — what a walk consults where no project file can add to it, the
+/// notes root's own files. Same syntax and reporting rules as a project's.
+pub fn personal_rules(patterns: &[String]) -> (Rules, Option<String>) {
+    let (rules, errors) = compile(patterns);
+    (rules, (!errors.is_empty()).then(|| errors.join("; ")))
+}
+
+/// The rules a walk consults inside a project: the personal patterns first,
+/// the project's own `files` after — one ordered list, last match wins, so
+/// the portable project file overrides the personal layer pattern by
+/// pattern. Problems are dropped here; [`rules_for`] and [`personal_rules`]
+/// re-collect them for the reporting channel.
+pub fn walk_rules(personal: &[String], location: &Path) -> Rules {
+    let project = fs::read_to_string(location.join(FILE_NAME))
+        .ok()
+        .and_then(|data| serde_json::from_str::<ProjectConfig>(&data).ok())
+        .map(|cfg| cfg.files)
+        .unwrap_or_default();
+    if personal.is_empty() && project.is_empty() {
+        return Rules::default();
+    }
+    let mut all = personal.to_vec();
+    all.extend(project);
+    compile(&all).0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +207,23 @@ mod tests {
         assert_eq!(r.verdict("a/b/draft.md", false), Verdict::Exclude);
         assert_eq!(r.verdict("top.md", false), Verdict::Exclude);
         assert_eq!(r.verdict("a/top.md", false), Verdict::Default);
+    }
+
+    #[test]
+    fn project_patterns_override_the_personal_layer() {
+        // walk_rules concatenates personal first, project after — the same
+        // list last-match-wins reads, so the project file gets the final say.
+        let r = rules(&["*.json", "!data/*.json"]);
+        assert_eq!(r.verdict("config.json", false), Verdict::Exclude);
+        assert_eq!(r.verdict("data/set.json", false), Verdict::Include);
+    }
+
+    #[test]
+    fn walk_rules_is_personal_only_without_a_project_file() {
+        let personal = vec!["*.json".to_string()];
+        let r = walk_rules(&personal, Path::new("Z:/nowhere/definitely-not-here"));
+        assert_eq!(r.verdict("a.json", false), Verdict::Exclude);
+        assert_eq!(r.verdict("a.md", false), Verdict::Default);
     }
 
     #[test]

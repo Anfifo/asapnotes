@@ -124,7 +124,7 @@ fn re_included(app: &AppHandle, s: &Settings, name: &str) -> bool {
     let Ok(root) = notes_root(app) else {
         return false;
     };
-    let (rules, _) = project_config::rules_for(&project_base(&root, s, project));
+    let rules = project_config::walk_rules(&s.files, &project_base(&root, s, project));
     if rules.verdict(rest, false) != Verdict::Include {
         return false;
     }
@@ -228,9 +228,12 @@ fn listed(s: &Settings, rules: &Rules, rel: &str, name: &str, entry: &fs::DirEnt
         Verdict::Include => {
             s.is_note(name) || floor_ok(name, entry.metadata().map(|m| m.len()).unwrap_or(0))
         }
-        // Generated lockfiles are the one machine-written *file* the extension
-        // allowlist can't express; a project's `!` rule can pull one back in.
-        Verdict::Default => s.is_note(name) && !name.eq_ignore_ascii_case("package-lock.json"),
+        // Only types that ask to be listed show uninvited (`is_listed`) — the
+        // config/data/log types exist for icons and openability, not for the
+        // walks; an `!` pattern above is the opt-in. Generated lockfiles are
+        // the one machine-written *file* the extension allowlist can't
+        // express; a project's `!` rule can pull one back in.
+        Verdict::Default => s.is_listed(name) && !name.eq_ignore_ascii_case("package-lock.json"),
     }
 }
 
@@ -272,11 +275,12 @@ fn project_dirs(root: &Path) -> Result<Vec<String>, String> {
 /// List all note files in `base`: top level plus one project-folder level.
 fn list_tree(s: &Settings, base: &Path) -> Result<Vec<FileInfo>, String> {
     let mut out = Vec::new();
-    // Top-level notes belong to no project, so no project's rules apply.
-    collect_md(s, &Rules::default(), base, "", &mut out)?;
+    // Top-level notes belong to no project — only the personal layer applies.
+    let (personal, _) = project_config::personal_rules(&s.files);
+    collect_md(s, &personal, base, "", &mut out)?;
     for project in project_dirs(base)? {
         let dir = base.join(&project);
-        let (rules, _) = project_config::rules_for(&dir);
+        let rules = project_config::walk_rules(&s.files, &dir);
         collect_md(s, &rules, &dir, &format!("{project}/"), &mut out)?;
     }
     out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
@@ -371,7 +375,7 @@ fn outside_roots(app: &AppHandle, s: &Settings) -> Result<Vec<WalkRoot>, String>
             continue;
         }
         let own = project_base(&root, s, name);
-        let rules = Arc::new(project_config::rules_for(&own).0);
+        let rules = Arc::new(project_config::walk_rules(&s.files, &own));
         if entry.path.is_some() {
             out.push(WalkRoot {
                 prefix: format!("{name}/"),
@@ -552,19 +556,38 @@ fn excerpt(line: &str, at: usize) -> String {
     s
 }
 
+/// A project heading as the explorer sees it. `missing` means its registered
+/// folder is gone from disk (removed outside the app, unplugged drive) — the
+/// walks list nothing there, so without the flag it would read as an empty
+/// project. A notes-root project can't be missing: it exists because its
+/// folder was just listed.
+#[derive(Serialize)]
+pub struct ProjectInfo {
+    pub name: String,
+    pub missing: bool,
+}
+
 /// Notes-root subfolders plus the registered projects that live elsewhere.
 /// Registered entries without a location need no mention: their folder is under
 /// the notes root, so the walk above already found them.
 #[tauri::command]
-pub fn list_projects(app: AppHandle) -> Result<Vec<String>, String> {
-    let mut out = project_dirs(&notes_root(&app)?)?;
-    out.extend(
-        settings::settings(&app)?
-            .located_projects()
-            .map(|(n, _)| n.clone()),
-    );
-    out.sort();
-    out.dedup();
+pub fn list_projects(app: AppHandle) -> Result<Vec<ProjectInfo>, String> {
+    let mut out: Vec<ProjectInfo> = project_dirs(&notes_root(&app)?)?
+        .into_iter()
+        .map(|name| ProjectInfo {
+            name,
+            missing: false,
+        })
+        .collect();
+    for (name, dir) in settings::settings(&app)?.located_projects() {
+        if !out.iter().any(|p| &p.name == name) {
+            out.push(ProjectInfo {
+                name: name.clone(),
+                missing: !Path::new(dir).is_dir(),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
 
@@ -582,6 +605,11 @@ pub fn project_config_errors(app: AppHandle) -> Result<Vec<String>, String> {
     let root = notes_root(&app)?;
     let s = settings::settings(&app)?;
     let mut out = Vec::new();
+    // The personal pattern layer reports here too: a bad pattern is skipped in
+    // the walks, so this channel is the only place it becomes visible.
+    if let (_, Some(e)) = project_config::personal_rules(&s.files) {
+        out.push(format!("settings.json files: {e}"));
+    }
     for project in project_dirs(&root)? {
         if let (_, Some(e)) = project_config::rules_for(&root.join(&project)) {
             out.push(e);
@@ -652,7 +680,13 @@ pub fn save_note(app: AppHandle, name: String, content: String) -> Result<(), St
 /// never hard-deleted) and discard its shadow draft.
 #[tauri::command]
 pub fn delete_note(app: AppHandle, name: String) -> Result<(), String> {
-    trash::delete(resolve_note(&app, &name)?).map_err(|e| e.to_string())?;
+    let path = resolve_note(&app, &name)?;
+    // A file already gone (removed outside the app) counts as already
+    // deleted: skip the trash call — it errors on a missing path — but still
+    // clean the draft and snapshots, and return Ok so the tab closes.
+    if path.exists() {
+        trash::delete(path).map_err(|e| e.to_string())?;
+    }
     let s = settings::settings(&app)?;
     let draft = drafts_dir(&app)?.join(checked_name(&app, &s, &name)?);
     if draft.exists() {
@@ -722,6 +756,12 @@ pub fn open_external(app: AppHandle, target: String) -> Result<(), String> {
 /// draft, if any, moves with it.
 #[tauri::command]
 pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String> {
+    let from_path = resolve_note(&app, &from)?;
+    // Deleted outside the app while its tab stayed open: the buffer (or the
+    // draft) is the only copy, and saving is what puts a file back to rename.
+    if !from_path.exists() {
+        return Err("its file is gone — save first to recreate it".into());
+    }
     let to_path = resolve_note(&app, &to)?;
     if to_path.exists() {
         return Err(format!("a note named {to} already exists"));
@@ -731,7 +771,6 @@ pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String>
     }
     // `rename` fails across volumes, which linked folders and mounts make an
     // ordinary case rather than an exotic one.
-    let from_path = resolve_note(&app, &from)?;
     if fs::rename(&from_path, &to_path).is_err() {
         fs::copy(&from_path, &to_path).map_err(|e| e.to_string())?;
         fs::remove_file(&from_path).map_err(|e| e.to_string())?;
@@ -821,10 +860,11 @@ pub fn delete_folder(app: AppHandle, dir: String) -> Result<(), String> {
     }
     let (base, sub) = base_of(&app, &s, &dir)?;
     let path = base.join(sub);
-    if !path.is_dir() {
-        return Err(format!("no folder at {dir}"));
+    // Already gone (removed outside the app) counts as already deleted — the
+    // drafts and snapshots below still want cleaning either way.
+    if path.exists() {
+        trash::delete(&path).map_err(|e| e.to_string())?;
     }
-    trash::delete(&path).map_err(|e| e.to_string())?;
     // Drafts and snapshots are app-managed shadow copies, removed outright
     // like `delete_note` removes one note's.
     let _ = fs::remove_dir_all(drafts_dir(&app)?.join(&dir));
@@ -840,6 +880,7 @@ pub fn list_drafts(app: AppHandle) -> Result<Vec<FileInfo>, String> {
     // purpose — matching each draft against its project's `files` rules would
     // mean a config read per id segment, and what it would buy (listing a
     // draft of a re-included non-allowlist file) is a known gap in TODO.md.
+    // Unlisted types share that gap: their drafts don't list either.
     let s = settings::settings(&app)?;
     let mut out = Vec::new();
     collect_md_deep(
@@ -1024,7 +1065,7 @@ fn is_readme(name: &str) -> bool {
 fn count_md(s: &Settings, dir: &Path) -> usize {
     // A candidate's own `.asapnotes.json` counts, so the scan sheet's number
     // matches what linking the folder would actually list.
-    let (rules, _) = project_config::rules_for(dir);
+    let rules = project_config::walk_rules(&s.files, dir);
     let mut files = Vec::new();
     collect_md_deep(s, &rules, dir, "", "", 0, &mut files);
     files.len()
@@ -1333,15 +1374,18 @@ const MAX_MOUNT_AT: usize = 4;
 
 /// A mount as the explorer sees it. `conflicted` means a real folder has taken
 /// its name over: the real folder wins, and the mount lists nothing until the
-/// clash is gone. `external` means the backing folder lives outside the
-/// virtual-folders home — a folder the user owns elsewhere, which deletion
-/// warnings call out by path.
+/// clash is gone. `missing` means the backing folder is gone from disk
+/// (removed outside the app, unplugged drive) — the walks list nothing there,
+/// so without the flag it would read as an empty folder. `external` means the
+/// backing folder lives outside the virtual-folders home — a folder the user
+/// owns elsewhere, which deletion warnings call out by path.
 #[derive(Serialize)]
 pub struct MountInfo {
     pub project: String,
     pub at: String,
     pub path: String,
     pub conflicted: bool,
+    pub missing: bool,
     pub external: bool,
 }
 
@@ -1359,6 +1403,7 @@ pub fn list_mounts(app: AppHandle) -> Result<Vec<MountInfo>, String> {
                 at: m.at.clone(),
                 path: m.path.clone(),
                 conflicted: own.join(&m.at).is_dir(),
+                missing: !Path::new(&m.path).is_dir(),
                 external: !Path::new(&m.path).starts_with(&home),
             });
         }

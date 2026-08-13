@@ -129,7 +129,7 @@ export function SearchView({ focusToken, onOpenHit, onError }: SearchViewProps) 
         {groups.map((g) => (
           <details key={g.note} open>
             <summary>
-              <span className="explorer-name">{fileOf(g.note).replace(/\.md$/, "")}</span>
+              <span className="explorer-name">{fileOf(g.note)}</span>
               {projectOf(g.note) && <span className="explorer-detail">{projectOf(g.note)}</span>}
             </summary>
             <ul>

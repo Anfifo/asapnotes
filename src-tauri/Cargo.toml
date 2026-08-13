@@ -30,7 +30,7 @@ ignore = "0.4"
 # Diffs for the recent-changes view. A user-facing diff lives or dies on hunk
 # readability, which is exactly where a hand-rolled Myers would spend its
 # budget — same reasoning as `ignore` above.
-similar = "2"
+similar = { version = "2", features = ["inline"] }
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-global-shortcut = "2"

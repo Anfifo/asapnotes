@@ -17,7 +17,8 @@
 //! snapshot a predecessor to diff against.
 
 use crate::settings::{self, Settings};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -238,6 +239,7 @@ fn prune(store: &Path, now: u64, max_bytes: u64) {
     let mut dirs = Vec::new();
     collect_note_dirs(store, &mut dirs);
     let cutoff = now.saturating_sub(KEEP_DAYS * DAY_MS);
+    prune_seen(store, cutoff);
     // (ts, size, path) of what survives, latest snapshots excluded — they are
     // never candidates, but their size still counts against the budget.
     let mut prunable: Vec<(u64, u64, PathBuf)> = Vec::new();
@@ -272,6 +274,70 @@ fn prune(store: &Path, now: u64, max_bytes: u64) {
     }
 }
 
+// --- Seen ledger ---
+//
+// Which changes the user has marked as read: (note id, change timestamp)
+// pairs in one JSON file beside the snapshots. A new external edit to an
+// already-seen note gets a new timestamp, so it correctly comes back unseen.
+
+fn seen_path(store: &Path) -> PathBuf {
+    store.join("seen.json")
+}
+
+/// An unreadable or malformed file reads as "nothing seen" — the ledger is a
+/// convenience over the snapshots, never a reason to fail a scan.
+fn load_seen(store: &Path) -> HashSet<(String, u64)> {
+    fs::read_to_string(seen_path(store))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<(String, u64)>>(&s).ok())
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn save_seen(store: &Path, seen: &HashSet<(String, u64)>) -> Result<(), String> {
+    let mut entries: Vec<_> = seen.iter().collect();
+    entries.sort();
+    let json = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
+    fs::write(seen_path(store), json).map_err(|e| e.to_string())
+}
+
+/// One ledger entry to mark or unmark, as the frontend addresses changes.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeenItem {
+    pub note: String,
+    pub at_ms: u64,
+}
+
+#[tauri::command]
+pub fn set_changes_seen(app: AppHandle, items: Vec<SeenItem>, seen: bool) -> Result<(), String> {
+    let store = store_dir(&app)?;
+    let mut set = load_seen(&store);
+    for item in items {
+        let key = (item.note, item.at_ms);
+        if seen {
+            set.insert(key);
+        } else {
+            set.remove(&key);
+        }
+    }
+    save_seen(&store, &set)
+}
+
+/// Drop ledger entries older than the snapshot retention — their changes can
+/// no longer appear in any window, so keeping them would grow the file forever.
+fn prune_seen(store: &Path, cutoff: u64) {
+    let seen = load_seen(store);
+    let kept: HashSet<_> = seen
+        .iter()
+        .filter(|(_, ts)| *ts >= cutoff)
+        .cloned()
+        .collect();
+    if kept.len() != seen.len() {
+        let _ = save_seen(store, &kept);
+    }
+}
+
 // --- Diffs, computed on demand ---
 
 fn count_diff(old: &str, new: &str) -> (u32, u32) {
@@ -288,49 +354,6 @@ fn count_diff(old: &str, new: &str) -> (u32, u32) {
     (added, removed)
 }
 
-/// One diff line. `line` is the 1-based position in the note as of that
-/// snapshot — what the view's jump-to-line uses — so it is best-effort against
-/// a file that may have moved on since. Deleted lines have no position there.
-#[derive(Serialize)]
-pub struct DiffLine {
-    pub kind: &'static str,
-    pub text: String,
-    pub line: Option<u32>,
-}
-
-#[derive(Serialize)]
-pub struct Hunk {
-    pub lines: Vec<DiffLine>,
-}
-
-/// Hunks with a little context, the unit the view renders. Consecutive
-/// deleted lines travel individually; collapsing them into a pill is the
-/// view's presentation choice, not the data's.
-fn hunks(old: &str, new: &str) -> Vec<Hunk> {
-    let diff = similar::TextDiff::from_lines(old, new);
-    diff.grouped_ops(2)
-        .iter()
-        .map(|group| {
-            let mut lines = Vec::new();
-            for op in group {
-                for change in diff.iter_changes(op) {
-                    let kind = match change.tag() {
-                        similar::ChangeTag::Equal => "ctx",
-                        similar::ChangeTag::Insert => "add",
-                        similar::ChangeTag::Delete => "del",
-                    };
-                    lines.push(DiffLine {
-                        kind,
-                        text: change.value().trim_end_matches(['\n', '\r']).to_string(),
-                        line: change.new_index().map(|i| i as u32 + 1),
-                    });
-                }
-            }
-            Hunk { lines }
-        })
-        .collect()
-}
-
 /// One external edit as the ledger sees it: which note, when, how much.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -339,55 +362,29 @@ pub struct ChangeSummary {
     pub at_ms: u64,
     pub added: u32,
     pub removed: u32,
-}
-
-/// One external edit with its hunks; `Vec<Change>` under a note is that
-/// note's edits in time order, which is how the drill-in stacks them.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Change {
-    pub at_ms: u64,
-    pub added: u32,
-    pub removed: u32,
-    pub hunks: Vec<Hunk>,
-}
-
-#[derive(Serialize)]
-pub struct NoteChanges {
-    pub note: String,
-    pub changes: Vec<Change>,
+    /// Marked as read in the seen ledger — the view dims these and the
+    /// rail badge counts only the rest.
+    pub seen: bool,
 }
 
 /// Every external snapshot in the window paired with its predecessor —
 /// app-origin snapshots are the "before" of these pairs and never appear as
 /// changes themselves. `map` turns one diffed pair into whatever the caller
-/// collects, so the ledger and the drill-in share one walk.
+/// collects.
 fn external_pairs<T>(
     store: &Path,
-    only: Option<&str>,
     since: u64,
     mut map: impl FnMut(&str, u64, &str, &str) -> T,
 ) -> Vec<(String, Vec<T>)> {
     let mut dirs = Vec::new();
-    match only {
-        Some(note) => {
-            let dir = store.join(note);
-            if dir.is_dir() {
-                dirs.push(dir);
-            }
-        }
-        None => collect_note_dirs(store, &mut dirs),
-    }
+    collect_note_dirs(store, &mut dirs);
     let mut out = Vec::new();
     for dir in dirs {
-        let note = match only {
-            Some(n) => n.to_string(),
-            None => dir
-                .strip_prefix(store)
-                .unwrap_or(&dir)
-                .to_string_lossy()
-                .replace('\\', "/"),
-        };
+        let note = dir
+            .strip_prefix(store)
+            .unwrap_or(&dir)
+            .to_string_lossy()
+            .replace('\\', "/");
         let snaps = snapshots(&dir);
         let mut items = Vec::new();
         for i in 1..snaps.len() {
@@ -415,18 +412,20 @@ fn since_ms(days: Option<u32>) -> u64 {
 }
 
 /// The ledger: every external edit in the window, newest first. Counts only —
-/// text travels via `change_details` when a note is drilled into.
+/// the text travels with the lens when a note is opened.
 #[tauri::command]
 pub fn recent_changes(app: AppHandle, days: Option<u32>) -> Result<Vec<ChangeSummary>, String> {
     let store = store_dir(&app)?;
+    let seen = load_seen(&store);
     let mut out: Vec<ChangeSummary> =
-        external_pairs(&store, None, since_ms(days), |note, ts, old, new| {
+        external_pairs(&store, since_ms(days), |note, ts, old, new| {
             let (added, removed) = count_diff(old, new);
             ChangeSummary {
                 note: note.to_string(),
                 at_ms: ts,
                 added,
                 removed,
+                seen: seen.contains(&(note.to_string(), ts)),
             }
         })
         .into_iter()
@@ -436,41 +435,168 @@ pub fn recent_changes(app: AppHandle, days: Option<u32>) -> Result<Vec<ChangeSum
     Ok(out)
 }
 
-/// Hunks for the drill-in (`note` given) or the read-through stream (absent).
-/// Notes come newest-change first; within a note, edits stay in time order.
-#[tauri::command]
-pub fn change_details(
-    app: AppHandle,
-    note: Option<String>,
-    days: Option<u32>,
-) -> Result<Vec<NoteChanges>, String> {
-    if let Some(note) = &note {
-        // The id names a directory under the store; hold it to the same shape
-        // note ids have everywhere, so it can't reach outside.
-        if !note.split('/').all(crate::notes::valid_segment) {
-            return Err(format!("invalid note name: {note}"));
+// --- The lens: one note, rendered, with the external edits marked on it ---
+
+/// One marked line: its 1-based position in the document, and the UTF-16
+/// column ranges of the words that actually changed. No ranges means the whole
+/// line is new — the view paints those wholesale instead of word by word.
+/// UTF-16 because that is the unit the webview counts text in.
+#[derive(Serialize)]
+pub struct LensLine {
+    pub line: u32,
+    pub spans: Vec<(u32, u32)>,
+}
+
+/// A run of removed lines. The document no longer contains them, so they hang
+/// after the last surviving line above them (`0` = above the first line).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensDel {
+    pub after_line: u32,
+    pub lines: Vec<String>,
+}
+
+/// The note as another tool left it, plus what changed getting there.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteLens {
+    pub note: String,
+    pub text: String,
+    pub added: Vec<LensLine>,
+    pub dels: Vec<LensDel>,
+    /// Counts for this one aggregate diff. They can come out below the
+    /// ledger's per-edit sums — text added and then removed again inside the
+    /// window shows in each edit but not in the end state.
+    pub added_n: u32,
+    pub removed_n: u32,
+    /// When the last external edit in the window landed.
+    pub at_ms: u64,
+    /// The user has saved the note since, so `text` is the state the other
+    /// tool left behind, not what is on disk now.
+    pub own_edits_since: bool,
+}
+
+/// Marks for the rendered document: which lines of `new` are additions (down
+/// to the changed words, where a line was edited rather than written), and
+/// where the removed lines sat.
+fn lens_marks(old: &str, new: &str) -> (Vec<LensLine>, Vec<LensDel>, u32, u32) {
+    let diff = similar::TextDiff::from_lines(old, new);
+    let mut added: Vec<LensLine> = Vec::new();
+    let mut dels: Vec<LensDel> = Vec::new();
+    let mut removed_n = 0;
+    // Deleted lines collect until the next line that survived, then hang after
+    // the last one before them — so a replacement shows its pill above the
+    // text that took its place.
+    let mut pending: Vec<String> = Vec::new();
+    let mut anchor = 0;
+    let mut passed = 0; // new-side lines walked so far
+    let mut flush = |pending: &mut Vec<String>, anchor: u32| {
+        if !pending.is_empty() {
+            dels.push(LensDel {
+                after_line: anchor,
+                lines: std::mem::take(pending),
+            });
+        }
+    };
+    for op in diff.ops() {
+        for change in diff.iter_inline_changes(op) {
+            let text = || {
+                change
+                    .iter_strings_lossy()
+                    .map(|(_, v)| v.to_string())
+                    .collect::<String>()
+            };
+            match change.tag() {
+                similar::ChangeTag::Delete => {
+                    if pending.is_empty() {
+                        anchor = passed;
+                    }
+                    removed_n += 1;
+                    pending.push(text().trim_end_matches(['\n', '\r']).to_string());
+                }
+                similar::ChangeTag::Equal => {
+                    flush(&mut pending, anchor);
+                    passed = change.new_index().map_or(passed, |i| i as u32 + 1);
+                }
+                similar::ChangeTag::Insert => {
+                    flush(&mut pending, anchor);
+                    let Some(index) = change.new_index() else {
+                        continue;
+                    };
+                    passed = index as u32 + 1;
+                    // A wholly new line comes through unemphasized (the crate
+                    // only marks words inside a replaced line), which is
+                    // exactly the "no ranges = the whole line" case.
+                    let mut spans = Vec::new();
+                    let mut col = 0;
+                    for (emphasized, value) in change.iter_strings_lossy() {
+                        let width =
+                            value.trim_end_matches(['\n', '\r']).encode_utf16().count() as u32;
+                        if emphasized && width > 0 {
+                            match spans.last_mut() {
+                                // Adjacent runs join, so a marked phrase is one
+                                // span rather than one per word.
+                                Some((_, end)) if *end == col => *end = col + width,
+                                _ => spans.push((col, col + width)),
+                            }
+                        }
+                        col += width;
+                    }
+                    added.push(LensLine {
+                        line: passed,
+                        spans,
+                    });
+                }
+            }
         }
     }
+    flush(&mut pending, anchor);
+    let added_n = added.len() as u32;
+    (added, dels, added_n, removed_n)
+}
+
+/// The lens for one note: the note as of the last external edit in the window,
+/// with every external addition since the window's first edit marked on it.
+/// One baseline, not one per edit — a rendered document can only be one
+/// document. `None` when nothing external happened to it in the window.
+#[tauri::command]
+pub fn note_lens(
+    app: AppHandle,
+    note: String,
+    days: Option<u32>,
+) -> Result<Option<NoteLens>, String> {
+    // The id names a directory under the store; hold it to the shape note ids
+    // have everywhere, so it can't reach outside.
+    if !note.split('/').all(crate::notes::valid_segment) {
+        return Err(format!("invalid note name: {note}"));
+    }
     let store = store_dir(&app)?;
-    let mut out: Vec<NoteChanges> = external_pairs(
-        &store,
-        note.as_deref(),
-        since_ms(days),
-        |_, ts, old, new| {
-            let (added, removed) = count_diff(old, new);
-            Change {
-                at_ms: ts,
-                added,
-                removed,
-                hunks: hunks(old, new),
-            }
-        },
-    )
-    .into_iter()
-    .map(|(note, changes)| NoteChanges { note, changes })
-    .collect();
-    out.sort_by_key(|n| std::cmp::Reverse(n.changes.last().map(|c| c.at_ms).unwrap_or(0)));
-    Ok(out)
+    let snaps = snapshots(&store.join(&note));
+    let since = since_ms(days);
+    let external = |s: &Snapshot| s.origin == Origin::External && s.ts >= since;
+    let (Some(first), Some(last)) = (
+        snaps.iter().position(external),
+        snaps.iter().rposition(external),
+    ) else {
+        return Ok(None);
+    };
+    // Without a predecessor the first snapshot is a baseline, not an edit.
+    if first == 0 {
+        return Ok(None);
+    }
+    let old = fs::read_to_string(&snaps[first - 1].path).map_err(|e| e.to_string())?;
+    let text = fs::read_to_string(&snaps[last].path).map_err(|e| e.to_string())?;
+    let (added, dels, added_n, removed_n) = lens_marks(&old, &text);
+    Ok(Some(NoteLens {
+        note,
+        text,
+        added,
+        dels,
+        added_n,
+        removed_n,
+        at_ms: snaps[last].ts,
+        own_edits_since: snaps.len() > last + 1,
+    }))
 }
 
 #[cfg(test)]
@@ -506,7 +632,7 @@ mod tests {
     }
 
     fn summaries(store: &Path, since: u64) -> Vec<(String, u64, u32, u32)> {
-        external_pairs(store, None, since, |note, ts, old, new| {
+        external_pairs(store, since, |note, ts, old, new| {
             let (added, removed) = count_diff(old, new);
             (note.to_string(), ts, added, removed)
         })
@@ -619,28 +745,62 @@ mod tests {
     }
 
     #[test]
-    fn hunks_carry_new_side_line_numbers() {
-        let old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n";
-        let new = "1\n2\n3\nADDED\n4\n5\n6\n7\n8\n9\n";
-        let hs = hunks(old, new);
-        // One edit region → one hunk; far-apart edits would split.
-        assert_eq!(hs.len(), 2);
-        let added: Vec<_> = hs
-            .iter()
-            .flat_map(|h| &h.lines)
-            .filter(|l| l.kind == "add")
-            .collect();
+    fn lens_marks_whole_new_lines_without_word_ranges() {
+        let (added, dels, added_n, removed_n) =
+            lens_marks("one\ntwo\n", "one\nbrand new line\ntwo\n");
+        assert_eq!((added_n, removed_n), (1, 0));
+        assert!(dels.is_empty());
         assert_eq!(added.len(), 1);
-        assert_eq!(added[0].text, "ADDED");
-        assert_eq!(added[0].line, Some(4));
-        let deleted: Vec<_> = hs
-            .iter()
-            .flat_map(|h| &h.lines)
-            .filter(|l| l.kind == "del")
-            .collect();
-        assert_eq!(deleted.len(), 1);
-        assert_eq!(deleted[0].text, "10");
-        assert_eq!(deleted[0].line, None);
+        assert_eq!(added[0].line, 2);
+        // Nothing to compare a new line against, so it marks whole.
+        assert!(added[0].spans.is_empty());
+    }
+
+    #[test]
+    fn lens_marks_carry_word_ranges_on_an_edited_line() {
+        let (added, _, _, _) = lens_marks("the quick brown fox\n", "the quick red fox\n");
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].line, 1);
+        // "brown" → "red": the changed word alone, in UTF-16 columns.
+        assert_eq!(added[0].spans, vec![(10, 13)]);
+    }
+
+    #[test]
+    fn lens_word_ranges_count_utf16_columns() {
+        // The em dash is one UTF-16 unit but three bytes — byte offsets would
+        // land the mark a character early in the webview.
+        let (added, _, _, _) = lens_marks("a — brown fox\n", "a — red fox\n");
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].spans, vec![(4, 7)]);
+    }
+
+    #[test]
+    fn lens_deletions_anchor_after_the_line_above_them() {
+        let (added, dels, _, removed_n) =
+            lens_marks("keep\ngone one\ngone two\ntail\n", "keep\ntail\n");
+        assert!(added.is_empty());
+        assert_eq!(removed_n, 2);
+        assert_eq!(dels.len(), 1);
+        assert_eq!(dels[0].after_line, 1);
+        assert_eq!(dels[0].lines, vec!["gone one", "gone two"]);
+    }
+
+    #[test]
+    fn lens_deletions_above_the_first_line_anchor_at_zero() {
+        let (_, dels, _, _) = lens_marks("gone\nkeep\n", "keep\n");
+        assert_eq!(dels.len(), 1);
+        assert_eq!(dels[0].after_line, 0);
+    }
+
+    #[test]
+    fn lens_replacement_hangs_its_removals_above_the_new_text() {
+        let (added, dels, _, _) = lens_marks(
+            "intro\nold one\nold two\nend\n",
+            "intro\nfresh one\nfresh two\nend\n",
+        );
+        assert_eq!(added.iter().map(|l| l.line).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(dels.len(), 1);
+        assert_eq!(dels[0].after_line, 1);
     }
 
     #[test]
@@ -684,6 +844,32 @@ mod tests {
         assert_eq!(snapshots(&store.path().join("b.md")).len(), 1);
         assert_eq!(snapshots(&store.path().join("a.md"))[0].ts, 200);
         assert_eq!(snapshots(&store.path().join("b.md"))[0].ts, 250);
+    }
+
+    #[test]
+    fn seen_ledger_round_trips() {
+        let store = TempStore::new();
+        let mut set = HashSet::new();
+        set.insert(("a.md".to_string(), 100));
+        set.insert(("proj/docs/b.md".to_string(), 200));
+        save_seen(store.path(), &set).unwrap();
+        assert_eq!(load_seen(store.path()), set);
+        // Missing or malformed files read as "nothing seen".
+        fs::write(seen_path(store.path()), "not json").unwrap();
+        assert!(load_seen(store.path()).is_empty());
+    }
+
+    #[test]
+    fn prune_seen_drops_entries_past_the_cutoff() {
+        let store = TempStore::new();
+        let mut set = HashSet::new();
+        set.insert(("a.md".to_string(), 100));
+        set.insert(("a.md".to_string(), 900));
+        save_seen(store.path(), &set).unwrap();
+        prune_seen(store.path(), 500);
+        let kept = load_seen(store.path());
+        assert_eq!(kept.len(), 1);
+        assert!(kept.contains(&("a.md".to_string(), 900)));
     }
 
     #[test]

@@ -47,11 +47,17 @@ interface ExplorerProps {
   notes: FileInfo[];
   drafts: FileInfo[];
   projects: string[];
+  /** Registered projects whose folder is gone from disk — their headings say
+   * so, instead of reading as empty projects. */
+  missingProjects: string[];
   /** Folders attached into projects — shown at their mount point, marked there
    * and nowhere below it. */
   mounts: MountInfo[];
   /** Project of the open note — hoisted to the top of the panel. */
   currentProject: string | null;
+  /** The open note lives in no project: hoist the loose files instead — all
+   * projectless notes and drafts, under the same pane treatment a project gets. */
+  looseCurrent: boolean;
   openId: string | null;
   onSelect: (id: string, isNote: boolean) => void;
   /** Right-click on a note/draft row — App shows the context menu. */
@@ -111,8 +117,10 @@ export function Explorer({
   notes,
   drafts,
   projects,
+  missingProjects,
   mounts,
   currentProject,
+  looseCurrent,
   openId,
   onSelect,
   onContext,
@@ -177,6 +185,22 @@ export function Explorer({
     .map(([name]) => name);
 
   const loose = notes.filter((n) => !projectOf(n.name));
+  // Whether a pane is hoisted to the top slot: the open note's project, or —
+  // for a projectless note — the loose files as a pseudo-project.
+  const paneCurrent = currentProject !== null || looseCurrent;
+  // The pseudo-project pane's files: every projectless note and draft merged
+  // to one entry per name, newest first like Recent — the root has no folder
+  // tree to impose another order.
+  let looseIds: string[] = [];
+  if (looseCurrent) {
+    const looseLatest = new Map<string, number>();
+    for (const f of [...notes, ...drafts]) {
+      if (!projectOf(f.name)) {
+        looseLatest.set(f.name, Math.max(looseLatest.get(f.name) ?? 0, f.modified_ms));
+      }
+    }
+    looseIds = [...looseLatest.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  }
   const inProject = (p: string) => notes.filter((n) => projectOf(n.name) === p).map((n) => n.name);
   // Keyed by folder id, so a row only has to ask about itself.
   const mountByDir = new Map(mounts.map((m) => [`${m.project}/${m.at}`, m]));
@@ -191,8 +215,9 @@ export function Explorer({
     const file = fileOf(id);
     const dot = file.lastIndexOf(".");
     const stem = dot > 0 ? file.slice(0, dot) : file;
-    // `.md` stays hidden as it always has; every other extension shows.
-    const ext = dot > 0 && file.slice(dot) !== ".md" ? file.slice(dot) : "";
+    // Every extension shows, the default `.md` included — names render as
+    // they are on disk, and the tint marks the type either way.
+    const ext = dot > 0 ? file.slice(dot) : "";
     const color = colorOf(id);
     return (
       <li
@@ -300,6 +325,9 @@ export function Explorer({
                 {mount?.conflicted && (
                   <span className="explorer-detail">hidden by a real folder</span>
                 )}
+                {mount && !mount.conflicted && mount.missing && (
+                  <span className="explorer-detail">folder is missing</span>
+                )}
                 {addBtn(dir)}
               </summary>
               {renderTree(node.folders.get(name)!, dir)}
@@ -333,6 +361,7 @@ export function Explorer({
     >
       <summary onContextMenu={(e) => onDirContext(e, p)}>
         <span className="explorer-name">{p}</span>
+        {missingProjects.includes(p) && <span className="explorer-detail">folder is missing</span>}
         {addBtn(p)}
       </summary>
       {expanded.has(p) && renderTree(buildTree(inProject(p), bareDirsIn(p)), p)}
@@ -371,7 +400,7 @@ export function Explorer({
   );
 
   // A gap is only a handle while Notes is there to trade height with.
-  const sep = currentProject && !hideNotes ? split : <div className="pane-gap" />;
+  const sep = paneCurrent && !hideNotes ? split : <div className="pane-gap" />;
 
   return (
     <nav className={pinned ? "explorer" : "explorer floating"} style={{ width }}>
@@ -429,7 +458,7 @@ export function Explorer({
         hidden={view !== "files"}
         onContextMenu={onBodyContext}
       >
-        {currentProject && (
+        {paneCurrent && (
           <section
             className="explorer-card pane"
             ref={paneRef}
@@ -444,19 +473,41 @@ export function Explorer({
                   : undefined
             }
           >
-            <h2 onContextMenu={(e) => onDirContext(e, currentProject)}>
-              <span className="explorer-name">{currentProject}</span>
-              {addBtn(currentProject)}
-            </h2>
-            {renderTree(
-              buildTree(inProject(currentProject), bareDirsIn(currentProject)),
-              currentProject,
+            {currentProject ? (
+              <>
+                <h2 onContextMenu={(e) => onDirContext(e, currentProject)}>
+                  <span className="explorer-name">{currentProject}</span>
+                  {missingProjects.includes(currentProject) && (
+                    <span className="explorer-detail">folder is missing</span>
+                  )}
+                  {addBtn(currentProject)}
+                </h2>
+                {renderTree(
+                  buildTree(inProject(currentProject), bareDirsIn(currentProject)),
+                  currentProject,
+                )}
+              </>
+            ) : (
+              // The open note lives in no project: the loose files hoisted
+              // under the name the project selector gives that state.
+              <>
+                <h2 onContextMenu={(e) => onDirContext(e, "")}>
+                  <span className="explorer-name">No project</span>
+                  {addBtn("")}
+                </h2>
+                {(looseIds.length > 0 || creatingIn === "") && (
+                  <ul>
+                    {creatingIn === "" && createRow("")}
+                    {looseIds.map((id) => item(id))}
+                  </ul>
+                )}
+              </>
             )}
           </section>
         )}
         {recentVisible && (
           <>
-            {currentProject && sep}
+            {paneCurrent && sep}
             <details className="explorer-recent explorer-card">
               <summary>
                 Recent
@@ -468,14 +519,16 @@ export function Explorer({
         )}
         {!hideNotes && (
           <>
-            {(currentProject || recentVisible) && sep}
+            {(paneCurrent || recentVisible) && sep}
             <section className="explorer-card notes">
               <h2 onContextMenu={(e) => onDirContext(e, "")}>
                 <span className="explorer-name">Notes</span>
                 {addBtn("")}
                 {hideBtn(onHideNotes)}
               </h2>
-              {(loose.length > 0 || creatingIn === "") && (
+              {/* Hoisted to the top pane while a projectless note is open —
+                  the same exclusion the current project gets below. */}
+              {!looseCurrent && (loose.length > 0 || creatingIn === "") && (
                 <ul>
                   {creatingIn === "" && createRow("")}
                   {loose.map((n) => item(n.name))}
@@ -486,7 +539,7 @@ export function Explorer({
             </section>
           </>
         )}
-        {!currentProject && !recentVisible && hideNotes && (
+        {!paneCurrent && !recentVisible && hideNotes && (
           <div className="explorer-card">
             <p className="muted">Panels hidden — the View menu brings them back</p>
           </div>

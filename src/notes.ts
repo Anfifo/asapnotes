@@ -25,7 +25,16 @@ export interface SearchHit {
 
 /** `deep: false` skips external projects — fast root-only list for first paint. */
 export const listNotes = (deep = true) => invoke<FileInfo[]>("list_notes", { deep });
-export const listProjects = () => invoke<string[]>("list_projects");
+
+/** A project heading as the explorer sees it. `missing` means its registered
+ * folder is gone from disk — the walks list nothing there, so without the
+ * flag it would read as an empty project. */
+export interface ProjectInfo {
+  name: string;
+  missing: boolean;
+}
+
+export const listProjects = () => invoke<ProjectInfo[]>("list_projects");
 /** Parse problems in any project's `.asapnotes.json`. The walks fall back to
  * default rules rather than failing, so a broken file is reported here. */
 export const projectConfigErrors = () => invoke<string[]>("project_config_errors");
@@ -40,39 +49,45 @@ export const notesRootPath = () => invoke<string>("notes_root_path");
 /** How far back the recent-changes view reaches. */
 export const CHANGES_DAYS = 7;
 
-/** One external edit as the ledger sees it: which note, when, how much. */
+/** One external edit as the ledger sees it: which note, when, how much.
+ * `seen` is the user's read-marker — the view dims those and the rail badge
+ * counts only the rest. */
 export interface ChangeSummary {
   note: string;
   atMs: number;
   added: number;
   removed: number;
+  seen: boolean;
 }
 
-/** One diff line. `line` is 1-based in the note as of that edit — the jump
- * target, best-effort against a file that may have moved on. Deleted lines
- * have none. */
-export interface DiffLine {
-  kind: "ctx" | "add" | "del";
-  text: string;
-  line: number | null;
+/** One marked line of the lens document: its 1-based position, and the UTF-16
+ * column ranges of the words that changed. No ranges means the whole line is
+ * new — those are marked wholesale rather than word by word. */
+export interface LensLine {
+  line: number;
+  spans: [number, number][];
 }
 
-export interface Hunk {
-  lines: DiffLine[];
+/** A run of removed lines, hanging after the surviving line above them
+ * (`afterLine` 0 = above the first line). */
+export interface LensDel {
+  afterLine: number;
+  lines: string[];
 }
 
-/** One external edit with its hunks. */
-export interface Change {
-  atMs: number;
-  added: number;
-  removed: number;
-  hunks: Hunk[];
-}
-
-/** A note's external edits, in time order. */
-export interface NoteChanges {
+/** The note as another tool left it, with the window's external edits marked
+ * on it — one baseline, not one document per edit. */
+export interface NoteLens {
   note: string;
-  changes: Change[];
+  text: string;
+  added: LensLine[];
+  dels: LensDel[];
+  addedN: number;
+  removedN: number;
+  atMs: number;
+  /** The user has saved since, so `text` is the state the other tool left
+   * behind rather than what is on disk now. */
+  ownEditsSince: boolean;
 }
 
 /** Snapshot notes that changed on disk behind the app's back — rides the
@@ -80,9 +95,13 @@ export interface NoteChanges {
 export const scanChanges = () => invoke<number>("scan_changes");
 export const recentChanges = (days: number = CHANGES_DAYS) =>
   invoke<ChangeSummary[]>("recent_changes", { days });
-/** Hunks for one note's drill-in, or for every changed note (`note` null). */
-export const changeDetails = (note: string | null, days: number = CHANGES_DAYS) =>
-  invoke<NoteChanges[]>("change_details", { note, days });
+/** One note's marked document; null when nothing external touched it in the
+ * window (its changes have aged out since the ledger was read). */
+export const noteLens = (note: string, days: number = CHANGES_DAYS) =>
+  invoke<NoteLens | null>("note_lens", { note, days });
+/** Mark (or unmark) changes as read in the seen ledger. */
+export const setChangesSeen = (items: { note: string; atMs: number }[], seen: boolean) =>
+  invoke<void>("set_changes_seen", { items, seen });
 export const moveNote = (from: string, to: string) => invoke<void>("move_note", { from, to });
 /** Create a real folder inside a project (`dir` is its would-be id path). */
 export const createFolder = (dir: string) => invoke<void>("create_folder", { dir });
@@ -159,6 +178,9 @@ export interface MountInfo {
   /** The absolute folder it points at. */
   path: string;
   conflicted: boolean;
+  /** The backing folder is gone from disk — the explorer says so instead of
+   * showing an indistinguishably empty folder. */
+  missing: boolean;
   /** Backed by a folder outside the virtual-folders home — one the user owns
    * elsewhere, which deletion warnings call out by path. */
   external: boolean;
@@ -224,6 +246,9 @@ export interface Settings {
   appearance: Appearance;
   projects: Record<string, Project>;
   noteTypes: NoteType[];
+  /** Personal gitignore-syntax patterns applied to every walk; a project's
+   * `.asapnotes.json` list is appended after, so the project file overrides. */
+  files?: string[];
   /** Where "New virtual folder" creates backing folders; absent = app data. */
   virtualFoldersRoot?: string | null;
 }
