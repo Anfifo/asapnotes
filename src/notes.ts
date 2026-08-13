@@ -34,6 +34,55 @@ export const projectConfigErrors = () => invoke<string[]>("project_config_errors
 export const searchNotes = (query: string, limit: number = SEARCH_LIMIT) =>
   invoke<SearchHit[]>("search_notes", { query, limit });
 export const notesRootPath = () => invoke<string>("notes_root_path");
+
+// --- Recent changes: external edits to markdown notes, from the snapshot store ---
+
+/** How far back the recent-changes view reaches. */
+export const CHANGES_DAYS = 7;
+
+/** One external edit as the ledger sees it: which note, when, how much. */
+export interface ChangeSummary {
+  note: string;
+  atMs: number;
+  added: number;
+  removed: number;
+}
+
+/** One diff line. `line` is 1-based in the note as of that edit — the jump
+ * target, best-effort against a file that may have moved on. Deleted lines
+ * have none. */
+export interface DiffLine {
+  kind: "ctx" | "add" | "del";
+  text: string;
+  line: number | null;
+}
+
+export interface Hunk {
+  lines: DiffLine[];
+}
+
+/** One external edit with its hunks. */
+export interface Change {
+  atMs: number;
+  added: number;
+  removed: number;
+  hunks: Hunk[];
+}
+
+/** A note's external edits, in time order. */
+export interface NoteChanges {
+  note: string;
+  changes: Change[];
+}
+
+/** Snapshot notes that changed on disk behind the app's back — rides the
+ * window-focus signal, no watcher. Returns how many edits it recorded. */
+export const scanChanges = () => invoke<number>("scan_changes");
+export const recentChanges = (days: number = CHANGES_DAYS) =>
+  invoke<ChangeSummary[]>("recent_changes", { days });
+/** Hunks for one note's drill-in, or for every changed note (`note` null). */
+export const changeDetails = (note: string | null, days: number = CHANGES_DAYS) =>
+  invoke<NoteChanges[]>("change_details", { note, days });
 export const moveNote = (from: string, to: string) => invoke<void>("move_note", { from, to });
 /** Create a real folder inside a project (`dir` is its would-be id path). */
 export const createFolder = (dir: string) => invoke<void>("create_folder", { dir });

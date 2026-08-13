@@ -559,6 +559,230 @@ body,
   border-radius: 2px;
 }
 
+/* Recent-changes view — same panel surface as search, three states inside:
+   ledger, one note's changes, the read-through stream. Add/remove colors come
+   from the syntax palette (--syn-string / --tint-rose), so the view speaks
+   the existing color system in both themes. */
+.changes-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.3rem 0.5rem 0.4rem;
+  background: #f6f6f6;
+  border-radius: 6px;
+}
+
+/* Inline count on the ± view button: quiet amber, "n notes changed". */
+.view-count {
+  margin-left: 0.25rem;
+  font-size: 0.68rem;
+  color: var(--tint-amber);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The totals strip is the constant across all three states: the totals, the
+   way back, and (from the ledger) the way into the stream. */
+.changes-strip {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.15rem 0.3rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  margin-bottom: 0.25rem;
+}
+
+.chg-back {
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  cursor: pointer;
+}
+
+.chg-back:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.chg-totals {
+  font-variant-numeric: tabular-nums;
+}
+
+.chg-through {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.7rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  cursor: pointer;
+}
+
+.chg-through:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.chg-add-count {
+  color: var(--syn-string);
+  font-variant-numeric: tabular-nums;
+}
+
+.chg-del-count {
+  color: var(--tint-rose);
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-results {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.changes-day {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8a8a8a;
+  margin: 0.4rem 0 0.1rem;
+  padding: 0 0.25rem;
+}
+
+.changes-day:first-child {
+  margin-top: 0.1rem;
+}
+
+/* Ledger rows: one line each, name left, +n −n chips right. */
+.changes-results li.chg-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  padding: 0.12rem 0.25rem;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.chg-chips {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+}
+
+.chg-empty {
+  font-size: 0.74rem;
+  padding: 0.2rem 0.25rem;
+}
+
+/* Detail: hairlines between notes in the stream; a drilled-in note is the
+   same rendering with a single section. */
+.chg-note + .chg-note {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  margin-top: 0.45rem;
+  padding-top: 0.35rem;
+}
+
+.chg-note-head {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  padding: 0.1rem 0.25rem 0.2rem;
+}
+
+/* Diff lines read as content, so they wrap; additions carry normal ink with
+   a green edge and a faint wash, context is muted, expanded deletions are
+   muted rose with no strikethrough. */
+.chg-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 0.76rem;
+  padding: 0.02rem 0.25rem 0.02rem 0.35rem;
+  border-left: 2px solid transparent;
+}
+
+.chg-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chg-line.add {
+  border-left-color: var(--syn-string);
+  background: rgba(44, 122, 52, 0.06);
+}
+
+.chg-line.ctx {
+  color: #8a8a8a;
+}
+
+.chg-line.del {
+  color: var(--tint-rose);
+  opacity: 0.8;
+}
+
+.chg-gap {
+  color: #8a8a8a;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.6rem;
+  user-select: none;
+}
+
+/* A run of deleted lines collapses to this pill; click expands it. */
+.chg-del-pill {
+  display: block;
+  font: inherit;
+  font-size: 0.66rem;
+  color: var(--tint-rose);
+  opacity: 0.75;
+  background: rgba(179, 64, 58, 0.07);
+  border: none;
+  border-radius: 8px;
+  padding: 0.05rem 0.5rem;
+  margin: 0.12rem 0.6rem;
+  cursor: pointer;
+}
+
+.chg-del-pill:hover {
+  opacity: 1;
+}
+
+/* Jump to the line in the editor — revealed by hovering its row. */
+.chg-jump {
+  flex: none;
+  font: inherit;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: #8a8a8a;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  padding: 0 0.15rem;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.chg-line:hover .chg-jump {
+  opacity: 0.8;
+}
+
+.chg-line:hover .chg-jump:hover {
+  opacity: 1;
+  color: inherit;
+}
+
 /* No CSS gap here: the 6px between panels is an element — a plain spacer or a
    draggable split. Its own display beats the `hidden` attribute, hence the rule. */
 .explorer-cards {
@@ -1812,6 +2036,7 @@ body,
   .explorer-bar,
   .explorer-card,
   .search-view,
+  .changes-view,
   .top-panel,
   .content-panel {
     background: #2f2f2f;
@@ -1869,6 +2094,8 @@ body,
   .pin-btn:hover,
   .collapse-btn:hover,
   .view-btn:hover,
+  .chg-back:hover,
+  .chg-through:hover,
   .search-results li:hover,
   .explorer li:hover,
   .explorer summary:hover {
@@ -1890,6 +2117,29 @@ body,
 
   .search-line {
     color: #7d7d7d;
+  }
+
+  .changes-strip {
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .chg-note + .chg-note {
+    border-top-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .changes-day,
+  .chg-line.ctx,
+  .chg-gap,
+  .chg-jump {
+    color: #9a9a9a;
+  }
+
+  .chg-line.add {
+    background: rgba(121, 201, 126, 0.09);
+  }
+
+  .chg-del-pill {
+    background: rgba(229, 136, 128, 0.12);
   }
 
   .search-results mark.hit {

@@ -65,7 +65,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
       currently 1.2rem); riding along on the sections candidate sheet as a width ladder.
       **Implemented 2026-08-13 at the recommended 1.4rem** (+3.2px; the ladder's 1.6rem
       read as a gutter). The floating explorer's left offset tracks it (`calc(1.4rem +
-    12px)` clears the slat). Pending the same hands-on pass as the sections item.
+12px)` clears the slat). Pending the same hands-on pass as the sections item.
 - [ ] **Investigate: a "recent changes" view over the .md notes** (2026-08-13) —
       requested: a way to see recent additions and edits to the markdown notes
       specifically, so updates across notes can be tracked in one place. Presentation
@@ -99,7 +99,99 @@ The AI (or anyone) working on this repo keeps this file current while working:
       the `‹` way back. Carried from C into detail + stream: hover `↗` jump-to-line.
       Deletions stay the pill, expanding to strikethrough-free muted rose. Blocked on
       the history-source investigation above before any code.
-- [ ] **Check behavior when things vanish from disk behind the app's back**
+      _2026-08-13 history-source investigation (the blocking half — findings +
+      recommendation, awaiting a pick; no code):_ nothing in the app stores past
+      content today — drafts hold only the current unsaved buffer (cleared on save),
+      the recycle bin holds deletions, and mtimes say when, never what. Four sources
+      weighed: **git** (rejected as the source: the notes root isn't a repo and isn't
+      guaranteed to be one, commit granularity isn't an edit timeline, uncommitted
+      work is invisible, and it needs a shell-out to a git that may not exist or a
+      heavy library; possible later enrichment for linked repos), **mtime-only**
+      (can't show added text — fails the picked design), **OS-level file history**
+      (not dependable across machines, content not queryable), and an **app-data
+      snapshot store** — recommended. Shape: `history/<note-id>/<timestamp>.md`
+      beside `drafts/`, the same id-mirrored idiom; capture rides the two signals
+      that already exist, so no watcher, no timer, zero idle cost: (1) every
+      `save_note` snapshots — reading the pre-save disk content first when the note
+      has no history yet, so even the first save after shipping diffs; (2) the
+      window-focus re-sync grows a scan (over `note_paths`, the corpus walk search
+      already uses): compare each file's mtime to the store's latest, read + snapshot
+      the changed ones, dedupe by content hash (touched-but-identical is common) —
+      this is what catches other tools and agents editing notes, which is the "track
+      updates across notes" ask. First sight of a note stores content as a baseline
+      (renders as nothing, not as everything-added); the store always holding every
+      note's latest content is the invariant that keeps the scan cheap (mtime
+      compare, read only what changed). Accepted consequences: the store starts as a
+      one-time copy of the corpus (text-sized; the >2 MB search cap applies),
+      in-app `move_note` carries history like it carries the draft while an external
+      rename reads as vanish+appear, and `delete_note` hard-removes history like it
+      hard-removes the draft (app-internal state, not user content). Retention:
+      prune on the same focus scan, no timer — proposed 30 days kept, view defaults
+      to ~7. Diffing is computed on demand in Rust (the ledger needs counts across
+      every file, so hunks/counts travel over IPC, not file pairs): recommend the
+      `similar` crate — a user-facing diff lives or dies on hunk readability, which
+      is exactly where a hand-rolled Myers would spend its budget (same reasoning as
+      `ignore` for gitignore syntax). This is not the rejected search-index problem:
+      an append-only log of what the app observed, never a mirror that must
+      reconcile with the files. Sub-decisions open, with leans: the unsaved draft is
+      **not** the diff tip in v1 (saved content only — the dirty buffer is already
+      visible in the editor); no backfill (history reaches from ship-day forward;
+      git could backfill linked repos later if ever wanted).
+      _Constraint added 2026-08-13:_ **markdown notes only** — capture, store, and
+      view all filter to types with the `markdown` view (`.md`/`.markdown`); the
+      other registry types (json/yaml/csv/config/log/…) are never snapshotted, which
+      also keeps the one-time baseline copy to the actual notes corpus.
+      _Re-scoped 2026-08-13:_ **the view tracks external edits only** — the ask is
+      "what did the AI change", not a log of the user's own typing. Every snapshot
+      carries an origin: `app` (the user's own Ctrl+S — recorded silently, because
+      a diff needs the last app-known state as its "before", never shown as a
+      change) vs `external` (observed changed on disk by the focus scan — what the
+      ledger and drill-in show). Honest limit, stated in the design: external means
+      "not this app" — an agent, the future MCP sidecar, but also a hand-edit in
+      another editor or a `git pull`; the app can't attribute further. Bonus noted
+      for later, out of this item's scope: both origins in one store is already the
+      data shape for a per-note "history / restore an older version" feature.
+      _Store limits added 2026-08-13:_ three caps, enforced in one prune pass on
+      the focus scan (amortized to first focus of the day, no timer): **age**
+      (30 days), **per-note count** (~25 versions, oldest first — bounds an agent
+      hammering one note), **total store budget** (~50 MB soft cap, oldest across
+      all notes first — the backstop that makes the worst case a number). A note's
+      latest snapshot is never pruned: "the store holds every note's last-known
+      state" is the invariant the scan and the diffs stand on. Defaults in one
+      const block, no settings UI in v1.
+      **Implemented 2026-08-13 as designed above, all gates + tests clean,
+      pending hands-on check.** Backend: new `src-tauri/src/history.rs` owns the
+      store (`history/<timestamp>-<origin>.md` dirs mirroring note ids), the
+      save hook in `save_note` (pre-save baseline on first sight, post-save
+      snapshot, both silent `app` origin), the `scan_changes` command the focus
+      handler now calls (mtime vs latest-snapshot compare, content-dedupe, first
+      sight = baseline), the daily-amortized prune (`.pruned` marker file), and
+      the two diff commands (`recent_changes` ledger counts, `change_details`
+      hunks — `similar` crate, 2 context lines, new-side line numbers for the
+      jump). Snapshot filenames are zero-padded so name order is time order; a
+      colliding timestamp bumps forward. `move_note`/`delete_note`/
+      `delete_folder`/`delete_mount` carry/remove history exactly as they do
+      drafts. Twelve unit tests beside `project_config.rs`'s. **Backend verified
+      end-to-end against the live corpus** (second instance on the real notes
+      root, commands driven over the webview devtools protocol): 122 markdown
+      baselines and nothing else on first scan, an external edit surfacing as
+      `+2 −1` with correct hunks, an app save staying silent and becoming the
+      next diff's "before", touch-without-change deduped, `delete_note` taking
+      the history dir with it. View: new `src/Changes.tsx` behind the `±` button
+      (inline amber count of changed notes) — the three picked states, deletion
+      pills expanding to muted rose, `⋯` between hunks, hover `↗` jump (reuses
+      `openHit`), totals strip constant with `‹` back and "Read through ›";
+      colors ride `--syn-string`/`--tint-rose`/`--tint-amber` so both themes
+      come free. The scan+ledger refresh runs at startup (after first paint) and
+      on every window focus, riding the existing re-sync — no watcher, no timer.
+      All three states + the jump also exercised live over the same driven
+      instance (the ledger's first real content: this file's reformat, caught as
+      an external edit). Deliberately left out: View-menu/palette entries and a
+      shortcut (the design names only the view button), and the per-note
+      restore-a-version idea stays future. Pending hands-on: the ± badge and
+      each of the three states in both themes, drill-in on a note an agent
+      really edited, a deletion pill expand, `↗` jump landing right, and the
+      empty state after seven quiet days.
       (2026-08-13) — requested: audit what happens when a note, folder, project root,
       or a virtual folder's backing directory is removed outside the app (another
       tool, a `git clean`, an unplugged drive) — nothing notifies us. Cases to walk:

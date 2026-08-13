@@ -5,6 +5,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm as confirmDialog, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { ChangesView } from "./Changes";
 import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
@@ -227,9 +228,12 @@ function App() {
     () => localStorage.getItem("explorerPinned") !== "0",
   );
   const [explorerOpen, setExplorerOpen] = useState(explorerPinned);
-  // The explorer panel hosts two views; search is deliberately not persisted —
-  // reopening the app should land on the file tree, not a stale query.
-  const [explorerView, setExplorerView] = useState<"files" | "search">("files");
+  // The explorer panel hosts three views; search and changes are deliberately
+  // not persisted — reopening the app should land on the file tree.
+  const [explorerView, setExplorerView] = useState<"files" | "search" | "changes">("files");
+  // External edits in the changes window: App owns them because the view
+  // button's count shows even while the view itself is closed.
+  const [changes, setChanges] = useState<api.ChangeSummary[]>([]);
   // Bumped on every Ctrl+Shift+F so a repeat press refocuses and selects the
   // query box even when the search view is already showing.
   const [searchFocus, setSearchFocus] = useState(0);
@@ -886,6 +890,18 @@ function App() {
     [applyZoom, toast],
   );
 
+  // Snapshot what changed on disk behind the app's back, then re-read the
+  // ledger — the scan is what makes the count honest, and the window slides,
+  // so both run together. Best-effort by design: a failing history store
+  // must not toast on every focus, it just reads as "no changes".
+  const refreshChanges = useCallback(() => {
+    void api
+      .scanChanges()
+      .then(() => api.recentChanges())
+      .then(setChanges)
+      .catch(() => {});
+  }, []);
+
   // Startup: recover the most recent draft; else open the most recent note;
   // else start on a blank capture.
   useEffect(() => {
@@ -907,6 +923,9 @@ function App() {
       // Projects living outside the notes root can be big — walk them after
       // the first paint.
       void api.listNotes().then(setNotes);
+      // Same reasoning for the changes scan: it reads only what changed, but
+      // the first paint shouldn't wait for even that.
+      refreshChanges();
       // Restored tabs win: reopen the last active one (content loads here, the
       // rest stay lazy). A tab whose note vanished is dropped and we fall back.
       const restored = tabsRef.current;
@@ -937,7 +956,7 @@ function App() {
         showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
       }
     })();
-  }, [showDoc, applySettings]);
+  }, [showDoc, applySettings, refreshChanges]);
 
   // Tabs (and which one is active) survive restarts.
   useEffect(() => {
@@ -1173,6 +1192,9 @@ function App() {
       // Mounts come back from the backend rather than from the settings
       // document, because whether one is conflicted is a filesystem question.
       void api.listMounts().then(setMounts);
+      // The same signal catches what other tools wrote to the notes while the
+      // app wasn't looking — this is what fills the recent-changes view.
+      refreshChanges();
       void api
         .getSettings(true)
         .then(applySettings)
@@ -1203,7 +1225,7 @@ function App() {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [applySettings, toast]);
+  }, [applySettings, toast, refreshChanges]);
 
   // `summoned` carries the hotkey-press epoch ms from Rust; the next animation
   // frame approximates when the shown window actually painted.
@@ -2048,6 +2070,14 @@ function App() {
                 onError={(msg) => toast(`Search failed — ${msg}`)}
               />
             }
+            changesSlot={
+              <ChangesView
+                summaries={changes}
+                onOpenLine={openHit}
+                onError={(msg) => toast(`Recent changes — ${msg}`)}
+              />
+            }
+            changesCount={new Set(changes.map((c) => c.note)).size}
             pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
             onCollapse={() => setExplorerOpen(false)}

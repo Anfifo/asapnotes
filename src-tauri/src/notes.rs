@@ -27,6 +27,7 @@
 //! other draft is an unsaved untitled note. `Ctrl+S` on the frontend writes the
 //! note and deletes the draft.
 
+use crate::history;
 use crate::project_config::{self, Rules, Verdict};
 use crate::settings::{self, Mount, Project, Settings};
 use serde::{Deserialize, Serialize};
@@ -78,7 +79,7 @@ fn drafts_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn valid_segment(s: &str) -> bool {
+pub(crate) fn valid_segment(s: &str) -> bool {
     !s.is_empty() && !s.contains('\\') && !s.starts_with('.')
 }
 
@@ -439,7 +440,7 @@ pub struct SearchHit {
 
 /// Every note id paired with its absolute path — the same corpus `list_notes`
 /// enumerates, but resolved once instead of per note.
-fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
+pub(crate) fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
     let s = settings::settings(app)?;
     let root = notes_root(app)?;
     let mut out: Vec<(String, PathBuf)> = list_tree(&s, &root)?
@@ -473,7 +474,7 @@ fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
 /// one minified file can't push megabytes through the IPC boundary.
 const MAX_HIT_CHARS: usize = 300;
 /// Files above this are assumed not to be prose and skipped.
-const MAX_SEARCH_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const MAX_SEARCH_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Case-insensitive literal search over every note's contents.
 ///
@@ -617,7 +618,34 @@ pub fn save_note(app: AppHandle, name: String, content: String) -> Result<(), St
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    fs::write(path, content).map_err(|e| e.to_string())
+    // History is best-effort around the save: its errors are swallowed,
+    // because a broken snapshot store must never block writing the note.
+    let s = settings::settings(&app)?;
+    let track = history::tracked(&s, &name) && content.len() as u64 <= MAX_SEARCH_BYTES;
+    let store = track.then(|| history::store_dir(&app).ok()).flatten();
+    if let Some(store) = &store {
+        // A note the store has never seen: its pre-save disk content is the
+        // "before" this save diffs against, so even the first save after
+        // shipping doesn't render as everything-added.
+        if !history::has_any(store, &name) {
+            if let (Ok(old), Ok(meta)) = (fs::read_to_string(&path), fs::metadata(&path)) {
+                if meta.len() <= MAX_SEARCH_BYTES {
+                    let at = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or_else(|| now_ms().saturating_sub(1));
+                    let _ = history::record(store, &name, &old, history::Origin::App, at);
+                }
+            }
+        }
+    }
+    fs::write(&path, &content).map_err(|e| e.to_string())?;
+    if let Some(store) = &store {
+        let _ = history::record(store, &name, &content, history::Origin::App, now_ms());
+    }
+    Ok(())
 }
 
 /// Move a note to the recycle bin (recoverable — notes are user-owned files,
@@ -629,6 +657,11 @@ pub fn delete_note(app: AppHandle, name: String) -> Result<(), String> {
     let draft = drafts_dir(&app)?.join(checked_name(&app, &s, &name)?);
     if draft.exists() {
         let _ = fs::remove_file(draft);
+    }
+    // Snapshots are app-internal state, not user content: hard-removed with
+    // the note, like the draft.
+    if let Ok(store) = history::store_dir(&app) {
+        let _ = fs::remove_dir_all(store.join(&name));
     }
     Ok(())
 }
@@ -710,6 +743,18 @@ pub fn move_note(app: AppHandle, from: String, to: String) -> Result<(), String>
         let draft_to = note_path(&app, &s, &drafts, &to)?;
         let _ = fs::rename(draft_from, draft_to);
     }
+    // History travels with the note, like the draft. The store lives on one
+    // volume, so a plain rename is enough.
+    if let Ok(store) = history::store_dir(&app) {
+        let hist_from = store.join(&from);
+        if hist_from.is_dir() {
+            let hist_to = store.join(&to);
+            if let Some(parent) = hist_to.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::rename(hist_from, hist_to);
+        }
+    }
     Ok(())
 }
 
@@ -780,9 +825,12 @@ pub fn delete_folder(app: AppHandle, dir: String) -> Result<(), String> {
         return Err(format!("no folder at {dir}"));
     }
     trash::delete(&path).map_err(|e| e.to_string())?;
-    // Drafts are app-managed shadow copies, removed outright like
-    // `delete_note` removes one note's draft.
+    // Drafts and snapshots are app-managed shadow copies, removed outright
+    // like `delete_note` removes one note's.
     let _ = fs::remove_dir_all(drafts_dir(&app)?.join(&dir));
+    if let Ok(store) = history::store_dir(&app) {
+        let _ = fs::remove_dir_all(store.join(&dir));
+    }
     Ok(())
 }
 
@@ -1463,8 +1511,11 @@ pub fn delete_mount(app: AppHandle, project: String, at: String) -> Result<(), S
     if Path::new(&mount.path).exists() {
         trash::delete(&mount.path).map_err(|e| e.to_string())?;
     }
-    // Drafts are app-managed shadow copies, removed outright like
-    // `delete_note` removes one note's draft.
+    // Drafts and snapshots are app-managed shadow copies, removed outright
+    // like `delete_note` removes one note's.
     let _ = fs::remove_dir_all(drafts_dir(&app)?.join(&project).join(&at));
+    if let Ok(store) = history::store_dir(&app) {
+        let _ = fs::remove_dir_all(store.join(&project).join(&at));
+    }
     remove_mount(app, project, at)
 }

@@ -1,3 +1,4 @@
+mod history;
 mod notes;
 mod project_config;
 mod settings;
@@ -175,6 +176,9 @@ pub fn run() {
             notes::unlink_project,
             notes::set_project_path,
             notes::list_mounts,
+            history::scan_changes,
+            history::recent_changes,
+            history::change_details,
             notes::add_mount,
             notes::create_virtual_folder,
             notes::remove_mount,

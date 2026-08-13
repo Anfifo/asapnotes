@@ -72,11 +72,15 @@ interface ExplorerProps {
   /** Folders created this session that hold no note yet. The tree derives from
    * note files, so without this an empty new folder would vanish on sight. */
   newFolders: string[];
-  /** Which of the panel's two views is showing. */
-  view: "files" | "search";
-  onViewChange: (view: "files" | "search") => void;
+  /** Which of the panel's views is showing. */
+  view: "files" | "search" | "changes";
+  onViewChange: (view: "files" | "search" | "changes") => void;
   /** Rendered in place of the file tree while `view` is "search". */
   searchSlot: ReactNode;
+  /** Rendered in place of the file tree while `view` is "changes". */
+  changesSlot: ReactNode;
+  /** Notes with external edits in the window — the ± button's count. */
+  changesCount: number;
   /** Docked beside the editor (true) vs floating over it. */
   pinned: boolean;
   onTogglePin: () => void;
@@ -123,6 +127,8 @@ export function Explorer({
   view,
   onViewChange,
   searchSlot,
+  changesSlot,
+  changesCount,
   pinned,
   onTogglePin,
   onCollapse,
@@ -385,6 +391,13 @@ export function Explorer({
           >
             ⌕
           </button>
+          <button
+            className={view === "changes" ? "view-btn open" : "view-btn"}
+            title="Recent changes"
+            onClick={() => onViewChange("changes")}
+          >
+            ±{changesCount > 0 && <span className="view-count">{changesCount}</span>}
+          </button>
         </div>
         <button
           className="view-btn"
@@ -409,10 +422,11 @@ export function Explorer({
         </button>
       </header>
       {view === "search" && searchSlot}
+      {view === "changes" && changesSlot}
       <div
         className="explorer-cards"
         ref={cardsRef}
-        hidden={view === "search"}
+        hidden={view !== "files"}
         onContextMenu={onBodyContext}
       >
         {currentProject && (
