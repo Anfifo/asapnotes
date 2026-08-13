@@ -36,6 +36,11 @@
   --tint-orange: #9a5518;
   --tint-gray: #6e6e6e;
   --tint-teal: #10736b;
+
+  /* One text size for the popup surfaces (menu dropdowns, context menus,
+     palette rows, mention dropdown); their paddings are em so the geometry
+     tracks it. Settings → Appearance scales this token (85/100/115%). */
+  --popup-font-size: 0.8rem;
 }
 
 html,
@@ -199,8 +204,9 @@ body,
   top: 100%;
   left: 0;
   z-index: 40; /* above the floating explorer (20) */
-  min-width: 15rem;
-  padding: 0.3rem;
+  min-width: 18.75em;
+  padding: 0.375em;
+  font-size: var(--popup-font-size);
   background: #232323;
   color: #d6d6d6;
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -211,14 +217,14 @@ body,
 .menu-drop hr {
   border: none;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  margin: 0.3rem 0.4rem;
+  margin: 0.375em 0.5em;
 }
 
 .menu-item {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 1.2rem;
+  gap: 1.5em;
   width: 100%;
   font: inherit;
   color: inherit;
@@ -226,7 +232,7 @@ body,
   background: none;
   border: none;
   border-radius: 5px;
-  padding: 0.28rem 0.6rem;
+  padding: 0.35em 0.75em;
   cursor: default;
 }
 
@@ -248,12 +254,12 @@ body,
   top: auto;
   left: auto;
   z-index: 60; /* above every overlay, palette included */
-  min-width: 12rem;
+  min-width: 15em;
 }
 
 .menu-detail {
   color: #8f8f8f;
-  font-size: 0.72rem;
+  font-size: 0.9em;
 }
 
 .menubar-drag {
@@ -1484,13 +1490,16 @@ body,
   overscroll-behavior: contain;
 }
 
+/* Rows carry the shared popup size (they used to inherit the root 16px —
+   the one popup surface that did); em paddings keep the geometry tracking. */
 .palette li {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 1rem;
-  padding: 0.4rem 0.65rem;
+  gap: 1em;
+  padding: 0.4em 0.65em;
   border-radius: 8px;
+  font-size: var(--popup-font-size);
   cursor: pointer;
 }
 
@@ -1504,8 +1513,8 @@ body,
 
 .palette li.section {
   cursor: default;
-  padding: 0.55rem 0.65rem 0.15rem;
-  font-size: 0.68rem;
+  padding: 0.8em 0.76em 0.22em;
+  font-size: calc(var(--popup-font-size) * 0.85);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1553,14 +1562,14 @@ body,
 
 .editor .cm-tooltip-autocomplete > ul {
   font-family: inherit;
-  font-size: 0.82rem;
+  font-size: var(--popup-font-size);
   max-height: 13rem;
   min-width: 11rem;
   max-width: 24rem;
 }
 
 .editor .cm-tooltip-autocomplete > ul > li {
-  padding: 0.18rem 0.5rem;
+  padding: 0.22em 0.62em;
   border-radius: 5px;
   line-height: 1.45;
 }

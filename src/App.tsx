@@ -45,6 +45,9 @@ const EDITOR_MIN_W = 280;
 
 const clampZoom = (z: number) => Math.min(3, Math.max(0.5, Math.round(z * 10) / 10));
 
+// Popup text size steps, as percentages of the default `--popup-font-size`.
+const POPUP_SCALES = [85, 100, 115];
+
 /** A stored (or hand-edited) explorer width, held to what this window can show.
  * The resize drag has its own limits — this is the boot/settings clamp. */
 const clampExplorerWidth = (w: number) =>
@@ -287,6 +290,12 @@ function App() {
   // Where a note type's color lands on explorer rows; settings-file only (no
   // boot mirror — rows paint after the first data round trip anyway).
   const [explorerTint, setExplorerTint] = useState<"full" | "icon">("full");
+  // Popup text size step; mirrored in localStorage like theme/zoom so no
+  // popup ever opens at the wrong size while the settings file loads.
+  const [popupScale, setPopupScaleState] = useState(() => {
+    const saved = Number(localStorage.getItem("popupScale"));
+    return POPUP_SCALES.includes(saved) ? saved : 100;
+  });
   // Tab held at the close confirm (Save / Discard / Cancel), null when none.
   const [closeAsk, setCloseAsk] = useState<string | null>(null);
   // The deliberate zero-tab state (welcome panel). Distinct from `open` being
@@ -359,7 +368,17 @@ function App() {
     zoom,
     explorer: { width: explorerWidth, pinned: explorerPinned },
     explorerTint,
+    popupScale,
   };
+
+  // Stamp the popup size token; the popup surfaces and their em paddings all
+  // follow it, so this one property is the whole mechanism.
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--popup-font-size",
+      `${(popupScale * 8) / 1000}rem`,
+    );
+  }, [popupScale]);
 
   /** Write appearance to settings.json. `patch` carries the value the caller
    * just changed — its state hasn't landed in `appearanceRef` yet. */
@@ -391,6 +410,12 @@ function App() {
     setExplorerPinnedState(pinned);
     localStorage.setItem("explorerPinned", pinned ? "1" : "0");
     persistAppearance({ explorer: { width: explorerWidth, pinned } });
+  };
+
+  const setPopupScale = (scale: number) => {
+    setPopupScaleState(scale);
+    localStorage.setItem("popupScale", String(scale));
+    persistAppearance({ popupScale: scale });
   };
 
   // Editor status flows straight to the StatusBar through this ref — routing
@@ -807,6 +832,11 @@ function App() {
       }
       const tint = settings.appearance.explorerTint;
       if (tint === "full" || tint === "icon") setExplorerTint(tint);
+      const scale = settings.appearance.popupScale;
+      if (typeof scale === "number" && POPUP_SCALES.includes(scale)) {
+        setPopupScaleState(scale);
+        localStorage.setItem("popupScale", String(scale)); // mirror only
+      }
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
     },
@@ -2164,6 +2194,8 @@ function App() {
             setExplorerTint(next);
             persistAppearance({ explorerTint: next });
           }}
+          popupScale={popupScale}
+          onPopupScaleChange={setPopupScale}
           onClose={() => {
             setSettingsOpen(false);
             editorRef.current?.focus();

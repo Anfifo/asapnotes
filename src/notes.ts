@@ -157,6 +157,9 @@ export interface Appearance {
   explorer?: { width?: number | null; pinned?: boolean | null } | null;
   /** Where a note type's color lands on an explorer row: "full" | "icon". */
   explorerTint?: string | null;
+  /** Popup text size (menus, context menus, palette rows) as a percentage of
+   * the default (85 | 100 | 115). */
+  popupScale?: number | null;
 }
 
 export interface Settings {

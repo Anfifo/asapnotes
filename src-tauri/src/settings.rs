@@ -72,6 +72,10 @@ pub struct Appearance {
     /// extension, the default) or `icon` (extension stays in the muted ink).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub explorer_tint: Option<String>,
+    /// Popup text size (menus, context menus, palette rows) as a percentage
+    /// of the default; the frontend scales its size token by it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub popup_scale: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

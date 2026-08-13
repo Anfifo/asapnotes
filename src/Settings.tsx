@@ -14,6 +14,13 @@ const TINTS: ["full" | "icon", string][] = [
   ["icon", "Icon only"],
 ];
 
+/** Popup text size steps, as percentages of the default token. */
+const POPUP_SIZES: [number, string][] = [
+  [85, "Small"],
+  [100, "Default"],
+  [115, "Large"],
+];
+
 const KEYBINDS: [string, string][] = [
   ["Ctrl+Alt+A", "Summon / hide (global)"],
   ["Ctrl+N / Ctrl+T", "New note (tab)"],
@@ -73,6 +80,9 @@ interface SettingsProps {
   /** Where a note type's color lands on explorer rows. */
   explorerTint: "full" | "icon";
   onExplorerTintChange: (tint: "full" | "icon") => void;
+  /** Popup text size (menus, context menus, palette) as a % of the default. */
+  popupScale: number;
+  onPopupScaleChange: (scale: number) => void;
   onClose: () => void;
 }
 
@@ -85,6 +95,8 @@ export function Settings({
   onThemeChange,
   explorerTint,
   onExplorerTintChange,
+  popupScale,
+  onPopupScaleChange,
   onClose,
 }: SettingsProps) {
   const [version, setVersion] = useState("");
@@ -150,6 +162,23 @@ export function Settings({
                       className={value === explorerTint ? "active" : undefined}
                       aria-pressed={value === explorerTint}
                       onClick={() => onExplorerTintChange(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td>Popup text size</td>
+              <td>
+                <div className="segmented" role="group" aria-label="Popup text size">
+                  {POPUP_SIZES.map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={value === popupScale ? "active" : undefined}
+                      aria-pressed={value === popupScale}
+                      onClick={() => onPopupScaleChange(value)}
                     >
                       {label}
                     </button>
