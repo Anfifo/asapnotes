@@ -237,6 +237,19 @@ function App() {
     const saved = Number(localStorage.getItem("explorerWidth"));
     return saved > 0 ? clampExplorerWidth(saved) : EXPLORER_DEFAULT_W;
   });
+  // Current-project panel height; null sizes it to content. The drag inside
+  // Explorer clamps against the live column, so no boot clamp is needed here.
+  const [explorerPane, setExplorerPane] = useState<number | null>(() => {
+    const saved = Number(localStorage.getItem("explorerPane"));
+    return saved > 0 ? saved : null;
+  });
+  // Panels closed from their header ×; the View menu reopens them.
+  const [hideRecent, setHideRecentState] = useState(
+    () => localStorage.getItem("explorerHideRecent") === "1",
+  );
+  const [hideNotes, setHideNotesState] = useState(
+    () => localStorage.getItem("explorerHideNotes") === "1",
+  );
   // A pinned explorer docks while it leaves the editor a usable strip; a window
   // squeezed past that collapses it to the rail, and reopening floats it.
   const [winWidth, setWinWidth] = useState(() => window.innerWidth);
@@ -366,7 +379,13 @@ function App() {
   appearanceRef.current = {
     theme,
     zoom,
-    explorer: { width: explorerWidth, pinned: explorerPinned },
+    explorer: {
+      width: explorerWidth,
+      pinned: explorerPinned,
+      pane: explorerPane,
+      hideRecent,
+      hideNotes,
+    },
     explorerTint,
     popupScale,
   };
@@ -409,7 +428,19 @@ function App() {
   const setExplorerPinned = (pinned: boolean) => {
     setExplorerPinnedState(pinned);
     localStorage.setItem("explorerPinned", pinned ? "1" : "0");
-    persistAppearance({ explorer: { width: explorerWidth, pinned } });
+    persistAppearance({ explorer: { ...appearanceRef.current.explorer, pinned } });
+  };
+
+  const setHideRecent = (hide: boolean) => {
+    setHideRecentState(hide);
+    localStorage.setItem("explorerHideRecent", hide ? "1" : "0");
+    persistAppearance({ explorer: { ...appearanceRef.current.explorer, hideRecent: hide } });
+  };
+
+  const setHideNotes = (hide: boolean) => {
+    setHideNotesState(hide);
+    localStorage.setItem("explorerHideNotes", hide ? "1" : "0");
+    persistAppearance({ explorer: { ...appearanceRef.current.explorer, hideNotes: hide } });
   };
 
   const setPopupScale = (scale: number) => {
@@ -829,6 +860,18 @@ function App() {
       if (typeof explorer?.pinned === "boolean") {
         setExplorerPinnedState(explorer.pinned);
         localStorage.setItem("explorerPinned", explorer.pinned ? "1" : "0"); // mirror only
+      }
+      if (typeof explorer?.pane === "number" && explorer.pane > 0) {
+        setExplorerPane(explorer.pane);
+        localStorage.setItem("explorerPane", String(explorer.pane)); // mirror only
+      }
+      if (typeof explorer?.hideRecent === "boolean") {
+        setHideRecentState(explorer.hideRecent);
+        localStorage.setItem("explorerHideRecent", explorer.hideRecent ? "1" : "0"); // mirror only
+      }
+      if (typeof explorer?.hideNotes === "boolean") {
+        setHideNotesState(explorer.hideNotes);
+        localStorage.setItem("explorerHideNotes", explorer.hideNotes ? "1" : "0"); // mirror only
       }
       const tint = settings.appearance.explorerTint;
       if (tint === "full" || tint === "icon") setExplorerTint(tint);
@@ -1432,6 +1475,14 @@ function App() {
           run: () => setExplorerOpen((o) => !o),
         },
         {
+          label: hideRecent ? "Show Recent panel" : "Hide Recent panel",
+          run: () => setHideRecent(!hideRecent),
+        },
+        {
+          label: hideNotes ? "Show Notes panel" : "Hide Notes panel",
+          run: () => setHideNotes(!hideNotes),
+        },
+        {
           label: "Search in notes",
           detail: "Ctrl+Shift+F",
           run: openSearchView,
@@ -1705,6 +1756,9 @@ function App() {
   const startExplorerCreate = (dir: string, kind: "note" | "folder" | "virtual" = "note") => {
     setExplorerOpen(true);
     setExplorerView("files");
+    // Creation targeting the Notes panel reopens it, the way creation into a
+    // collapsed project expands it — the input has to be visible to be used.
+    if (hideNotes && dir.split("/")[0] !== currentProject) setHideNotes(false);
     setExplorerCreateKind(kind);
     setExplorerCreate(dir);
   };
@@ -2010,8 +2064,24 @@ function App() {
             // Persisted on release, not per pointer move.
             onResizeEnd={() => {
               localStorage.setItem("explorerWidth", String(explorerWidth));
-              persistAppearance({ explorer: { width: explorerWidth, pinned: explorerPinned } });
+              persistAppearance({ explorer: { ...appearanceRef.current.explorer } });
             }}
+            paneHeight={explorerPane}
+            onPaneResize={setExplorerPane}
+            onPaneResizeEnd={() => {
+              if (explorerPane === null) return;
+              localStorage.setItem("explorerPane", String(explorerPane));
+              persistAppearance({ explorer: { ...appearanceRef.current.explorer } });
+            }}
+            onPaneReset={() => {
+              setExplorerPane(null);
+              localStorage.removeItem("explorerPane");
+              persistAppearance({ explorer: { ...appearanceRef.current.explorer, pane: null } });
+            }}
+            hideRecent={hideRecent}
+            hideNotes={hideNotes}
+            onHideRecent={() => setHideRecent(true)}
+            onHideNotes={() => setHideNotes(true)}
           />
         )}
         <div className="main">

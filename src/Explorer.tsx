@@ -85,6 +85,18 @@ interface ExplorerProps {
   onResize: (width: number) => void;
   /** Drag finished — the moment to persist the width. */
   onResizeEnd: () => void;
+  /** Height of the current-project panel; null sizes it to its content. */
+  paneHeight: number | null;
+  onPaneResize: (height: number) => void;
+  /** Split drag finished — the moment to persist the pane height. */
+  onPaneResizeEnd: () => void;
+  /** Double-click on a split — back to size-to-content. */
+  onPaneReset: () => void;
+  /** Panels closed from their header ×; the View menu reopens them. */
+  hideRecent: boolean;
+  hideNotes: boolean;
+  onHideRecent: () => void;
+  onHideNotes: () => void;
   /** Where a type's color lands on a row: icon + extension, or icon only. */
   tint: "full" | "icon";
 }
@@ -117,12 +129,24 @@ export function Explorer({
   width,
   onResize,
   onResizeEnd,
+  paneHeight,
+  onPaneResize,
+  onPaneResizeEnd,
+  onPaneReset,
+  hideRecent,
+  hideNotes,
+  onHideRecent,
+  onHideNotes,
   tint,
 }: ExplorerProps) {
   const noteNames = new Set(notes.map((n) => n.name));
   const draftIds = new Set(drafts.map((d) => d.name));
   // The panel's left x while a resize drag is active, else null.
   const dragLeft = useRef<number | null>(null);
+  // A split drag's start: pointer y and the project panel's height then.
+  const paneDrag = useRef<{ y: number; h: number } | null>(null);
+  const paneRef = useRef<HTMLElement>(null);
+  const cardsRef = useRef<HTMLDivElement>(null);
   // Non-current projects start collapsed; a project's tree isn't built until
   // its first expand, so big external projects cost nothing while closed.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -188,6 +212,22 @@ export function Explorer({
       </li>
     );
   };
+
+  /** Hover-revealed "close this panel" button for a panel's heading row. */
+  const hideBtn = (onHide: () => void) => (
+    <button
+      className="hide-btn"
+      title="Hide panel — the View menu brings it back"
+      onClick={(e) => {
+        // On the Recent summary this click would otherwise toggle the list.
+        e.preventDefault();
+        e.stopPropagation();
+        onHide();
+      }}
+    >
+      ×
+    </button>
+  );
 
   /** Hover-revealed "new note in this folder" button for a heading row. */
   const addBtn = (dir: string) => (
@@ -293,6 +333,40 @@ export function Explorer({
     </details>
   );
 
+  const recentVisible = recent.length > 0 && !hideRecent;
+
+  // Recent sizes to its content, so the only adjustable share is the current
+  // project's — either gap around Recent drags that same boundary.
+  const split = (
+    <div
+      className="pane-split"
+      title="Drag to resize — double-click for size-to-content"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        if (!paneRef.current) return;
+        paneDrag.current = { y: e.clientY, h: paneRef.current.getBoundingClientRect().height };
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        const drag = paneDrag.current;
+        if (drag === null || !cardsRef.current) return;
+        // Keep both scroll panels usable: the pane never takes the last stretch.
+        const max = cardsRef.current.clientHeight - 140;
+        onPaneResize(Math.max(48, Math.min(drag.h + e.clientY - drag.y, max)));
+      }}
+      onPointerUp={(e) => {
+        if (paneDrag.current === null) return;
+        paneDrag.current = null;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        onPaneResizeEnd();
+      }}
+      onDoubleClick={onPaneReset}
+    />
+  );
+
+  // A gap is only a handle while Notes is there to trade height with.
+  const sep = currentProject && !hideNotes ? split : <div className="pane-gap" />;
+
   return (
     <nav className={pinned ? "explorer" : "explorer floating"} style={{ width }}>
       <header className="explorer-bar">
@@ -335,9 +409,27 @@ export function Explorer({
         </button>
       </header>
       {view === "search" && searchSlot}
-      <div className="explorer-body" hidden={view === "search"} onContextMenu={onBodyContext}>
+      <div
+        className="explorer-cards"
+        ref={cardsRef}
+        hidden={view === "search"}
+        onContextMenu={onBodyContext}
+      >
         {currentProject && (
-          <section>
+          <section
+            className="explorer-card pane"
+            ref={paneRef}
+            // Fills the column when Notes is closed; otherwise an explicit
+            // share from a split drag — shrink stays allowed, so a squeezed
+            // window never pushes the other panels out.
+            style={
+              hideNotes
+                ? { flex: "1 1 auto" }
+                : paneHeight !== null
+                  ? { flex: `0 1 ${paneHeight}px` }
+                  : undefined
+            }
+          >
             <h2 onContextMenu={(e) => onDirContext(e, currentProject)}>
               <span className="explorer-name">{currentProject}</span>
               {addBtn(currentProject)}
@@ -348,26 +440,43 @@ export function Explorer({
             )}
           </section>
         )}
-        {recent.length > 0 && (
-          <details className="explorer-recent">
-            <summary>Recent</summary>
-            <ul>{recent.map((id) => item(id, true))}</ul>
-          </details>
+        {recentVisible && (
+          <>
+            {currentProject && sep}
+            <details className="explorer-recent explorer-card">
+              <summary>
+                Recent
+                {hideBtn(onHideRecent)}
+              </summary>
+              <ul>{recent.map((id) => item(id, true))}</ul>
+            </details>
+          </>
         )}
-        <section>
-          <h2 onContextMenu={(e) => onDirContext(e, "")}>
-            <span className="explorer-name">Notes</span>
-            {addBtn("")}
-          </h2>
-          {(loose.length > 0 || creatingIn === "") && (
-            <ul>
-              {creatingIn === "" && createRow("")}
-              {loose.map((n) => item(n.name))}
-            </ul>
-          )}
-          {projects.filter((p) => p !== currentProject).map(projectSection)}
-          {notes.length === 0 && <p className="muted">No saved notes yet</p>}
-        </section>
+        {!hideNotes && (
+          <>
+            {(currentProject || recentVisible) && sep}
+            <section className="explorer-card notes">
+              <h2 onContextMenu={(e) => onDirContext(e, "")}>
+                <span className="explorer-name">Notes</span>
+                {addBtn("")}
+                {hideBtn(onHideNotes)}
+              </h2>
+              {(loose.length > 0 || creatingIn === "") && (
+                <ul>
+                  {creatingIn === "" && createRow("")}
+                  {loose.map((n) => item(n.name))}
+                </ul>
+              )}
+              {projects.filter((p) => p !== currentProject).map(projectSection)}
+              {notes.length === 0 && <p className="muted">No saved notes yet</p>}
+            </section>
+          </>
+        )}
+        {!currentProject && !recentVisible && hideNotes && (
+          <div className="explorer-card">
+            <p className="muted">Panels hidden — the View menu brings them back</p>
+          </div>
+        )}
       </div>
       <div
         className="explorer-resize"

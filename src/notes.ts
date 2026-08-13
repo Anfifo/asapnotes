@@ -154,7 +154,15 @@ export interface Project {
 export interface Appearance {
   theme?: string | null;
   zoom?: number | null;
-  explorer?: { width?: number | null; pinned?: boolean | null } | null;
+  /** `pane` is the current-project panel's height; absent = size-to-content.
+   * `hideRecent` / `hideNotes` are panels closed from their header. */
+  explorer?: {
+    width?: number | null;
+    pinned?: boolean | null;
+    pane?: number | null;
+    hideRecent?: boolean | null;
+    hideNotes?: boolean | null;
+  } | null;
   /** Where a note type's color lands on an explorer row: "full" | "icon". */
   explorerTint?: string | null;
   /** Popup text size (menus, context menus, palette rows) as a percentage of

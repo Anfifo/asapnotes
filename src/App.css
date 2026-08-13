@@ -319,7 +319,7 @@ body,
 
 .rail {
   flex-shrink: 0;
-  width: 1.2rem;
+  width: 1.4rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -339,13 +339,16 @@ body,
   color: #d6d6d6;
 }
 
+/* The explorer is a column of panels on the chrome — toolbar, current project,
+   Recent, Notes — the same treatment the window gives the explorer and editor
+   themselves. Docked it is transparent (the chrome shows through the gaps). */
 .explorer {
   /* width comes inline from React state (drag-resizable, persisted) */
   position: relative; /* anchors the resize handle */
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: #f6f6f6;
+  gap: 6px; /* the chrome gap between panels */
   border-radius: 6px;
   font-size: 0.85rem;
   user-select: none;
@@ -384,13 +387,15 @@ body,
   opacity: 1;
 }
 
-/* Unpinned: float over the editor instead of pushing it aside. */
+/* Unpinned: float over the editor instead of pushing it aside — a chrome tray
+   holding the panels, so the gaps stay dark rather than showing the editor. */
 .explorer.floating {
   position: absolute;
-  left: calc(1.2rem + 12px); /* clear the slat: chrome padding + rail + gap */
+  left: calc(1.4rem + 12px); /* clear the slat: chrome padding + rail + gap */
   top: 6px;
   bottom: 6px;
   z-index: 20;
+  background: #1a1a1a;
   box-shadow: 8px 0 30px rgba(0, 0, 0, 0.4);
 }
 
@@ -399,7 +404,9 @@ body,
   justify-content: flex-end;
   align-items: center;
   gap: 0.1rem;
-  padding: 0.25rem 0.35rem 0;
+  padding: 0.25rem 0.35rem;
+  background: #f6f6f6;
+  border-radius: 6px;
 }
 
 .collapse-btn {
@@ -472,13 +479,15 @@ body,
   color: inherit;
 }
 
-/* Search view — same column layout as the tree it replaces. */
+/* Search view — its own panel in the column, like the tree cards it replaces. */
 .search-view {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   padding: 0.3rem 0.5rem 0.4rem;
+  background: #f6f6f6;
+  border-radius: 6px;
 }
 
 .search-input {
@@ -550,10 +559,72 @@ body,
   border-radius: 2px;
 }
 
-.explorer-body {
+/* No CSS gap here: the 6px between panels is an element — a plain spacer or a
+   draggable split. Its own display beats the `hidden` attribute, hence the rule. */
+.explorer-cards {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer-cards[hidden] {
+  display: none;
+}
+
+.explorer-card {
+  background: #f6f6f6;
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem 0.4rem;
   overflow-y: auto;
-  padding: 0 0.5rem 0.4rem;
+}
+
+/* The current project holds its own scroll and sizes to its content until a
+   split drag pins its share (inline flex-basis); Notes takes the remainder.
+   Both keep a usable minimum, so neither can squeeze the other out. */
+.explorer-card.pane {
+  flex: 0 1 auto;
+  min-height: 3rem;
+}
+
+.explorer-card.notes {
+  flex: 1 1 0;
+  min-height: 5rem;
+}
+
+.explorer-recent.explorer-card {
+  flex: none; /* at most a header and five rows — always sized to content */
+}
+
+/* Splits: the chrome gap doubles as the handle that drags the project panel's
+   share. The grip dots match the width-resize handle's. */
+.pane-split {
+  flex: none;
+  height: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.pane-split::after {
+  content: "";
+  width: 24px;
+  height: 3px;
+  background: radial-gradient(circle, #9a9a9a 1.2px, transparent 1.3px) center / 8px 3px;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.pane-split:hover::after,
+.pane-split:active::after {
+  opacity: 1;
+}
+
+.pane-gap {
+  flex: none;
+  height: 6px;
 }
 
 .explorer h2 {
@@ -567,8 +638,10 @@ body,
   color: #7a7a7a;
 }
 
-/* Hover-revealed "new note here" on section, project, and folder headings. */
-.add-btn {
+/* Hover-revealed heading buttons: "new note here" on section, project, and
+   folder headings; "close this panel" on the Recent and Notes headers. */
+.add-btn,
+.hide-btn {
   margin-left: auto;
   font: inherit;
   font-size: 0.85rem;
@@ -582,13 +655,23 @@ body,
   opacity: 0;
 }
 
+/* Two auto margins would split the slack between the buttons — only the first
+   one pushes; a × behind a + sits right beside it. */
+.add-btn + .hide-btn {
+  margin-left: 0;
+}
+
 .explorer h2:hover .add-btn,
 .explorer summary:hover .add-btn,
-.add-btn:focus-visible {
+.explorer h2:hover .hide-btn,
+.explorer summary:hover .hide-btn,
+.add-btn:focus-visible,
+.hide-btn:focus-visible {
   opacity: 1;
 }
 
-.add-btn:hover {
+.add-btn:hover,
+.hide-btn:hover {
   background: rgba(0, 0, 0, 0.1);
   color: inherit;
 }
@@ -612,12 +695,6 @@ body,
 
 /* Top-level sections (current project / Recent / Notes) read as siblings:
    clear gap + hairline between them. */
-.explorer-body > * + * {
-  margin-top: 0.55rem;
-  padding-top: 0.45rem;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-}
-
 .explorer ul {
   list-style: none;
   margin: 0;
@@ -1732,7 +1809,9 @@ body,
   --tint-gray: #a0a0a0;
   --tint-teal: #5cc7bb;
 
-  .explorer,
+  .explorer-bar,
+  .explorer-card,
+  .search-view,
   .top-panel,
   .content-panel {
     background: #2f2f2f;
@@ -1827,20 +1906,18 @@ body,
 
   .explorer h2,
   .collapse-btn,
-  .add-btn {
+  .add-btn,
+  .hide-btn {
     color: #9a9a9a;
   }
 
-  .add-btn:hover {
+  .add-btn:hover,
+  .hide-btn:hover {
     background: rgba(255, 255, 255, 0.12);
   }
 
   .create-row input {
     background: rgba(255, 255, 255, 0.07);
-  }
-
-  .explorer-body > * + * {
-    border-top-color: rgba(255, 255, 255, 0.09);
   }
 
   ::selection {
@@ -1879,7 +1956,6 @@ body,
   }
 
   .explorer.floating {
-    background: #2f2f2f;
     box-shadow: 8px 0 30px rgba(0, 0, 0, 0.5);
   }
 

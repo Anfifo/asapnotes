@@ -12,6 +12,118 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-13)
+
+- [ ] **Explorer sections as separate panels, resizable splits** (2026-08-13) — feedback:
+      the window ground already shows explorer / editor as panels floating on the dark
+      chrome; extend that same treatment _inside_ the explorer — each section (current
+      project, Recent, Notes) its own box with the chrome showing between them — and let
+      those in-between gaps double as grab handles so sections can be resized vertically.
+      Same idea floated for the content column: the title bar (logo + project) as its own
+      panel above the editor's — which already holds: the tab strip + title bar are one
+      panel and the editor another. From the same feedback batch: Recent-collapsed-by-
+      default, current-project-first, expandable folders, drag-resizable persisted explorer
+      width, and the readable amber selection all already exist — no action.
+      _2026-08-13 design pass (candidate sheet published, awaiting a pick — no code):_
+      three candidates at real app metrics, light+dark: **(A) today** — one surface,
+      hairline seams — as reference; **(B) sections as panels** — toolbar / current
+      project / Recent / Notes each a panel on the chrome, 6px gaps, column still scrolls
+      as one; floating mode becomes a dark tray so the gaps don't show the editor through;
+      **(C) B + draggable splits** — the gaps are grab handles, current project and Notes
+      hold their own scroll, sections auto-size until first dragged (a drag records that
+      section's share, persisted on release like the explorer width; double-click resets
+      to auto; a hidden section returns its space). Recommended C — the resize ask is
+      explicit, B is exactly C's visual layer, and the only real question (do chrome
+      gutters read too heavy?) is what the A/B tiles answer. **Picked 2026-08-13: C.**
+      **Implemented 2026-08-13, gates clean, pending hands-on check.** The explorer nav
+      goes transparent (chrome shows through 6px gaps; floating mode instead paints the
+      nav `#1a1a1a` — a chrome tray, so the gaps don't show the editor through); the
+      toolbar, current project, Recent, Notes, and the search view each carry the panel
+      surface (`.explorer-card` / own background). Only the project panel's share is
+      adjustable — Recent sizes to its content, so both gaps around it drag that same
+      boundary (pointer capture like the width drag; clamp 48px..column−140px; persisted
+      on release as `appearance.explorer.pane` + a localStorage mirror; double-click
+      resets to size-to-content, which deletes the key). Sizing is flexbox: pane
+      `flex: 0 1 auto` (or `0 1 <pane>px` once dragged), Notes `flex: 1 1 0`, both with
+      min-heights and own scroll, so a squeezed window shrinks panels instead of losing
+      one. The old `.explorer-body` single scroll and its hairline-seam rule are gone.
+      Pending hands-on: drag both gaps, double-click reset, restart to confirm the share
+      survives, floating mode, search view, no-note and empty states, both themes.
+      _2026-08-13 follow-up (requested, implemented, gates clean, same pending check):_
+      the Recent and Notes panels can be closed from a hover-revealed × on their header
+      (the same treatment as the heading + button); the space goes to the panels above —
+      with Notes closed the project panel fills the column and the gaps stop being drag
+      handles (nothing left to trade with). Reopening lives in the View menu ("Show
+      Recent panel" / "Show Notes panel", label-flip toggles beside the explorer entry).
+      Closed state persists as `appearance.explorer.hideRecent`/`hideNotes` with
+      localStorage mirrors. Two edges handled: creation targeting a closed Notes panel
+      reopens it (same spirit as creation expanding a collapsed project — the inline
+      input must be visible); and with nothing left to show, a single quiet panel says
+      the View menu brings them back.
+- [ ] **Icon rail slightly wider** (2026-08-13) — feedback: the collapsed slat that
+      expands the explorer should be very slightly wider. One value (`.rail` width,
+      currently 1.2rem); riding along on the sections candidate sheet as a width ladder.
+      **Implemented 2026-08-13 at the recommended 1.4rem** (+3.2px; the ladder's 1.6rem
+      read as a gutter). The floating explorer's left offset tracks it (`calc(1.4rem +
+    12px)` clears the slat). Pending the same hands-on pass as the sections item.
+- [ ] **Investigate: a "recent changes" view over the .md notes** (2026-08-13) —
+      requested: a way to see recent additions and edits to the markdown notes
+      specifically, so updates across notes can be tracked in one place. Presentation
+      intent: works sort of like a diff view — added text shown in context — but
+      quieter, without being visually disturbing; deletions can be very compact
+      (a collapsed marker rather than full struck-out blocks). Open questions for the
+      investigation: where the history comes from (the notes aren't guaranteed to be
+      in git — snapshots? the drafts machinery? file mtimes only give "when", not
+      "what"), how far back it needs to reach, and where the view lives (a panel, a
+      palette command, a per-note lens). Investigation first, no design settled.
+      _2026-08-13 visual design pass (candidate sheet published, awaiting a pick — no
+      code; the history-source investigation is still the other half):_ entry point is
+      a third view button in the explorer bar beside Files/Search (glyph `±`, badge
+      ladder: dot / inline count / corner count pill), the view replaces the tree the
+      way search does and keeps search's one-line-row + gutter idioms. Three shapes:
+      **(A) ledger** — file rows with `+n −n` chips and day headers, no text;
+      **(B) quiet hunks** — per-file collapsible groups, added lines as normal ink
+      with a 2px green edge + faint wash, context muted, deletions collapsed to a
+      "··· n removed" pill that expands to strikethrough-free muted rose; **(C) B +**
+      A's day headers, a totals strip, hover jump-to-line (`↗`), and the amber trail
+      edge on the open note's group. Plus a four-step deletion-quietness ladder
+      (invisible / gutter tick / pill / expanded). Recommended C with the corner-pill
+      badge and pill-default deletions; add/del colors from the syntax palette
+      (`--syn-string` / rose), so the view speaks the existing color system.
+      **Picked 2026-08-13 (composed on the sheet, no code):** badge = **inline amber
+      count** (not the pill); the view is **three states of one panel** — landing is
+      A's ledger; clicking a file row drills into **that note's changes alone** (B's
+      treatment, every addition shown, `⋯` between hunks); a **"Read through ›"**
+      action on the totals strip stacks all files' details into one scroll with
+      hairlines between notes. The strip is the constant in every state: totals plus
+      the `‹` way back. Carried from C into detail + stream: hover `↗` jump-to-line.
+      Deletions stay the pill, expanding to strikethrough-free muted rose. Blocked on
+      the history-source investigation above before any code.
+- [ ] **Check behavior when things vanish from disk behind the app's back**
+      (2026-08-13) — requested: audit what happens when a note, folder, project root,
+      or a virtual folder's backing directory is removed outside the app (another
+      tool, a `git clean`, an unplugged drive) — nothing notifies us. Cases to walk:
+      an open tab whose file is gone (edit, save, rename, delete from it), a linked
+      project whose root is gone (startup and refocus re-list), a mount whose backing
+      folder is gone, drafts pointing at deleted notes, and the notes root itself.
+      For each: does it error sanely (toast, tab closes, entry drops) or misbehave
+      (silent zombie rows, resurrection-on-save, crash)? Fix list comes out of the
+      audit — this item is the check.
+- [ ] **File menu: surface the virtual-folder options** (2026-08-13) — requested: the
+      many virtual-folder verbs that exist today (New folder, New virtual folder,
+      Associate virtual folder…, Detach, Delete virtual folder) are reachable only by
+      right-clicking explorer headings — the File menu (`menus` in `App.tsx`) has none
+      of them. Add them under File. Open design point: most of these verbs need a
+      target project/folder, which a menubar entry doesn't have — decide whether they
+      act on the open note's location, prompt for a target, or only the target-less
+      ones (e.g. associate into a picked project) appear.
+- [ ] **Settings: credits line doesn't fit the label–value layout** (2026-08-13) —
+      feedback: in Settings → About, the "Made by Anfifo · ☕ Buy me a coffee" line
+      (`settings-credits` in `Settings.tsx`) floats free above the table, while every
+      other entry follows the section's little-title → value row pattern (Version /
+      Notes folder / Auto-update). Make it fit that layout — e.g. as table rows
+      (Made by → Anfifo, Support → Buy me a coffee) or otherwise aligned with it.
+
 ## Today (2026-08-12)
 
 - [ ] **Option to delete folders and virtual folders** (2026-08-12) — requested, not
@@ -193,7 +305,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
       at that level — all of a level's containers jointly draw one line, so a partial
       class would read as a broken guide (amber: rgba(138,106,0,.55) /
       rgba(220,191,90,.5)). Indent stays 12.8px. The dead air was `.explorer li`'s
-      1.1rem left padding — it aligned file *names* with folder names before icons
+      1.1rem left padding — it aligned file _names_ with folder names before icons
       existed; now file rows share the heading rows' 0.4rem inset, so the icon sits in
       the chevron's column. Known consequence, deliberate: the Recent list is a
       `details > ul` like any other, so it draws a guide too — consistent, but worth
