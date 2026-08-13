@@ -67,8 +67,9 @@ interface EditorProps {
   mentionLink: (id: string) => string;
   /** Follow a Ctrl+Clicked URL / file path / markdown link destination. */
   onOpenLink: (target: string) => void;
-  /** Cursor / selection / word-count updates for the status bar. */
-  onStatus?: (status: EditorStatus) => void;
+  /** Cursor / selection / word-count updates for the status bar; null on
+   * unmount, so the readout clears when no editor is showing. */
+  onStatus?: (status: EditorStatus | null) => void;
   /** Hide instead of unmounting (preview mode) so undo history survives. */
   hidden?: boolean;
   /** Editing surface from the open note's type: the markdown view brings the
@@ -461,6 +462,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     return () => {
       view.destroy();
       viewRef.current = null;
+      // Clear the status readout — with no editor there is no Ln/Col. A doc
+      // switch re-sends real status right after, so only unmount shows this.
+      onStatusRef.current?.(null);
     };
     // Rebuild only when a different document opens; `initialDoc` tracks live
     // edits between renders and must not reset the editor.

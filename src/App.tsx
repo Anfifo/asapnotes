@@ -22,6 +22,7 @@ import { getTheme, setTheme, type Theme } from "./theme";
 import { StatusBar } from "./StatusBar";
 import { ToastStack } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { WelcomePanel, type WelcomeRecent } from "./WelcomePanel";
 import { errText, useToasts } from "./toasts";
 import * as api from "./notes";
 import "./App.css";
@@ -288,11 +289,17 @@ function App() {
   const [explorerTint, setExplorerTint] = useState<"full" | "icon">("full");
   // Tab held at the close confirm (Save / Discard / Cancel), null when none.
   const [closeAsk, setCloseAsk] = useState<string | null>(null);
+  // The deliberate zero-tab state (welcome panel). Distinct from `open` being
+  // null, which is also the pre-startup instant — the panel only ever follows
+  // closing the last tab, never startup and never a summon.
+  const [welcome, setWelcome] = useState(false);
 
   const editorRef = useRef<EditorHandle>(null);
   const contentRef = useRef("");
   const openRef = useRef<OpenNote | null>(null);
   openRef.current = open;
+  const welcomeRef = useRef(welcome);
+  welcomeRef.current = welcome;
   const tabsRef = useRef<OpenNote[]>([]);
   tabsRef.current = tabs;
   const notesRef = useRef<api.FileInfo[]>([]);
@@ -388,11 +395,11 @@ function App() {
 
   // Editor status flows straight to the StatusBar through this ref — routing
   // it through App state would re-render the whole tree on every keystroke.
-  const statusCb = useRef<((s: EditorStatus) => void) | null>(null);
-  const registerStatus = useCallback((cb: ((s: EditorStatus) => void) | null) => {
+  const statusCb = useRef<((s: EditorStatus | null) => void) | null>(null);
+  const registerStatus = useCallback((cb: ((s: EditorStatus | null) => void) | null) => {
     statusCb.current = cb;
   }, []);
-  const handleStatus = useCallback((s: EditorStatus) => statusCb.current?.(s), []);
+  const handleStatus = useCallback((s: EditorStatus | null) => statusCb.current?.(s), []);
 
   const upsertDraft = (id: string) =>
     setDrafts((d) => [{ name: id, modified_ms: Date.now() }, ...d.filter((x) => x.name !== id)]);
@@ -439,6 +446,7 @@ function App() {
     (note: OpenNote, content: string, isDirty: boolean) => {
       contentRef.current = content;
       setOpen(note);
+      setWelcome(false);
       setTabs((ts) =>
         ts.some((t) => t.id === note.id)
           ? ts.map((t) => (t.id === note.id ? note : t))
@@ -1128,6 +1136,9 @@ function App() {
   // frame approximates when the shown window actually painted.
   useEffect(() => {
     const unlisten = listen<number>("summoned", (event) => {
+      // Summon lands in a ready-to-type note even past the welcome panel —
+      // the panel is a parked state, and summoning means "capture, now".
+      if (welcomeRef.current) void newNote();
       editorRef.current?.focus();
       requestAnimationFrame(() => {
         const ms = Date.now() - event.payload;
@@ -1138,7 +1149,7 @@ function App() {
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [newNote]);
 
   const draftIds = new Set(drafts.map((d) => d.name));
   const noteNames = new Set(notes.map((n) => n.name));
@@ -1165,10 +1176,11 @@ function App() {
       })),
   ];
 
-  // Affordances the open note's type declares; with nothing open the chrome
-  // shows, since a new note is markdown.
-  const canPreview = open ? hasFeature(open.id, "preview") : true;
-  const canFormat = open ? hasFeature(open.id, "format") : true;
+  // Affordances the open note's type declares. Nothing open is two states:
+  // the pre-startup instant keeps the chrome (something markdown is about to
+  // open, and hiding it would flash), the welcome panel drops it.
+  const canPreview = open ? hasFeature(open.id, "preview") : !welcome;
+  const canFormat = open ? hasFeature(open.id, "format") : !welcome;
   // The open note's real directory (for resolving relative image links).
   const currentProject = open ? projectOf(open.id) : null;
   const noteDir = open ? noteDirOf(open.id) : rootPath;
@@ -1437,12 +1449,26 @@ function App() {
   /** Activate a tab — reload from draft/file so its name self-corrects. */
   const openTabItem = (id: string) => openItem({ id, isNote: noteNames.has(id) }, draftIds);
 
-  /** Drop tabs; when the active one goes, activate its neighbor (or a fresh
-   * note when it was the last). Unsaved edits stay behind as a draft — the
-   * asking flavor is requestCloseTab. Takes a list so a just-saved tab can be
-   * closed under both its identities (untitled id and saved name), whichever
-   * the pending retag has reached; reads tabsRef rather than the render
-   * closure so callers that awaited in between stay correct. */
+  /** Enter the zero-tab state: flush any pending draft, drop the editor
+   * surface, show the welcome panel. Reached only by closes that empty the
+   * tab strip — startup always opens something. */
+  const showWelcome = () => {
+    void flushDraft();
+    contentRef.current = "";
+    setOpen(null);
+    setWelcome(true);
+    setInitialDoc("");
+    setDirty(false);
+    setMode("edit");
+    trackMtime(null);
+  };
+
+  /** Drop tabs; when the active one goes, activate its neighbor (or the
+   * welcome panel when it was the last). Unsaved edits stay behind as a draft
+   * — the asking flavor is requestCloseTab. Takes a list so a just-saved tab
+   * can be closed under both its identities (untitled id and saved name),
+   * whichever the pending retag has reached; reads tabsRef rather than the
+   * render closure so callers that awaited in between stay correct. */
   const closeTabs = (ids: string[]) => {
     const cur = tabsRef.current;
     const idx = cur.findIndex((t) => ids.includes(t.id));
@@ -1451,7 +1477,7 @@ function App() {
     setTabs(rest);
     if (openRef.current && ids.includes(openRef.current.id)) {
       if (rest.length > 0) void openTabItem(rest[Math.min(idx, rest.length - 1)].id);
-      else void newNote();
+      else showWelcome();
     }
   };
   const closeTab = (id: string) => closeTabs([id]);
@@ -1525,7 +1551,7 @@ function App() {
 
   const closeAllTabs = () => {
     setTabs([]);
-    void newNote();
+    showWelcome();
   };
 
   /** Close every tab whose content is safe on disk (saved, no pending draft). */
@@ -1535,7 +1561,7 @@ function App() {
     setTabs(keep);
     if (cur && !keep.some((t) => t.id === cur.id)) {
       if (keep.length > 0) void openTabItem(keep[0].id);
-      else void newNote();
+      else showWelcome();
     }
   };
 
@@ -1584,7 +1610,7 @@ function App() {
     setTabs(keep);
     if (cur && inside(cur.id)) {
       if (keep.length > 0) void openTabItem(keep[0].id);
-      else void newNote();
+      else showWelcome();
     }
     setNewFolders((ds) => ds.filter((d) => d !== dir && !inside(d)));
     setNotes(await api.listNotes());
@@ -1857,6 +1883,32 @@ function App() {
   // (deleted elsewhere) takes the dialog with it.
   const closeAskTab = closeAsk ? tabs.find((t) => t.id === closeAsk) : undefined;
 
+  // Welcome panel content: the target-less main actions, and the freshest
+  // notes and drafts (computed only while it shows) merged to one entry per
+  // name at the newest timestamp — the explorer's Recent rule, shortened.
+  const welcomeActions = [
+    { label: "New note", detail: "Ctrl+N", run: () => void newNote() },
+    { label: "New project…", run: () => setCreatingProject(true) },
+    { label: "Scan folder for projects…", run: () => void scanForProjects() },
+    { label: "Settings", run: () => setSettingsOpen(true) },
+  ];
+  let welcomeRecent: WelcomeRecent[] = [];
+  if (welcome) {
+    const latest = new Map<string, number>();
+    for (const f of [...notes, ...drafts]) {
+      latest.set(f.name, Math.max(latest.get(f.name) ?? 0, f.modified_ms));
+    }
+    welcomeRecent = [...latest.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id]) => ({
+        id,
+        label: fileOf(id).replace(/\.md$/, ""),
+        detail: projectOf(id) ?? (noteNames.has(id) ? undefined : "draft"),
+        isNote: noteNames.has(id),
+      }));
+  }
+
   return (
     <div className="app">
       <MenuBar
@@ -2054,6 +2106,13 @@ function App() {
               />
             )}
             {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
+            {!open && welcome && (
+              <WelcomePanel
+                actions={welcomeActions}
+                recent={welcomeRecent}
+                onOpenRecent={(id, isNote) => void openItem({ id, isNote }, draftIds)}
+              />
+            )}
           </div>
         </div>
       </div>

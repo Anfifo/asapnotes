@@ -4,7 +4,7 @@ import { EditorStatus } from "./Editor";
 interface StatusBarProps {
   /** Subscribes to editor status updates directly — routing them through App
    * state would re-render the whole tree on every keystroke / cursor move. */
-  register: (cb: ((s: EditorStatus) => void) | null) => void;
+  register: (cb: ((s: EditorStatus | null) => void) | null) => void;
   /** Summon→paint latency — the product's one number, always visible. */
   summonMs: number | null;
   zoom: number;

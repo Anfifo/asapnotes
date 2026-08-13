@@ -1570,6 +1570,107 @@ body,
   color: inherit;
 }
 
+/* Welcome panel — the deliberate zero-tab state. Quiet by design: muted inks
+   on the editor ground, so closing the last tab doesn't read as an event. */
+
+.welcome {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+}
+
+.welcome-inner {
+  width: min(30rem, 100% - 4rem);
+  padding: 3.2rem 0 2.5rem;
+}
+
+.welcome h1 {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 600;
+}
+
+.welcome-tag {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: #7a7a7a;
+}
+
+.welcome-section {
+  margin: 1.7rem 0 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9a9a9a;
+}
+
+.welcome-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.welcome-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  box-sizing: border-box;
+  width: calc(100% + 1.1rem);
+  margin: 0 -0.55rem; /* text aligns with the headings, the hover pill overhangs */
+  padding: 0.32rem 0.55rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 0.85rem;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.welcome-list button:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.welcome-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome-detail {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: #9a9a9a;
+}
+
+.welcome-keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  color: #5a5a5a;
+}
+
+.welcome-keys > div {
+  display: contents;
+}
+
+.welcome-keys kbd {
+  justify-self: start;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.72rem;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid #d5d5d5;
+  border-radius: 4px;
+  padding: 0 0.3rem;
+}
+
 /* Dark theme. Keyed off the resolved theme that theme.ts stamps on the root
    element before the first paint, rather than reading `prefers-color-scheme`
    here — that is what lets an explicit Light/Dark choice override the OS. The
@@ -1881,5 +1982,26 @@ body,
   .tooltip {
     background: #ececec;
     color: #222222;
+  }
+
+  .welcome-tag {
+    color: #9a9a9a;
+  }
+
+  .welcome-section {
+    color: #8a8a8a;
+  }
+
+  .welcome-list button:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .welcome-keys {
+    color: #b0b0b0;
+  }
+
+  .welcome-keys kbd {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: #4a4a4a;
   }
 }
