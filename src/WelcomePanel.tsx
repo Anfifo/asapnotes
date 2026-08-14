@@ -11,18 +11,12 @@ export interface WelcomeRecent {
   isNote: boolean;
 }
 
-const SHORTCUTS: [string, string][] = [
-  ["Ctrl+Alt+A", "Summon / hide from anywhere"],
-  ["Ctrl+N", "New note"],
-  ["Ctrl+P", "Switch note"],
-  ["Ctrl+K", "Command palette"],
-  ["Ctrl+Shift+F", "Search in notes"],
-  ["Esc", "Hide window"],
-];
-
 interface WelcomePanelProps {
   actions: WelcomeAction[];
   recent: WelcomeRecent[];
+  /** The primer rows — built by the app from the effective keybinds, so a
+   * rebound chord is what first-run orientation teaches. */
+  shortcuts: [string, string][];
   onOpenRecent: (id: string, isNote: boolean) => void;
 }
 
@@ -30,7 +24,7 @@ interface WelcomePanelProps {
  * recent notes, and a shortcuts primer — so it doubles as first-run
  * orientation. It only ever follows closing the last tab; summoning past it
  * lands in a fresh note, so capture stays instant. */
-export function WelcomePanel({ actions, recent, onOpenRecent }: WelcomePanelProps) {
+export function WelcomePanel({ actions, recent, shortcuts, onOpenRecent }: WelcomePanelProps) {
   return (
     <div className="welcome">
       <div className="welcome-inner">
@@ -64,7 +58,7 @@ export function WelcomePanel({ actions, recent, onOpenRecent }: WelcomePanelProp
         )}
         <div className="welcome-section">Shortcuts</div>
         <div className="welcome-keys">
-          {SHORTCUTS.map(([keys, what]) => (
+          {shortcuts.map(([keys, what]) => (
             <div key={keys}>
               <kbd>{keys}</kbd>
               <span>{what}</span>

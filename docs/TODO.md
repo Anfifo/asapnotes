@@ -14,14 +14,124 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Today (2026-08-14)
 
+- [ ] **Settings/About split + editable keybinds** (2026-08-14) — requested: About
+      stops being Settings' first section and becomes its own overlay (Version /
+      Auto-update / Made by / Support, opened by Settings → About asapnotes and a
+      palette command); Settings keeps the rest. Lean taken: **Notes folder moves
+      to Settings** (a Storage section) — where the data lives reads as
+      configuration, not credits. Keybinds: **picked "app shortcuts + summon
+      hotkey" editable** (over hotkey-only, over everything-incl-editor-keys, over
+      read-only): the app-level chords (new note, save, close/cycle tab, palettes,
+      explorer, search, preview, zoom) become actions with default chords in
+      `src/keybinds.ts`, overrides stored as `keybinds` in settings.json (only
+      overrides persist; an override replaces all of an action's default chords,
+      so rebinding "New note" retires both Ctrl+N and Ctrl+T); the window key
+      handler matches an exact-chord table instead of an if-chain (Shift on the
+      next-tab chord keeps meaning reverse). The **global summon hotkey** gets its
+      own recorder: `summonHotkey` in settings.json, a `set_summon_hotkey` command
+      that re-registers live and updates the tray tooltip; the recorder restricts
+      it to letters/digits/F-keys/Space with Ctrl or Alt, so the stored string
+      always parses on the Rust side. Editor-owned chords (bold, headings, find…)
+      stay read-only rows marked as fixed, and double as a deny-list the conflict
+      check refuses alongside already-bound chords. While recording, the app key
+      handler stands down entirely (guard on the recorder element), so pressing
+      Ctrl+W records instead of closing the tab.
+      **Implemented 2026-08-14, all gates + tests clean, verified live over the
+      webview devtools protocol.** New `src/About.tsx` (small overlay: Version /
+      Auto-update / Made by / Support; Esc and click-away close, palette command
+      added); Settings is Appearance / Storage (notes folder) / Projects /
+      Keyboard shortcuts. New `src/keybinds.ts` owns the action table, chord
+      normalization (letters uppercase, else the event's own key name — so
+      recording and matching can't disagree about a layout's shifted symbols),
+      the effective-bindings table, and both conflict checks. App's key handler
+      matches the table (one special case kept: Shift over the next-tab chord
+      cycles backwards); every menu detail, tab/rail tooltip, and the welcome
+      primer read the effective chords, so a rebind is what the chrome
+      advertises. Rust: `keybinds` + `summonHotkey` in settings.json (overrides
+      only), `set_keybinds`, and `set_summon_hotkey` — which re-registers live,
+      restores the old chord if the new one is refused, and retitles the tray.
+      **One real bug the live check caught:** hotkey (un)registration is
+      thread-bound on Windows — from the command's worker thread, unregister
+      silently failed ("HotKey already registered" on the next swap back) and a
+      worker-thread registration would never deliver events; the swap now runs
+      on the main thread (`run_on_main_thread` + a channel for the result).
+      Verified live: recorder refuses Ctrl+B ("fixed — Bold"), records Ctrl+M
+      onto Explorer (row shows it, settings.json holds only the override), the
+      new chord toggles and the old one is dead, row ↺ empties the file and
+      revives the default, About stands alone (version yes, notes folder no),
+      summon swaps cycle A→Q→Y→A cleanly, a garbage chord is refused with the
+      stored one untouched, and a stored chord registers at startup. Pending
+      hands-on: the recorder feel (click, press, Esc cancel, blur), a real
+      summon on a rebound hotkey (the devtools check can't press global keys),
+      the tray tooltip after a rebind, conflict message styling, both themes,
+      and the wider Settings overlay (42rem, label column 34%) with a long
+      path — the width ask from the same batch.
 - [ ] **Canvas work kicked off — setups first** (2026-08-14) — the project board is
-      the agreed first slice (see the canvas item under 2026-08-10), but two setups
-      were named before it: **(a) a way to define canvas as the default open for
-      notes** — wording to pin down in the design pass: whether a project opens
-      onto its board by default (instead of expanding the tree), whether `.canvas`
-      becomes a creatable note type, or both; **(b)** the registry's `canvas` entry
-      ships only when something implements the view (recorded in the canvas item).
-      Design pass next, no code yet.
+      the agreed first slice (see the canvas item under 2026-08-10). The "canvas as
+      the default open" ask was pinned down same day — **all four readings picked**,
+      sequenced into the slices they depend on: (1) _project opens onto its board_
+      — lands with the board slice as the affordances (board button + context-menu
+      entry + palette command); the per-project default-open behavior lands when
+      "opening a project" is a real event; (2) _.canvas creatable/openable_ and
+      (3) _new notes default to .canvas_ (a setting — capture stays .md by default)
+      land with the freeform-canvas slice, since a board of file nodes is not a
+      capture surface; (4) _a chosen canvas opens on summon_ also freeform-slice,
+      and must not touch summon latency (the canvas module stays a dynamic import,
+      so the welcome/summon path can only ever open it lazily).
+      _Slice-1 design leans (recorded before code):_ **a board is a document like
+      any other** — the canvas view serializes to JSON text through the same
+      onChange → dirty/draft path every editor uses, Ctrl+S writes the file, so
+      drafts, close-confirm, rename and move all come free (hands-on question:
+      does save-to-persist feel right for node drags, or should boards autosave?);
+      the registry gains the `canvas` type now that a view exists (fourth
+      migration hop, same deep-equal rule); opening a board whose `board.canvas`
+      doesn't exist yet is an unsaved tab — the file appears on first save, which
+      is the "created lazily on first placement" rule falling out of the existing
+      machinery; node `file` paths are relative from the board (same rule as
+      mentions), inverse-resolved through `noteIdOf`.
+      **Slice 1 implemented 2026-08-14, all gates + tests clean (34), backend
+      and UI flow verified live** (second instance over the webview devtools
+      protocol, scratch notes-root project: registry migrated on the real
+      settings.json, `.canvas` save/read/list, board button → empty board tab,
+      add-picker placing a node, Ctrl+S writing `board.canvas` with a plain
+      relative `file` path, board-level Ctrl+Z, full cleanup). What shipped:
+      the `canvas` registry type (view `canvas`, icon `file-canvas`, amber,
+      no features yet — images/ink land when implemented; a frozen
+      `v3_note_types` snapshot keeps the hand-edit rule); `src/canvas/`
+      — `jsoncanvas.ts` (parse keeps every field it doesn't model, so foreign
+      canvases round-trip; malformed JSON opens the board **locked** with the
+      message, because editing an unreadable file would shed its content) and
+      `BoardView.tsx` (pan/zoom camera, dot grid riding it, node drag /
+      SE-resize with a 3px click slop, drag-end brings the node to front,
+      single-select, Delete removes from board, board-level undo/redo journal,
+      "+ Add note" picker filtered to the project's notes not yet placed,
+      zoom −/%/+/Fit, double-click opens the note, right-click menus through
+      the app's shared context menu, text/unknown nodes from other tools
+      rendered read-only); the module is a code-split lazy import (own ~8 kB
+      chunk — startup pays nothing). Entry points: hover `▦` on project
+      headings (current pane included), "Open project board" first on the
+      project heading context menu, and a palette command naming the current
+      project. External-edit reload maps to a full board reset keyed off
+      `initialDoc` (the board's `setDoc`), so a stale node set can never
+      overwrite a newer file. Guards: the board owns Ctrl+Z under its focus
+      (the seen-mark journal excludes `.board`), its wheel handler stops the
+      app zoom, Esc with the picker up closes the picker not the window, the
+      editor context menu skips canvas tabs. Known edge, deliberate: a
+      never-placed board tab left open across a restart drops with the
+      "file is gone" toast (same as an orphaned named draft). Pending
+      hands-on: drag/resize/pan/zoom feel, both themes, the picker, undo
+      depth, rename/move of board.canvas, and the save-vs-autosave question
+      above.
+      **First hands-on follow-up (2026-08-14):** the bare title-card board read
+      as pointless — file cards now show the note's opening text under the name
+      (read lazily per card, re-read when the note's mtime changes, clipped
+      with a fade; taller default card). And the no-changes close prompt is
+      gone, three fixes deep: the app tracks the open buffer's on-disk baseline
+      and a close whose buffer matches it skips the Save/Discard ask (drops the
+      then-redundant draft too, active and background tabs alike); an emptied
+      canvas serializes back to the empty text it opened from; and the
+      vanished-file safety net no longer fires for files that never existed
+      (the focus-bounce dirty edge above, now an mtime-reference check).
 - [ ] **Draw on images from a markdown note** (2026-08-14) — requested: double-click
       (or right-click) an image in an `.md` note pops the image up so it can be
       drawn on, like the canvas ink option — an image-annotation surface reusing
@@ -986,6 +1096,14 @@ not registered (0x80070002)``) and errors _before_ the draft/history
   nothing implements that view yet, and a listed `.canvas` opening as raw JSON is worse
   than not listing it) and a real **view provider table**: with two views the table is one
   branch in `Editor`, and the dynamic import belongs in it when the third arrives.
+  **2026-08-14: step 1 (project board) is implemented** — see the "Canvas work
+  kicked off" item under 2026-08-14 for what shipped and what's pending. The
+  `canvas` registry entry shipped with it (the view now exists), and the
+  provider seam landed as the planned dynamic import (a canvas tab renders the
+  code-split board module; markdown/text stay the one branch in `Editor`).
+  Steps 2 (freeform canvas — text/image nodes, one live editor) and 3 (ink)
+  are still open, and the picked "default open" behaviors (new-note default,
+  summon canvas) ride on step 2.
 
   _Promote to `decisions/` when this work starts landing_ — at least two entries are
   earned here: **"canvas is a native view, not a plugin"** (the seam, and why the

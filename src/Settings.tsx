@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Theme } from "./theme";
+import {
+  APP_ACTIONS,
+  bindingConflict,
+  chordOfEvent,
+  chordsOf,
+  DEFAULT_SUMMON,
+  summonConflict,
+} from "./keybinds";
 
 const THEMES: [Theme, string][] = [
   ["light", "Light"],
@@ -21,17 +27,10 @@ const POPUP_SIZES: [number, string][] = [
   [115, "Large"],
 ];
 
-const KEYBINDS: [string, string][] = [
-  ["Ctrl+Alt+A", "Summon / hide (global)"],
-  ["Ctrl+N / Ctrl+T", "New note (tab)"],
-  ["Ctrl+S", "Save note"],
-  ["Ctrl+W", "Close tab"],
-  ["Ctrl+Tab / Ctrl+Shift+Tab", "Next / previous tab"],
-  ["Ctrl+K", "Command palette"],
-  ["Ctrl+P", "Switch note"],
-  ["Ctrl+E", "Preview ⇄ edit"],
-  ["Ctrl+Shift+E", "Explorer"],
-  ["Ctrl+Shift+F", "Search in all notes"],
+/** The chords the app can't hand out: the editor's own keymap (chosen when it
+ * mounts) and the keys the window handler treats specially. Shown so the
+ * whole map is in one place, marked fixed rather than silently missing. */
+const FIXED_ROWS: [string, string][] = [
   ["Ctrl+B", "Bold"],
   ["Ctrl+I", "Italic"],
   ["Ctrl+1 / 2 / 3", "Heading 1 / 2 / 3"],
@@ -46,23 +45,90 @@ const KEYBINDS: [string, string][] = [
   ["Ctrl+Shift+K", "Delete line"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["Tab / Shift+Tab", "Indent / outdent list"],
-  ["Ctrl+= / Ctrl+- / Ctrl+0", "Zoom in / out / reset (also Ctrl+scroll)"],
   ["Alt", "Menu bar (Alt+F/E/O/V/S open a menu)"],
   ["Esc", "Hide window"],
 ];
 
-/** External links must leave the webview — route them through the opener plugin. */
-function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+/** One editable shortcut: the chord is a button that records the next chord
+ * pressed. While recording, the app's own key handler stands down (it skips
+ * anything inside `.chord-recording`), so pressing Ctrl+W records instead of
+ * closing a tab. */
+function ChordRow({
+  label,
+  value,
+  overridden,
+  validate,
+  onCommit,
+  onReset,
+}: {
+  label: string;
+  value: string;
+  overridden: boolean;
+  /** Why this chord can't be used, or null when it can. */
+  validate: (chord: string) => string | null;
+  onCommit: (chord: string) => void;
+  onReset: () => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
-    <a
-      href={href}
-      onClick={(e) => {
-        e.preventDefault();
-        void openUrl(href);
-      }}
-    >
-      {children}
-    </a>
+    <tr>
+      <td>
+        {recording ? (
+          <button
+            className="chord-record chord-recording"
+            autoFocus
+            onKeyDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.key === "Escape") {
+                setRecording(false);
+                setError(null);
+                return;
+              }
+              const chord = chordOfEvent(e.nativeEvent);
+              if (!chord) return; // a modifier alone — keep listening
+              const problem = validate(chord);
+              if (problem) {
+                setError(problem);
+                return;
+              }
+              setError(null);
+              setRecording(false);
+              onCommit(chord);
+            }}
+            onBlur={() => {
+              setRecording(false);
+              setError(null);
+            }}
+          >
+            press keys… <span className="chord-hint">(Esc cancels)</span>
+          </button>
+        ) : (
+          <button
+            className="chord-record"
+            data-tip="Click, then press the new shortcut"
+            onClick={() => setRecording(true)}
+          >
+            <kbd>{value}</kbd>
+          </button>
+        )}
+        {overridden && !recording && (
+          <button
+            className="settings-remove"
+            aria-label={`Reset ${label} to its default`}
+            data-tip="Reset to default"
+            onClick={onReset}
+          >
+            ↺
+          </button>
+        )}
+      </td>
+      <td>
+        {label}
+        {recording && error && <span className="chord-error">{error}</span>}
+      </td>
+    </tr>
   );
 }
 
@@ -83,6 +149,12 @@ interface SettingsProps {
   /** Popup text size (menus, context menus, palette) as a % of the default. */
   popupScale: number;
   onPopupScaleChange: (scale: number) => void;
+  /** App-shortcut overrides (action id → chord); defaults live in keybinds.ts. */
+  keybinds: Record<string, string>;
+  onSetKeybind: (action: string, chord: string | null) => void;
+  /** The global summon hotkey, and the rebind that re-registers it live. */
+  summonHotkey: string;
+  onChangeSummonHotkey: (chord: string) => void;
   /** Where to land on open — "shortcuts" scrolls to that table. */
   section: "top" | "shortcuts";
   onClose: () => void;
@@ -99,14 +171,13 @@ export function Settings({
   onExplorerTintChange,
   popupScale,
   onPopupScaleChange,
+  keybinds,
+  onSetKeybind,
+  summonHotkey,
+  onChangeSummonHotkey,
   section,
   onClose,
 }: SettingsProps) {
-  const [version, setVersion] = useState("");
-  useEffect(() => {
-    void getVersion().then(setVersion);
-  }, []);
-
   // "Keyboard shortcuts" opens straight onto its table — it's the last
   // section, buried below the fold at any window size.
   const shortcutsRef = useRef<HTMLHeadingElement>(null);
@@ -118,37 +189,6 @@ export function Settings({
     <div className="palette-backdrop" onClick={onClose}>
       <div className="settings" onClick={(e) => e.stopPropagation()}>
         <h1>Settings</h1>
-        <h2>About</h2>
-        <table>
-          <tbody>
-            <tr>
-              <td>Version</td>
-              <td>asapnotes {version}</td>
-            </tr>
-            <tr>
-              <td>Notes folder</td>
-              <td className="settings-path">{rootPath}</td>
-            </tr>
-            <tr>
-              <td>Auto-update</td>
-              <td>Planned — updates are manual for now</td>
-            </tr>
-            <tr>
-              <td>Made by</td>
-              <td className="settings-credits">
-                <ExternalLink href="https://anfifo.com">Anfifo</ExternalLink>
-              </td>
-            </tr>
-            <tr>
-              <td>Support</td>
-              <td className="settings-credits settings-support">
-                <ExternalLink href="https://buymeacoffee.com/anfifo">
-                  ☕ Buy me a coffee
-                </ExternalLink>
-              </td>
-            </tr>
-          </tbody>
-        </table>
         <h2>Appearance</h2>
         <table>
           <tbody>
@@ -205,6 +245,15 @@ export function Settings({
             </tr>
           </tbody>
         </table>
+        <h2>Storage</h2>
+        <table>
+          <tbody>
+            <tr>
+              <td>Notes folder</td>
+              <td className="settings-path">{rootPath}</td>
+            </tr>
+          </tbody>
+        </table>
         {projects.length > 0 && (
           <>
             <h2>Projects</h2>
@@ -247,9 +296,29 @@ export function Settings({
           </>
         )}
         <h2 ref={shortcutsRef}>Keyboard shortcuts</h2>
+        <p className="settings-note">Click a shortcut to change it; ↺ puts the default back.</p>
         <table>
           <tbody>
-            {KEYBINDS.map(([keys, action]) => (
+            <ChordRow
+              label="Summon / hide (global)"
+              value={summonHotkey}
+              overridden={summonHotkey !== DEFAULT_SUMMON}
+              validate={summonConflict}
+              onCommit={onChangeSummonHotkey}
+              onReset={() => onChangeSummonHotkey(DEFAULT_SUMMON)}
+            />
+            {APP_ACTIONS.map((a) => (
+              <ChordRow
+                key={a.id}
+                label={a.label}
+                value={chordsOf(a.id, keybinds)}
+                overridden={a.id in keybinds}
+                validate={(chord) => bindingConflict(a.id, chord, keybinds)}
+                onCommit={(chord) => onSetKeybind(a.id, chord)}
+                onReset={() => onSetKeybind(a.id, null)}
+              />
+            ))}
+            {FIXED_ROWS.map(([keys, action]) => (
               <tr key={keys}>
                 <td>
                   <kbd>{keys}</kbd>

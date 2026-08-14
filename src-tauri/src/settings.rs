@@ -48,6 +48,14 @@ pub struct Settings {
     /// project file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub virtual_folders_root: Option<String>,
+    /// Overrides for the app-level shortcuts, action id → chord. Only
+    /// overrides are stored — the defaults (and what the ids mean) are the
+    /// frontend's action table, so absent means shipped behavior.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub keybinds: BTreeMap<String, String>,
+    /// The global summon hotkey; absent means the shipped default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summon_hotkey: Option<String>,
 }
 
 impl Default for Settings {
@@ -59,6 +67,8 @@ impl Default for Settings {
             note_types: default_note_types(),
             files: Vec::new(),
             virtual_folders_root: None,
+            keybinds: BTreeMap::new(),
+            summon_hotkey: None,
         }
     }
 }
@@ -185,6 +195,77 @@ fn is_true(b: &bool) -> bool {
 /// `listed` by default: config, data and log files exist beside notes without
 /// being notes, so they stay out of the walks until a pattern opts them in.
 fn default_note_types() -> Vec<NoteType> {
+    let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+    let plain =
+        |id: &str, name: &str, exts: &[&str], icon: &str, color: Option<&str>, listed| NoteType {
+            id: id.into(),
+            name: name.into(),
+            extensions: strings(exts),
+            view: "text".into(),
+            icon: Some(icon.into()),
+            color: color.map(Into::into),
+            features: Vec::new(),
+            listed,
+        };
+    vec![
+        NoteType {
+            id: "markdown".into(),
+            name: "Markdown".into(),
+            extensions: strings(&["md", "markdown"]),
+            view: "markdown".into(),
+            icon: Some("file-text".into()),
+            color: Some("blue".into()),
+            features: strings(&["live-preview", "preview", "mentions", "format", "images"]),
+            listed: true,
+        },
+        plain("text", "Plain text", &["txt", "text"], "file", None, true),
+        plain("json", "JSON", &["json"], "file-json", Some("amber"), false),
+        plain(
+            "yaml",
+            "YAML",
+            &["yaml", "yml"],
+            "file-code",
+            Some("rose"),
+            false,
+        ),
+        plain(
+            "config",
+            "Config",
+            &["toml", "ini", "cfg"],
+            "file-code",
+            Some("purple"),
+            false,
+        ),
+        plain(
+            "csv",
+            "CSV",
+            &["csv"],
+            "file-spreadsheet",
+            Some("green"),
+            false,
+        ),
+        plain("xml", "XML", &["xml"], "file-code", Some("orange"), false),
+        plain("log", "Log", &["log"], "file-terminal", Some("gray"), false),
+        plain("latex", "LaTeX", &["tex"], "file-text", Some("teal"), true),
+        NoteType {
+            id: "canvas".into(),
+            name: "Canvas".into(),
+            extensions: strings(&["canvas"]),
+            view: "canvas".into(),
+            icon: Some("file-canvas".into()),
+            color: Some("amber".into()),
+            features: Vec::new(),
+            listed: true,
+        },
+    ]
+}
+
+/// The registry as shipped 2026-08-13: nine types with `listed` flags, no
+/// canvas — the view didn't exist yet. Frozen literally like the snapshots
+/// below (deriving it from the live defaults would drift the moment they
+/// change), so `load` can upgrade untouched defaults without touching a
+/// hand-edit.
+fn v3_note_types() -> Vec<NoteType> {
     let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
     let plain =
         |id: &str, name: &str, exts: &[&str], icon: &str, color: Option<&str>, listed| NoteType {
@@ -402,7 +483,9 @@ fn load(app: &AppHandle) -> Result<Loaded, String> {
                 // means the whole list belongs to the user. A failed write
                 // only postpones this — the in-memory upgrade already
                 // happened and will be retried.
-                if settings.note_types == v1_note_types() || settings.note_types == v2_note_types()
+                if settings.note_types == v1_note_types()
+                    || settings.note_types == v2_note_types()
+                    || settings.note_types == v3_note_types()
                 {
                     settings.note_types = default_note_types();
                     let _ = write(&path, &settings);
@@ -509,6 +592,16 @@ pub fn set_appearance(app: AppHandle, appearance: Appearance) -> Result<(), Stri
     })
 }
 
+/// Keybind overrides, sent whole — the frontend owns the action table and
+/// which entries diverge from it.
+#[tauri::command]
+pub fn set_keybinds(app: AppHandle, keybinds: BTreeMap<String, String>) -> Result<(), String> {
+    update(&app, |s| {
+        s.keybinds = keybinds;
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,5 +642,26 @@ mod tests {
         assert_eq!(parsed, v2_note_types());
         // And the upgrade is a real change, so migration isn't a no-op.
         assert_ne!(v2_note_types(), default_note_types());
+    }
+
+    #[test]
+    fn v3_era_registry_round_trips_and_upgrades() {
+        // An untouched 2026-08-13 settings.json parses back to the snapshot…
+        let data = serde_json::to_string(&v3_note_types()).expect("serializes");
+        let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
+        assert_eq!(parsed, v3_note_types());
+        // …and the canvas entry makes the upgrade a real change.
+        assert_ne!(v3_note_types(), default_note_types());
+    }
+
+    #[test]
+    fn canvas_type_is_a_listed_note() {
+        let s = Settings::default();
+        assert!(s.is_note("board.canvas"));
+        assert!(s.is_listed("board.canvas"));
+        assert_eq!(
+            s.type_for("board.canvas").map(|t| t.view.as_str()),
+            Some("canvas")
+        );
     }
 }

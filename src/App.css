@@ -1522,7 +1522,9 @@ body,
 /* Settings overlay (File → Settings / Ctrl+K → Settings) — shares the palette backdrop */
 
 .settings {
-  width: min(30rem, 88vw);
+  /* Wide enough that a typical project path fits on one line — the Projects
+     table and the Notes folder row are the widest content here. */
+  width: min(42rem, 88vw);
   max-height: 80vh;
   overflow-y: auto;
   padding: 1rem 1.25rem 1.25rem;
@@ -1558,13 +1560,61 @@ body,
 }
 
 .settings td:first-child {
-  width: 42%;
+  /* Sized for the longest keybind chord; the freed width goes to the value
+     column, where the paths live. */
+  width: 34%;
   color: #7a7a7a;
   padding-right: 0.7rem;
 }
 
 .settings-path {
   overflow-wrap: anywhere;
+}
+
+/* About is the identity card — same surface as Settings, sized to its four rows. */
+.settings.about {
+  width: min(24rem, 88vw);
+}
+
+.settings-note {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  color: #9a9a9a;
+}
+
+/* Editable shortcut: the kbd is a button; clicking arms a recorder that takes
+   the next chord pressed (the app key handler skips .chord-recording). */
+.chord-record {
+  font: inherit;
+  padding: 0.05rem 0.15rem;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.chord-record:hover {
+  border-color: #d5d5d5;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.chord-record.chord-recording {
+  font-size: 0.75rem;
+  color: #8a6a00;
+  border-color: currentColor;
+  background: rgba(217, 154, 6, 0.08);
+  cursor: default;
+}
+
+.chord-hint {
+  color: #9a9a9a;
+}
+
+.chord-error {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--tint-rose);
 }
 
 /* Segmented picker — one visible group of mutually exclusive choices, so the
@@ -2076,6 +2126,244 @@ body,
   padding: 0 0.3rem;
 }
 
+/* --- Canvas board (BoardView, code-split — these rules are the only startup
+   cost the canvas has). The dot grid rides the camera: its size scales with
+   the zoom and its position pans, so the surface reads as one plane. --- */
+
+.board {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  outline: none;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.09) 1px, transparent 1px);
+}
+
+.board-surface {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.board-node {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 0.4rem 0.6rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  cursor: default;
+  overflow: hidden;
+}
+
+.board-node-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  min-height: 1.5rem;
+}
+
+.board-node.selected {
+  border-color: var(--tint-amber);
+  box-shadow: 0 0 0 1px var(--tint-amber);
+}
+
+.board-node.missing {
+  opacity: 0.55;
+}
+
+.board-node-name {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-node-detail {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: #9a9a9a;
+}
+
+/* The note's opening text, clipped by the card and fading at the cut. */
+.board-node-body {
+  flex: 1;
+  min-height: 0;
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: #6f6f6f;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1rem), transparent);
+}
+
+/* Text nodes other tools may have put in the file — shown, not editable yet. */
+.board-node-text {
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+
+.board-resize {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  border-right: 2px solid var(--tint-amber);
+  border-bottom: 2px solid var(--tint-amber);
+  border-radius: 0 0 7px 0;
+}
+
+.board-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2rem;
+  text-align: center;
+  color: #8a8a8a;
+  font-size: 0.9rem;
+  pointer-events: none;
+}
+
+/* Overlay toolbar: the empty middle must not block panning underneath. */
+.board-bar {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.board-bar > * {
+  pointer-events: auto;
+}
+
+.board-add {
+  position: relative;
+}
+
+.board-btn {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.55rem;
+  color: inherit;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.board-btn:hover {
+  background: #efefef;
+}
+
+.board-zoom {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.board-zoom-pct {
+  min-width: 3.4rem;
+}
+
+.board-picker {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 15rem;
+  max-height: 45vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0.35rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  z-index: 5;
+}
+
+.board-picker input {
+  font: inherit;
+  font-size: 0.8rem;
+  margin-bottom: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 5px;
+  outline: none;
+}
+
+.board-picker ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.board-picker li button {
+  font: inherit;
+  font-size: 0.8rem;
+  display: block;
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-picker li button:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.board-picker-empty {
+  font-size: 0.8rem;
+  color: #9a9a9a;
+  padding: 0.25rem 0.4rem;
+}
+
+/* An unreadable canvas opens locked — message instead of surface. */
+.board-broken {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2rem;
+  text-align: center;
+  color: #6e6e6e;
+  font-size: 0.9rem;
+  background-image: none;
+  cursor: default;
+  user-select: text;
+}
+
+.board-broken-msg {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.78rem;
+}
+
 /* Dark theme. Keyed off the resolved theme that theme.ts stamps on the root
    element before the first paint, rather than reading `prefers-color-scheme`
    here — that is what lets an explicit Light/Dark choice override the OS. The
@@ -2117,6 +2405,38 @@ body,
 
   .file-icon {
     color: #9a9a9a;
+  }
+
+  .board {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.09) 1px, transparent 1px);
+  }
+
+  .board-node {
+    background: #3a3a3a;
+    border-color: rgba(255, 255, 255, 0.14);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+
+  .board-node-body {
+    color: #a8a8a8;
+  }
+
+  .board-btn,
+  .board-picker {
+    background: #3a3a3a;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .board-btn:hover {
+    background: #454545;
+  }
+
+  .board-picker input {
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+
+  .board-picker li button:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .explorer-ext.mute {
@@ -2401,6 +2721,16 @@ body,
   .settings-edit:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #f6f6f6;
+  }
+
+  .chord-record:hover {
+    border-color: #4a4a4a;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .chord-record.chord-recording {
+    color: #dcbf5a;
+    background: rgba(220, 191, 90, 0.1);
   }
 
   .segmented,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -15,6 +15,8 @@ import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
 import { NewProject } from "./NewProject";
 import { fileOf, projectOf, relativePath, resolvePath, validFileName, winPath } from "./paths";
+import { AppActionId, bindingTable, chordFor, chordOfEvent, DEFAULT_SUMMON } from "./keybinds";
+import { About } from "./About";
 import { featuresOf, hasFeature, isNoteFile, noteTypeOf, setNoteTypes, viewOf } from "./noteTypes";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
@@ -36,6 +38,10 @@ interface OpenNote {
   /** Saved note path, null while untitled. */
   name: string | null;
 }
+
+// Loaded on demand, never at startup: summon latency is the product, and the
+// canvas module is only fetched when the first board actually renders.
+const BoardView = lazy(() => import("./canvas/BoardView"));
 
 const AUTOSAVE_MS = 500;
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
@@ -313,6 +319,17 @@ function App() {
   const [newFolders, setNewFolders] = useState<string[]>([]);
   // Which Settings section to land on — null = closed, "top" = the overlay as-is.
   const [settingsOpen, setSettingsOpen] = useState<null | "top" | "shortcuts">(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  // App-shortcut overrides (action id → chord) and the global summon hotkey.
+  // No boot mirror: until settings load, the shipped defaults handle keys.
+  const [keybinds, setKeybindsState] = useState<Record<string, string>>({});
+  const keybindsRef = useRef(keybinds);
+  keybindsRef.current = keybinds;
+  const bindingsRef = useRef(bindingTable({}));
+  useEffect(() => {
+    bindingsRef.current = bindingTable(keybinds);
+  }, [keybinds]);
+  const [summonHotkey, setSummonHotkeyState] = useState(DEFAULT_SUMMON);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [summonMs, setSummonMs] = useState<number | null>(null);
@@ -370,6 +387,10 @@ function App() {
   // Disk mtime of the open note when its content was loaded (null while
   // untitled/unknown) — the reference point for external-change detection.
   const openMtimeRef = useRef<number | null>(null);
+  // The open buffer's last known on-disk content (null when unknown — loaded
+  // from a draft, or the file vanished). A close finding the buffer equal to
+  // this has nothing to protect, whatever the dirty flag says.
+  const baselineRef = useRef<string | null>("");
 
   /** Remember the open note's on-disk mtime; a stale async result (another
    * track started meanwhile) is dropped via the token. */
@@ -523,6 +544,9 @@ function App() {
   const showDoc = useCallback(
     (note: OpenNote, content: string, isDirty: boolean) => {
       contentRef.current = content;
+      // Dirty on arrival means the content came from a draft, not the file —
+      // no baseline to compare a close against.
+      baselineRef.current = isDirty ? null : content;
       setOpen(note);
       setWelcome(false);
       setTabs((ts) =>
@@ -606,6 +630,24 @@ function App() {
       trackMtime(null);
     },
     [flushDraft, trackMtime],
+  );
+
+  /** Open a project's board — `board.canvas` at its root. A project with no
+   * board yet gets an unsaved tab: the file is created lazily, on the first
+   * save after something is placed, never by merely looking. */
+  const openBoard = useCallback(
+    async (project: string) => {
+      const id = `${project}/board.canvas`;
+      const draftIds = new Set(draftsRef.current.map((d) => d.name));
+      const isNote = notesRef.current.some((n) => n.name === id);
+      if (isNote || draftIds.has(id)) {
+        await openItem({ id, isNote }, draftIds);
+        return;
+      }
+      await flushDraft();
+      showDoc({ id, name: id }, "", false);
+    },
+    [flushDraft, openItem, showDoc],
   );
 
   /** Location of a project: its registered folder, else a notes-root subfolder. */
@@ -778,6 +820,7 @@ function App() {
         }
       }
       await api.saveNote(name, doc);
+      baselineRef.current = doc;
       mtimeTokenRef.current++; // invalidate any in-flight track
       openMtimeRef.current = (await api.noteMtime(name).catch(() => null)) ?? null;
       await api.deleteDraft(cur.id);
@@ -946,10 +989,41 @@ function App() {
         setPopupScaleState(scale);
         localStorage.setItem("popupScale", String(scale)); // mirror only
       }
+      setKeybindsState(settings.keybinds ?? {});
+      setSummonHotkeyState(settings.summonHotkey ?? DEFAULT_SUMMON);
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
     },
     [applyZoom, toast],
+  );
+
+  /** Override one app shortcut (chord null = back to the defaults). The whole
+   * override map is persisted; the file never holds shipped defaults. */
+  const setKeybind = useCallback(
+    (action: string, chord: string | null) => {
+      const next = { ...keybindsRef.current };
+      if (chord) next[action] = chord;
+      else delete next[action];
+      setKeybindsState(next);
+      void api
+        .setKeybinds(next)
+        .catch((err: unknown) => toast(`Couldn't save the shortcut — ${errText(err)}`));
+    },
+    [toast],
+  );
+
+  /** Rebind the global summon hotkey — registration happens on the backend,
+   * so a chord another app holds is refused there and reported here. */
+  const changeSummonHotkey = useCallback(
+    async (chord: string) => {
+      try {
+        await api.setSummonHotkey(chord);
+        setSummonHotkeyState(chord);
+      } catch (err) {
+        toast(`Couldn't set the summon hotkey — ${errText(err)}`);
+      }
+    },
+    [toast],
   );
 
   /** Adopt a project listing: names for every consumer, plus which registered
@@ -1206,61 +1280,82 @@ function App() {
     [refreshProjects, toast],
   );
 
+  /** Run one rebindable app action — the chord table's targets. */
+  const runAction = (action: AppActionId) => {
+    switch (action) {
+      case "save":
+        return void save();
+      case "new-note":
+        return void newNote();
+      case "close-tab":
+        if (openRef.current) requestCloseTab(openRef.current.id);
+        return;
+      case "next-tab":
+        return cycleTab(false);
+      case "command-palette":
+        setPaletteOpen((o) => (o === "commands" ? null : "commands"));
+        if (paletteOpen === "commands") editorRef.current?.focus();
+        return;
+      case "switch-note":
+        setPaletteOpen((o) => (o === "notes" ? null : "notes"));
+        if (paletteOpen === "notes") editorRef.current?.focus();
+        return;
+      case "explorer":
+        return setExplorerOpen((o) => !o);
+      case "search":
+        return openSearchView();
+      case "preview":
+        return togglePreview();
+      case "zoom-in":
+        return setZoom(zoomRef.current + 0.1);
+      case "zoom-out":
+        return setZoom(zoomRef.current - 0.1);
+      case "zoom-reset":
+        return setZoom(1);
+    }
+  };
+
   // App-level shortcuts. Kept in a ref so the window listener registers once
-  // but always sees fresh state.
+  // but always sees fresh state. The rebindable chords live in a table
+  // (keybinds.ts defaults + settings.json overrides); Ctrl+Z/Y and Escape
+  // stay special-cased below because both dispatch on focus, not on chord.
   const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
   keyHandlerRef.current = (e: KeyboardEvent) => {
+    const t = e.target as Element;
+    // A shortcut recorder in Settings owns every key while it records.
+    if (t.closest?.(".chord-recording")) return;
+    const chord = chordOfEvent(e);
+    if (chord) {
+      const action = bindingsRef.current.get(chord);
+      if (action) {
+        e.preventDefault();
+        runAction(action);
+        return;
+      }
+      // Shift over the next-tab chord cycles backwards.
+      if (
+        chord.includes("Shift+") &&
+        bindingsRef.current.get(chord.replace("Shift+", "")) === "next-tab"
+      ) {
+        e.preventDefault();
+        cycleTab(true);
+        return;
+      }
+    }
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
-    if (mod && key === "s") {
-      e.preventDefault();
-      void save();
-    } else if (mod && (key === "n" || key === "t")) {
-      e.preventDefault();
-      void newNote();
-    } else if (mod && key === "w") {
-      e.preventDefault();
-      if (openRef.current) requestCloseTab(openRef.current.id);
-    } else if (e.ctrlKey && e.key === "Tab") {
-      e.preventDefault();
-      cycleTab(e.shiftKey);
-    } else if ((mod && key === "k") || (mod && e.shiftKey && key === "p")) {
-      e.preventDefault();
-      setPaletteOpen((o) => (o === "commands" ? null : "commands"));
-      if (paletteOpen === "commands") editorRef.current?.focus();
-    } else if (mod && key === "p") {
-      e.preventDefault();
-      setPaletteOpen((o) => (o === "notes" ? null : "notes"));
-      if (paletteOpen === "notes") editorRef.current?.focus();
-    } else if (mod && e.shiftKey && key === "e") {
-      e.preventDefault();
-      setExplorerOpen((o) => !o);
-    } else if (mod && e.shiftKey && key === "f") {
-      e.preventDefault();
-      openSearchView();
-    } else if (mod && key === "e") {
-      e.preventDefault();
-      togglePreview();
-    } else if (mod && (key === "=" || key === "+")) {
-      e.preventDefault();
-      setZoom(zoomRef.current + 0.1);
-    } else if (mod && key === "-") {
-      e.preventDefault();
-      setZoom(zoomRef.current - 0.1);
-    } else if (mod && key === "0") {
-      e.preventDefault();
-      setZoom(1);
-    } else if (mod && (key === "z" || key === "y")) {
+    if (mod && (key === "z" || key === "y")) {
       // Seen-mark undo/redo — only when text editing doesn't own the key
-      // (CodeMirror and inputs keep their own history), and only while there
-      // is a mark to walk. Otherwise the key falls through untouched.
+      // (CodeMirror and inputs keep their own history, the board its own
+      // move/resize journal), and only while there is a mark to walk.
+      // Otherwise the key falls through untouched.
       const t = e.target as Element;
-      if (!t.closest(".cm-editor") && !t.closest("input, textarea")) {
+      if (!t.closest(".cm-editor") && !t.closest("input, textarea") && !t.closest(".board")) {
         if (undoSeen(key === "y" || e.shiftKey)) e.preventDefault();
       }
     } else if (e.key === "Escape") {
-      if (document.querySelector(".menu-drop")) {
-        // An open menubar dropdown or context menu owns Esc.
+      if (document.querySelector(".menu-drop") || document.querySelector(".board-picker")) {
+        // An open menubar dropdown, context menu, or board picker owns Esc.
       } else if (renaming) {
         setRenaming(false);
         editorRef.current?.focus();
@@ -1269,6 +1364,9 @@ function App() {
         editorRef.current?.focus();
       } else if (settingsOpen) {
         setSettingsOpen(null);
+        editorRef.current?.focus();
+      } else if (aboutOpen) {
+        setAboutOpen(false);
         editorRef.current?.focus();
       } else if (creatingProject) {
         setCreatingProject(false);
@@ -1369,12 +1467,17 @@ function App() {
         const cur = openRef.current;
         if (!cur || cur.name !== name) return;
         if (mtime === null) {
+          // No reference mtime means no file was ever seen — a lazily-created
+          // tab (a project board before its first save), not a vanished file.
+          if (openMtimeRef.current === null) return;
           // The file vanished from disk, and a clean buffer has no draft —
           // the buffer is the only copy left. Dirty + draft re-arm the
           // close-confirm and draft safety nets; Ctrl+S recreates the file,
           // since the save guard reads a missing file as no conflict.
           if (!dirtyRef.current) {
             setDirty(true);
+            // The draft is the only copy now — a close must keep asking.
+            baselineRef.current = null;
             await api.writeDraft(cur.id, contentRef.current);
             upsertDraft(cur.id);
           }
@@ -1386,6 +1489,7 @@ function App() {
           const content = await api.readNote(name);
           if (openRef.current?.name !== name) return;
           contentRef.current = content;
+          baselineRef.current = content;
           setInitialDoc(content);
           editorRef.current?.setDoc(content);
           openMtimeRef.current = mtime;
@@ -1445,6 +1549,8 @@ function App() {
   // the pre-startup instant keeps the chrome (something markdown is about to
   // open, and hiding it would flash), the welcome panel drops it.
   const diffOpen = open !== null && isDiffTab(open.id);
+  // The open tab is a canvas: the board view renders instead of the editor.
+  const canvasOpen = open !== null && !diffOpen && viewOf(open.id) === "canvas";
   const canPreview = open ? !diffOpen && hasFeature(open.id, "preview") : !welcome;
   const canFormat = open ? !diffOpen && hasFeature(open.id, "format") : !welcome;
   // The open note's real directory (for resolving relative image links).
@@ -1453,6 +1559,48 @@ function App() {
   const looseCurrent = open !== null && !diffOpen && !currentProject;
   const noteDir = open && !diffOpen ? noteDirOf(open.id) : rootPath;
   noteDirRef.current = noteDir;
+
+  // Board plumbing: a node's `file` is a path relative to the board's own
+  // folder (the same rule mention links follow), with the bare note id as the
+  // recorded fallback for targets a relative path can't reach (other drive).
+  const boardDir = canvasOpen ? noteDir : null;
+  const boardProject = canvasOpen && open ? projectOf(open.id) : null;
+  const resolveBoardTarget = (
+    file: string,
+  ): { id: string | null; exists: boolean; modifiedMs: number } => {
+    if (!boardDir) return { id: null, exists: false, modifiedMs: 0 };
+    let id = noteIdOf(resolvePath(boardDir, file));
+    if (!id && noteNames.has(file)) id = file;
+    return {
+      id,
+      exists: id !== null && noteNames.has(id),
+      // The card excerpt's cache key — a changed note re-reads its excerpt.
+      modifiedMs: notes.find((n) => n.name === id)?.modified_ms ?? 0,
+    };
+  };
+  /** Text a board card shows under the note's name; null when the target has
+   * none to offer (unreadable, or itself a canvas). */
+  const boardExcerpt = async (id: string): Promise<string | null> => {
+    if (viewOf(id) === "canvas") return null;
+    try {
+      return (await api.readNote(id)).trimStart().slice(0, 600);
+    } catch {
+      return null;
+    }
+  };
+  const boardFileFor = (id: string): string =>
+    boardDir ? (relativePath(boardDir, `${noteDirOf(id)}/${fileOf(id)}`) ?? id) : id;
+  // What "Add note" offers: the board's own project (or the loose notes for a
+  // board in the notes root), newest first, the board file itself excluded.
+  const boardAddItems = canvasOpen
+    ? notes
+        .filter((n) => projectOf(n.name) === boardProject && n.name !== open?.id)
+        .sort((a, b) => b.modified_ms - a.modified_ms)
+        .map((n) => ({
+          id: n.name,
+          label: boardProject ? n.name.slice(boardProject.length + 1) : n.name,
+        }))
+    : [];
 
   const startRename = () => {
     if (!open || isDiffTab(open.id)) return;
@@ -1511,6 +1659,10 @@ function App() {
   const openDir =
     open && !diffOpen && open.id.includes("/") ? open.id.slice(0, open.id.lastIndexOf("/")) : null;
 
+  // Menu and tooltip chord readouts follow the effective bindings, so a
+  // rebound shortcut is what the chrome advertises.
+  const kb = (id: AppActionId) => chordFor(id, keybinds);
+
   // Ctrl+K: command palette — commands first (New note on top), recent
   // notes below; typing fuzzy-searches across both.
   const commands: CommandEntry[] = [
@@ -1518,14 +1670,14 @@ function App() {
       kind: "command",
       id: "cmd:new",
       label: "New note",
-      detail: "Ctrl+N",
+      detail: kb("new-note"),
       run: () => void newNote(),
     },
     {
       kind: "command",
       id: "cmd:save",
       label: "Save note",
-      detail: "Ctrl+S",
+      detail: kb("save"),
       run: () => void save(),
     },
     { kind: "command", id: "cmd:rename", label: "Rename note", run: startRename },
@@ -1533,7 +1685,7 @@ function App() {
       kind: "command",
       id: "cmd:search",
       label: "Search in notes",
-      detail: "Ctrl+Shift+F",
+      detail: kb("search"),
       run: openSearchView,
     },
     ...(openName
@@ -1552,7 +1704,7 @@ function App() {
             kind: "command" as const,
             id: "cmd:preview",
             label: mode === "edit" ? "Open preview" : "Back to editor",
-            detail: "Ctrl+E",
+            detail: kb("preview"),
             run: togglePreview,
           },
         ]
@@ -1572,6 +1724,12 @@ function App() {
             id: "cmd:move:none",
             label: "Remove from project",
             run: () => void changeProject(null),
+          },
+          {
+            kind: "command" as const,
+            id: "cmd:board",
+            label: `Open project board: ${currentProject}`,
+            run: () => void openBoard(currentProject),
           },
         ]
       : []),
@@ -1605,6 +1763,12 @@ function App() {
       id: "cmd:settings",
       label: "Settings",
       run: () => setSettingsOpen("top"),
+    },
+    {
+      kind: "command",
+      id: "cmd:about",
+      label: "About asapnotes",
+      run: () => setAboutOpen(true),
     },
     {
       kind: "command",
@@ -1642,8 +1806,8 @@ function App() {
     {
       label: "File",
       items: [
-        { label: "New note", detail: "Ctrl+N", run: () => void newNote() },
-        { label: "Save note", detail: "Ctrl+S", run: () => void save() },
+        { label: "New note", detail: kb("new-note"), run: () => void newNote() },
+        { label: "Save note", detail: kb("save"), run: () => void save() },
         { label: "Rename note", run: startRename },
         ...(openName ? [{ label: "Delete note", run: () => void deleteNote(openName) }] : []),
         "sep",
@@ -1685,14 +1849,14 @@ function App() {
           ? [
               {
                 label: mode === "edit" ? "Open preview" : "Back to editor",
-                detail: "Ctrl+E",
+                detail: kb("preview"),
                 run: togglePreview,
               },
             ]
           : []),
         {
           label: explorerOpen ? "Hide explorer" : "Show explorer",
-          detail: "Ctrl+Shift+E",
+          detail: kb("explorer"),
           run: () => setExplorerOpen((o) => !o),
         },
         {
@@ -1705,27 +1869,31 @@ function App() {
         },
         {
           label: "Search in notes",
-          detail: "Ctrl+Shift+F",
+          detail: kb("search"),
           run: openSearchView,
         },
         "sep",
-        { label: "Command palette", detail: "Ctrl+K", run: () => setPaletteOpen("commands") },
-        { label: "Switch note", detail: "Ctrl+P", run: () => setPaletteOpen("notes") },
+        {
+          label: "Command palette",
+          detail: kb("command-palette"),
+          run: () => setPaletteOpen("commands"),
+        },
+        { label: "Switch note", detail: kb("switch-note"), run: () => setPaletteOpen("notes") },
         "sep",
-        { label: "Zoom in", detail: "Ctrl+=", run: () => setZoom(zoomRef.current + 0.1) },
-        { label: "Zoom out", detail: "Ctrl+-", run: () => setZoom(zoomRef.current - 0.1) },
-        { label: "Reset zoom", detail: "Ctrl+0", run: () => setZoom(1) },
+        { label: "Zoom in", detail: kb("zoom-in"), run: () => setZoom(zoomRef.current + 0.1) },
+        { label: "Zoom out", detail: kb("zoom-out"), run: () => setZoom(zoomRef.current - 0.1) },
+        { label: "Reset zoom", detail: kb("zoom-reset"), run: () => setZoom(1) },
       ],
     },
-    // Settings at the top level, with Help's items folded in — About is the
-    // overlay's first section, so it needs no scroll of its own.
+    // Settings at the top level, with Help's items folded in; About is its
+    // own small overlay rather than a Settings section.
     {
       label: "Settings",
       items: [
         { label: "Settings…", run: () => setSettingsOpen("top") },
         { label: "Keyboard shortcuts", run: () => setSettingsOpen("shortcuts") },
         "sep",
-        { label: "About asapnotes", run: () => setSettingsOpen("top") },
+        { label: "About asapnotes", run: () => setAboutOpen(true) },
       ],
     },
   ];
@@ -1860,15 +2028,40 @@ function App() {
         void api.deleteDraft(id);
         setDrafts((d) => d.filter((x) => x.name !== id));
         closeTab(id);
-      } else if (dirtyRef.current) {
+      } else if (dirtyRef.current && contentRef.current !== baselineRef.current) {
         setCloseAsk(id);
       } else {
+        // Clean, or edited back to exactly what the file holds — nothing a
+        // Save/Discard prompt would protect. Any shadow draft written along
+        // the way is redundant now and would re-dirty the next open.
+        cancelAutosave();
+        if (dirtyRef.current) {
+          void api.deleteDraft(id);
+          setDrafts((d) => d.filter((x) => x.name !== id));
+        }
         closeTab(id);
       }
       return;
     }
-    if (draftIds.has(id)) setCloseAsk(id);
-    else closeTab(id);
+    if (draftIds.has(id)) {
+      // A background tab's draft may match its file exactly (edits undone,
+      // then flushed on switch-away) — check before bothering the user.
+      void (async () => {
+        try {
+          const [draft, file] = await Promise.all([api.readDraft(id), api.readNote(id)]);
+          if (draft === file) {
+            await api.deleteDraft(id);
+            setDrafts((d) => d.filter((x) => x.name !== id));
+            closeTab(id);
+            return;
+          }
+        } catch {
+          // No file to compare against (untitled draft) — the draft is the
+          // only copy, so ask.
+        }
+        setCloseAsk(id);
+      })();
+    } else closeTab(id);
   };
 
   /** "Save" on the close confirm. A background tab activates first so the one
@@ -2022,7 +2215,7 @@ function App() {
 
   const tabContextMenu = (e: React.MouseEvent, t: OpenNote) =>
     openContextMenu(e, [
-      { label: "Close", detail: "Ctrl+W", run: () => requestCloseTab(t.id) },
+      { label: "Close", detail: kb("close-tab"), run: () => requestCloseTab(t.id) },
       { label: "Close others", run: () => closeOtherTabs(t.id) },
       { label: "Close saved", run: closeSavedTabs },
       { label: "Close all", run: closeAllTabs },
@@ -2191,6 +2384,11 @@ function App() {
     const [project, ...rest] = dir.split("/");
     const mount = mounts.find((m) => m.project === project && m.at === rest.join("/"));
     openContextMenu(e, [
+      // The board is per project (`board.canvas` at its root), so only the
+      // project heading offers it — not subfolders or mounts.
+      ...(dir && rest.length === 0
+        ? [{ label: "Open project board", run: () => void openBoard(dir) }, "sep" as const]
+        : []),
       { label: "New note here", run: () => startExplorerCreate(dir) },
       // All three need a project to land in, which the notes-root heading ("")
       // isn't — a top-level folder is a project, created by "New project…".
@@ -2258,7 +2456,7 @@ function App() {
   // notes and drafts (computed only while it shows) merged to one entry per
   // name at the newest timestamp — the explorer's Recent rule, shortened.
   const welcomeActions = [
-    { label: "New note", detail: "Ctrl+N", run: () => void newNote() },
+    { label: "New note", detail: kb("new-note"), run: () => void newNote() },
     { label: "New project…", run: () => setCreatingProject(true) },
     { label: "Scan folder for projects…", run: () => void scanForProjects() },
     { label: "Settings", run: () => setSettingsOpen("top") },
@@ -2304,7 +2502,9 @@ function App() {
             className="rail"
             aria-label={explorerOpen ? "Close explorer" : "Open explorer"}
             data-tip={
-              explorerOpen ? "Close explorer (Ctrl+Shift+E)" : "Open explorer (Ctrl+Shift+E)"
+              explorerOpen
+                ? `Close explorer (${kb("explorer")})`
+                : `Open explorer (${kb("explorer")})`
             }
             onClick={() => setExplorerOpen((o) => !o)}
           >
@@ -2326,6 +2526,7 @@ function App() {
             onDirContext={explorerDirMenu}
             onBodyContext={explorerBodyMenu}
             onStartCreate={startExplorerCreate}
+            onOpenBoard={(p) => void openBoard(p)}
             creatingIn={explorerCreate}
             creatingKind={explorerCreateKind}
             onCreate={(dir, name) =>
@@ -2447,7 +2648,7 @@ function App() {
                     {(active ? dirty : draftIds.has(t.id)) && (
                       <span
                         className="dirty"
-                        data-tip="Unsaved — autosaved as draft. Ctrl+S to save."
+                        data-tip={`Unsaved — autosaved as draft. ${kb("save")} to save.`}
                       >
                         ●
                       </span>
@@ -2455,7 +2656,7 @@ function App() {
                     <button
                       className="tab-close"
                       aria-label="Close tab"
-                      data-tip="Close tab (Ctrl+W)"
+                      data-tip={`Close tab (${kb("close-tab")})`}
                       onClick={(e) => {
                         e.stopPropagation();
                         requestCloseTab(t.id);
@@ -2469,7 +2670,7 @@ function App() {
               <button
                 className="tab-new"
                 aria-label="New note"
-                data-tip="New note (Ctrl+T)"
+                data-tip={`New note (${kb("new-note")})`}
                 onClick={() => void newNote()}
               >
                 +
@@ -2516,8 +2717,9 @@ function App() {
           <div
             className="content-panel"
             onContextMenu={(e) => {
-              // The Edit menu talks to the editor, which a diff tab doesn't have.
-              if (mode === "edit" && !diffOpen) openContextMenu(e, editEntries);
+              // The Edit menu talks to the editor, which a diff tab or a
+              // board doesn't have (the board raises its own menus).
+              if (mode === "edit" && !diffOpen && !canvasOpen) openContextMenu(e, editEntries);
             }}
           >
             {open && diffOpen && (
@@ -2537,7 +2739,22 @@ function App() {
                 onError={(msg) => toast(`Recent changes — ${msg}`)}
               />
             )}
-            {open && !diffOpen && (
+            {canvasOpen && (
+              <Suspense fallback={null}>
+                <BoardView
+                  key={docKey}
+                  initialDoc={initialDoc}
+                  onChange={handleChange}
+                  resolveTarget={resolveBoardTarget}
+                  loadExcerpt={boardExcerpt}
+                  fileFor={boardFileFor}
+                  addItems={boardAddItems}
+                  onOpenNote={(id) => void openItem({ id, isNote: true }, draftIds)}
+                  onMenu={openContextMenu}
+                />
+              </Suspense>
+            )}
+            {open && !diffOpen && !canvasOpen && (
               <Editor
                 ref={editorRef}
                 docKey={docKey}
@@ -2559,6 +2776,14 @@ function App() {
               <WelcomePanel
                 actions={welcomeActions}
                 recent={welcomeRecent}
+                shortcuts={[
+                  [summonHotkey, "Summon / hide from anywhere"],
+                  [kb("new-note"), "New note"],
+                  [kb("switch-note"), "Switch note"],
+                  [kb("command-palette"), "Command palette"],
+                  [kb("search"), "Search in notes"],
+                  ["Esc", "Hide window"],
+                ]}
                 onOpenRecent={(id, isNote) => void openItem({ id, isNote }, draftIds)}
               />
             )}
@@ -2622,9 +2847,21 @@ function App() {
           }}
           popupScale={popupScale}
           onPopupScaleChange={setPopupScale}
+          keybinds={keybinds}
+          onSetKeybind={setKeybind}
+          summonHotkey={summonHotkey}
+          onChangeSummonHotkey={(chord) => void changeSummonHotkey(chord)}
           section={settingsOpen}
           onClose={() => {
             setSettingsOpen(null);
+            editorRef.current?.focus();
+          }}
+        />
+      )}
+      {aboutOpen && (
+        <About
+          onClose={() => {
+            setAboutOpen(false);
             editorRef.current?.focus();
           }}
         />

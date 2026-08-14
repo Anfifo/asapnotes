@@ -20,7 +20,7 @@ export type Feature = "live-preview" | "preview" | "mentions" | "format" | "imag
 const FEATURES: Feature[] = ["live-preview", "preview", "mentions", "format", "images", "ink"];
 
 /** Editing surfaces that exist. Anything else in the file reads as "text". */
-export type ViewId = "markdown" | "text";
+export type ViewId = "markdown" | "text" | "canvas";
 
 /** One registry entry, as it appears in `settings.json`. `view` and `features`
  * are plain strings because the file is user-editable; unknown values mean
@@ -71,8 +71,10 @@ export const featuresOf = (path: string): Feature[] => {
 };
 
 /** Editing surface for a path. */
-export const viewOf = (path: string): ViewId =>
-  noteTypeOf(path)?.view === "markdown" ? "markdown" : "text";
+export const viewOf = (path: string): ViewId => {
+  const view = noteTypeOf(path)?.view;
+  return view === "markdown" || view === "canvas" ? view : "text";
+};
 
 /** Tint ids the app defines per theme (as `--tint-*` in App.css). */
 const TINTS = ["blue", "amber", "rose", "purple", "green", "orange", "gray", "teal"];

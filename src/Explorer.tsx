@@ -68,6 +68,8 @@ interface ExplorerProps {
   onBodyContext: (e: React.MouseEvent) => void;
   /** Begin inline name-first creation in a folder ("" = notes root). */
   onStartCreate: (dir: string) => void;
+  /** Open a project's board (`board.canvas` at its root). */
+  onOpenBoard: (project: string) => void;
   /** Folder with an active inline create row, null when none. */
   creatingIn: string | null;
   /** What the create row makes: a note file, a real folder here, or a virtual
@@ -127,6 +129,7 @@ export function Explorer({
   onDirContext,
   onBodyContext,
   onStartCreate,
+  onOpenBoard,
   creatingIn,
   creatingKind,
   onCreate,
@@ -261,6 +264,24 @@ export function Explorer({
     </button>
   );
 
+  /** Hover-revealed "open this project's board" button — project headings
+   * only, since the board is per project. */
+  const boardBtn = (p: string) => (
+    <button
+      className="add-btn"
+      aria-label="Open project board"
+      data-tip="Open project board"
+      onClick={(e) => {
+        // A summary parent would otherwise toggle its folder on this click.
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenBoard(p);
+      }}
+    >
+      ▦
+    </button>
+  );
+
   /** Hover-revealed "new note in this folder" button for a heading row. */
   const addBtn = (dir: string) => (
     <button
@@ -364,6 +385,7 @@ export function Explorer({
       <summary onContextMenu={(e) => onDirContext(e, p)}>
         <span className="explorer-name">{p}</span>
         {missingProjects.includes(p) && <span className="explorer-detail">folder is missing</span>}
+        {boardBtn(p)}
         {addBtn(p)}
       </summary>
       {expanded.has(p) && renderTree(buildTree(inProject(p), bareDirsIn(p)), p)}
@@ -488,6 +510,7 @@ export function Explorer({
                   {missingProjects.includes(currentProject) && (
                     <span className="explorer-detail">folder is missing</span>
                   )}
+                  {boardBtn(currentProject)}
                   {addBtn(currentProject)}
                 </h2>
                 {renderTree(

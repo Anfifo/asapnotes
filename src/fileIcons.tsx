@@ -55,6 +55,14 @@ const GLYPHS: Record<string, ReactNode> = {
       <path d="M12 18h4" />
     </>
   ),
+  // Two offset cards: a board of notes.
+  "file-canvas": (
+    <>
+      {sheet}
+      <rect x="7.5" y="11.5" width="5" height="4" rx="0.75" />
+      <rect x="12" y="16" width="5" height="4" rx="0.75" />
+    </>
+  ),
 };
 
 /** A file row's type glyph; unknown or missing ids draw the plain file. */

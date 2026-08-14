@@ -12,6 +12,13 @@ mod desktop {
         Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
     };
 
+    /// Shipped summon hotkey; `summonHotkey` in settings.json overrides it.
+    pub const DEFAULT_SUMMON: &str = "Ctrl+Alt+A";
+
+    fn default_summon() -> Shortcut {
+        Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyA)
+    }
+
     /// Toggle the pre-created main window. On summon, the hotkey-press wall-clock
     /// time rides along on the `summoned` event so the frontend can measure
     /// press-to-paint latency — the product's one number.
@@ -58,7 +65,8 @@ mod desktop {
         // every launch, not only when the folder is added. This is also the
         // first settings read, so any migration off external_projects.json
         // happens here.
-        if let Ok(settings) = crate::settings::settings(app.handle()) {
+        let settings = crate::settings::settings(app.handle()).ok();
+        if let Some(settings) = &settings {
             let scope = app.asset_protocol_scope();
             for (_, dir) in settings.located_projects() {
                 let _ = scope.allow_directory(dir, true);
@@ -80,23 +88,38 @@ mod desktop {
             }
         }
 
-        // Ctrl+Alt+A ("asapnotes", one-handed): Ctrl+Alt+Space was already taken
-        // by another resident app, Ctrl/Shift+Space chords collide with editor completion,
-        // and Win-modifier chords proved laggy under repeat (shell intercepts Win).
-        let summon = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyA);
+        // Default Ctrl+Alt+A ("asapnotes", one-handed): Ctrl+Alt+Space was already
+        // taken by another resident app, Ctrl/Shift+Space chords collide with editor
+        // completion, and Win-modifier chords proved laggy under repeat (shell
+        // intercepts Win). Settings → Keyboard shortcuts can rebind it; a stored
+        // chord that doesn't parse falls back to the default rather than losing
+        // the summon.
+        let (chord, summon) = match settings.as_ref().and_then(|s| s.summon_hotkey.clone()) {
+            Some(stored) => match stored.parse::<Shortcut>() {
+                Ok(s) => (stored, s),
+                Err(e) => {
+                    eprintln!("bad summonHotkey \"{stored}\": {e} — using {DEFAULT_SUMMON}");
+                    (DEFAULT_SUMMON.to_string(), default_summon())
+                }
+            },
+            None => (DEFAULT_SUMMON.to_string(), default_summon()),
+        };
         app.handle().plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, shortcut, event| {
-                    if shortcut == &summon && event.state() == ShortcutState::Pressed {
+                // The summon chord is the only shortcut this app ever
+                // registers, so any press is it — which is what lets a rebind
+                // swap the registration without rebuilding the handler.
+                .with_handler(move |app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
                         toggle_main_window(app);
                     }
                 })
                 .build(),
         )?;
         // A failed registration (hotkey taken by another app) shouldn't kill the
-        // app — the tray still works. Configurable hotkey comes later.
+        // app — the tray still works.
         if let Err(e) = app.global_shortcut().register(summon) {
-            eprintln!("failed to register Ctrl+Alt+A: {e}");
+            eprintln!("failed to register {chord}: {e}");
         }
 
         let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
@@ -107,7 +130,7 @@ mod desktop {
         let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
         TrayIconBuilder::with_id("main")
             .icon(tray_icon)
-            .tooltip("asapnotes (Ctrl+Alt+A)")
+            .tooltip(format!("asapnotes ({chord})"))
             .menu(&menu)
             .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id().as_ref() {
@@ -137,6 +160,52 @@ fn quit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Rebind the global summon hotkey: register the new chord live (putting the
+/// old one back if the new registration is refused — losing the summon would
+/// be worse than refusing the change), retitle the tray, persist.
+///
+/// The swap runs on the main thread: hotkey (un)registration is thread-bound
+/// on Windows, so doing it from the command's worker thread silently fails to
+/// unregister and registers a chord whose events never arrive.
+#[cfg(desktop)]
+#[tauri::command]
+fn set_summon_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    let shortcut: Shortcut = hotkey
+        .parse()
+        .map_err(|e| format!("\"{hotkey}\" isn't a usable shortcut: {e}"))?;
+    let previous = settings::settings(&app)
+        .ok()
+        .and_then(|s| s.summon_hotkey.clone())
+        .and_then(|s| s.parse::<Shortcut>().ok());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let shortcuts = handle.global_shortcut();
+        let mut swapped = shortcuts.unregister_all().map_err(|e| e.to_string());
+        if swapped.is_ok() {
+            if let Err(e) = shortcuts.register(shortcut) {
+                if let Some(old) = previous {
+                    let _ = shortcuts.register(old);
+                }
+                swapped = Err(e.to_string());
+            }
+        }
+        let _ = tx.send(swapped);
+    })
+    .map_err(|e| e.to_string())?;
+    rx.recv()
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("couldn't register {hotkey}: {e}"))?;
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(format!("asapnotes ({hotkey})")));
+    }
+    settings::update(&app, |s| {
+        s.summon_hotkey = Some(hotkey);
+        Ok(())
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -146,8 +215,10 @@ pub fn run() {
         .manage(settings::Cache::default())
         .invoke_handler(tauri::generate_handler![
             quit,
+            set_summon_hotkey,
             settings::get_settings,
             settings::set_appearance,
+            settings::set_keybinds,
             notes::list_notes,
             notes::list_projects,
             notes::project_config_errors,

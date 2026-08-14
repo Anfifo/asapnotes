@@ -251,6 +251,11 @@ export interface Settings {
   files?: string[];
   /** Where "New virtual folder" creates backing folders; absent = app data. */
   virtualFoldersRoot?: string | null;
+  /** App-shortcut overrides, action id → chord. Only overrides are stored —
+   * the defaults live in the frontend's action table (keybinds.ts). */
+  keybinds?: Record<string, string>;
+  /** The global summon hotkey; absent means the shipped default. */
+  summonHotkey?: string | null;
 }
 
 /** `error` is set when the file couldn't be parsed: shipped defaults are in
@@ -264,5 +269,11 @@ export interface SettingsRead {
 export const getSettings = (reload = false) => invoke<SettingsRead>("get_settings", { reload });
 export const setAppearance = (appearance: Appearance) =>
   invoke<void>("set_appearance", { appearance });
+/** Replace the keybind overrides wholesale (reset = send without the key). */
+export const setKeybinds = (keybinds: Record<string, string>) =>
+  invoke<void>("set_keybinds", { keybinds });
+/** Re-register the global summon hotkey live and persist it; rejects with the
+ * reason when the chord can't be parsed or is taken by another app. */
+export const setSummonHotkey = (hotkey: string) => invoke<void>("set_summon_hotkey", { hotkey });
 
 export const quit = () => invoke<void>("quit");
