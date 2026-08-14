@@ -289,7 +289,7 @@ export function DiffLens({
         </span>
         <button
           className="chg-through"
-          title="Open the note itself, at the change on screen"
+          data-tip="Open the note itself, at the change on screen"
           onClick={() => onOpenNote(note, stops[at])}
         >
           Open note ›
@@ -317,7 +317,8 @@ export function DiffLens({
             <div className="lens-jump">
               <button
                 disabled={!hasPrev}
-                title={at > 0 ? "Previous change (Shift+F8)" : "Previous note (Shift+F8)"}
+                aria-label={at > 0 ? "Previous change" : "Previous note"}
+                data-tip={at > 0 ? "Previous change (Shift+F8)" : "Previous note (Shift+F8)"}
                 onClick={() => step(-1)}
               >
                 ‹
@@ -327,7 +328,8 @@ export function DiffLens({
               </span>
               <button
                 disabled={!hasNext}
-                title={at + 1 < stops.length ? "Next change (F8)" : "Next note (F8)"}
+                aria-label={at + 1 < stops.length ? "Next change" : "Next note"}
+                data-tip={at + 1 < stops.length ? "Next change (F8)" : "Next note (F8)"}
                 onClick={() => step(1)}
               >
                 ›

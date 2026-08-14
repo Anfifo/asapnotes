@@ -1731,16 +1731,8 @@ body,
   overflow-wrap: anywhere;
 }
 
-/* Credits — the one row in About meant to stand out. */
-.settings-credits {
-  display: flex;
-  /* center, not baseline: the ☕ emoji's fallback-font metrics skew the
-     flex baseline in WebView2 and push the link off-line */
-  align-items: center;
-  gap: 0.6rem;
-  margin: 0.1rem 0 0.55rem;
-}
-
+/* Credit rows in About — their links read as plain values, so the row keeps
+   the section's label → value shape. */
 .settings-credits a {
   color: inherit;
   text-decoration: none;
@@ -1750,18 +1742,10 @@ body,
   text-decoration: underline;
 }
 
-.settings-credits b {
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.settings-credits a:last-child {
+/* The one value in About meant to stand out. */
+.settings-support a {
   color: #d99a06;
   font-weight: 600;
-}
-
-.settings-credits span[aria-hidden] {
-  color: #c9c9c9;
 }
 
 .settings kbd {
@@ -1840,10 +1824,14 @@ body,
   transform: translateX(-50%);
   z-index: 100;
   pointer-events: none;
-  white-space: nowrap;
+  /* Wraps rather than running off-screen: some tips carry a whole line of note
+     text or a full path. `anywhere` because a path has no spaces to break at. */
+  max-width: min(22rem, 90vw);
+  overflow-wrap: anywhere;
   background: #2f2f2f;
   color: #f2f2f2;
   font-size: 0.72rem;
+  line-height: 1.35;
   padding: 3px 8px;
   border-radius: 4px;
 }

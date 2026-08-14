@@ -142,7 +142,8 @@ export function ChangesView({
                     </span>
                     <button
                       className="chg-seen-btn"
-                      title={r.seen ? "Mark as unseen (Ctrl+Z)" : "Mark as seen"}
+                      aria-label={r.seen ? "Mark as unseen" : "Mark as seen"}
+                      data-tip={r.seen ? "Mark as unseen (Ctrl+Z)" : "Mark as seen"}
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleRow(r);

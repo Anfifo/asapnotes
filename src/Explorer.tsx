@@ -248,7 +248,8 @@ export function Explorer({
   const hideBtn = (onHide: () => void) => (
     <button
       className="hide-btn"
-      title="Hide panel — the View menu brings it back"
+      aria-label="Hide panel"
+      data-tip="Hide panel — the View menu brings it back"
       onClick={(e) => {
         // On the Recent summary this click would otherwise toggle the list.
         e.preventDefault();
@@ -264,7 +265,8 @@ export function Explorer({
   const addBtn = (dir: string) => (
     <button
       className="add-btn"
-      title="New note"
+      aria-label="New note"
+      data-tip="New note"
       onClick={(e) => {
         // A summary parent would otherwise toggle its folder on this click.
         e.preventDefault();
@@ -319,7 +321,7 @@ export function Explorer({
               className={(mount ? "explorer-folder mount" : "explorer-folder") + trail}
               open={holdsCreate || undefined}
             >
-              <summary onContextMenu={(e) => onDirContext(e, dir)} title={mount?.path}>
+              <summary onContextMenu={(e) => onDirContext(e, dir)} data-tip={mount?.path}>
                 {mount && mountGlyph}
                 <span className="explorer-name">{name}</span>
                 {mount?.conflicted && (
@@ -375,7 +377,7 @@ export function Explorer({
   const split = (
     <div
       className="pane-split"
-      title="Drag to resize — double-click for size-to-content"
+      data-tip="Drag to resize — double-click for size-to-content"
       onPointerDown={(e) => {
         e.preventDefault();
         if (!paneRef.current) return;
@@ -408,21 +410,24 @@ export function Explorer({
         <div className="explorer-views">
           <button
             className={view === "files" ? "view-btn open" : "view-btn"}
-            title="Files"
+            aria-label="Files"
+            data-tip="Files"
             onClick={() => onViewChange("files")}
           >
             ▤
           </button>
           <button
             className={view === "search" ? "view-btn open" : "view-btn"}
-            title="Search in notes (Ctrl+Shift+F)"
+            aria-label="Search in notes"
+            data-tip="Search in notes (Ctrl+Shift+F)"
             onClick={() => onViewChange("search")}
           >
             ⌕
           </button>
           <button
             className={view === "changes" ? "view-btn open" : "view-btn"}
-            title="Recent changes"
+            aria-label="Recent changes"
+            data-tip="Recent changes"
             onClick={() => onViewChange("changes")}
           >
             ±{changesCount > 0 && <span className="view-count">{changesCount}</span>}
@@ -430,21 +435,24 @@ export function Explorer({
         </div>
         <button
           className="view-btn"
-          title="New note"
+          aria-label="New note"
+          data-tip="New note"
           onClick={() => onStartCreate(currentProject ?? "")}
         >
           +
         </button>
         <button
           className={pinned ? "pin-btn pinned" : "pin-btn"}
-          title={pinned ? "Unpin — float over the editor" : "Pin — dock beside the editor"}
+          aria-label={pinned ? "Unpin explorer" : "Pin explorer"}
+          data-tip={pinned ? "Unpin — float over the editor" : "Pin — dock beside the editor"}
           onClick={onTogglePin}
         >
           📌
         </button>
         <button
           className="collapse-btn"
-          title="Collapse explorer (Ctrl+Shift+E)"
+          aria-label="Collapse explorer"
+          data-tip="Collapse explorer (Ctrl+Shift+E)"
           onClick={onCollapse}
         >
           «
@@ -547,7 +555,7 @@ export function Explorer({
       </div>
       <div
         className="explorer-resize"
-        title="Drag to resize"
+        data-tip="Drag to resize"
         onPointerDown={(e) => {
           e.preventDefault();
           dragLeft.current = e.currentTarget.parentElement!.getBoundingClientRect().left;

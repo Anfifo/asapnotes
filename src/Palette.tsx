@@ -15,6 +15,10 @@ interface PaletteProps<T extends PaletteItem> {
   items: T[];
   placeholder: string;
   emptyText: string;
+  /** A query starting with `char` swaps the list for `items` and matches on
+   *  the rest of the query — one palette holding a second, narrower list.
+   *  `label` names that list in the footer hint. */
+  prefix?: { char: string; label: string; items: T[]; placeholder: string; emptyText: string };
   onSelect: (item: T) => void;
   onClose: () => void;
 }
@@ -29,6 +33,7 @@ export function Palette<T extends PaletteItem>({
   items,
   placeholder,
   emptyText,
+  prefix,
   onSelect,
   onClose,
 }: PaletteProps<T>) {
@@ -37,18 +42,22 @@ export function Palette<T extends PaletteItem>({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
+  const narrowed = prefix !== undefined && query.startsWith(prefix.char) ? prefix : null;
+  const source = narrowed ? narrowed.items : items;
+  const search = narrowed ? query.slice(narrowed.char.length) : query;
+
   // Empty query keeps the caller's order; typing fuzzy-ranks (stable sort, so
   // equal scores also keep the caller's order).
   const filtered = useMemo(() => {
-    const q = query.trim();
-    if (!q) return items.map((item) => ({ item, indices: [] as number[], score: 0 }));
-    return items
+    const q = search.trim();
+    if (!q) return source.map((item) => ({ item, indices: [] as number[], score: 0 }));
+    return source
       .flatMap((item) => {
         const m = fuzzyMatch(q, item.label);
         return m ? [{ item, indices: m.indices, score: m.score }] : [];
       })
       .sort((a, b) => b.score - a.score);
-  }, [items, query]);
+  }, [source, search]);
 
   useEffect(() => inputRef.current?.focus(), []);
   useEffect(() => {
@@ -75,14 +84,14 @@ export function Palette<T extends PaletteItem>({
         <input
           ref={inputRef}
           value={query}
-          placeholder={placeholder}
+          placeholder={narrowed ? narrowed.placeholder : placeholder}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <ul ref={listRef}>
           {filtered.map(({ item, indices }, i) => (
             <Fragment key={item.id}>
-              {query.trim() === "" &&
+              {search.trim() === "" &&
                 item.section &&
                 filtered[i - 1]?.item.section !== item.section && (
                   <li className="section">{item.section}</li>
@@ -99,7 +108,9 @@ export function Palette<T extends PaletteItem>({
               </li>
             </Fragment>
           ))}
-          {filtered.length === 0 && <li className="muted empty">{emptyText}</li>}
+          {filtered.length === 0 && (
+            <li className="muted empty">{narrowed ? narrowed.emptyText : emptyText}</li>
+          )}
         </ul>
         <footer className="palette-footer">
           <span>
@@ -108,6 +119,12 @@ export function Palette<T extends PaletteItem>({
           <span>
             <kbd>↵</kbd> select
           </span>
+          {/* Only worth saying while the prefix isn't already doing it. */}
+          {prefix && !narrowed && (
+            <span>
+              <kbd>{prefix.char}</kbd> {prefix.label}
+            </span>
+          )}
           <span>
             <kbd>Esc</kbd> close
           </span>

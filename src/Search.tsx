@@ -137,7 +137,7 @@ export function SearchView({ focusToken, onOpenHit, onError }: SearchViewProps) 
                 <li
                   key={h.line}
                   onClick={() => onOpenHit(h.note, h.line)}
-                  title={`Line ${h.line}: ${h.text}`}
+                  data-tip={`Line ${h.line}: ${h.text}`}
                 >
                   <span className="search-line">{h.line}</span>
                   <span className="search-text">{highlight(h.text, query.trim())}</span>

@@ -1699,10 +1699,14 @@ function App() {
     },
   ];
 
+  const commandOnly: Entry[] = commands.map((c) => ({ ...c, section: "Commands" }));
   const commandEntries: Entry[] = [
-    ...commands.map((c) => ({ ...c, section: "Commands" })),
+    ...commandOnly,
     ...noteEntries.map((n) => ({ ...n, section: "Notes" })),
   ];
+  // Ctrl+P lists notes, Ctrl+K lists both — and in either, a leading ">"
+  // means commands alone.
+  const paletteItems: Entry[] = paletteOpen === "notes" ? noteEntries : commandEntries;
 
   const openFromExplorer = (id: string, isNote: boolean) => {
     void openItem({ id, isNote }, draftIds);
@@ -2267,7 +2271,10 @@ function App() {
         {(!explorerOpen || !explorerDocked) && (
           <button
             className="rail"
-            title={explorerOpen ? "Close explorer (Ctrl+Shift+E)" : "Open explorer (Ctrl+Shift+E)"}
+            aria-label={explorerOpen ? "Close explorer" : "Open explorer"}
+            data-tip={
+              explorerOpen ? "Close explorer (Ctrl+Shift+E)" : "Open explorer (Ctrl+Shift+E)"
+            }
             onClick={() => setExplorerOpen((o) => !o)}
           >
             {explorerOpen ? "«" : "»"}
@@ -2364,7 +2371,7 @@ function App() {
                   <div
                     key={t.id}
                     className={active ? "tab active" : "tab"}
-                    title={
+                    data-tip={
                       isDiffTab(t.id)
                         ? `Recent changes — ${diffNote}`
                         : (t.name ?? "Unsaved note — double-click to name")
@@ -2407,13 +2414,17 @@ function App() {
                       </span>
                     )}
                     {(active ? dirty : draftIds.has(t.id)) && (
-                      <span className="dirty" title="Unsaved — autosaved as draft. Ctrl+S to save.">
+                      <span
+                        className="dirty"
+                        data-tip="Unsaved — autosaved as draft. Ctrl+S to save."
+                      >
                         ●
                       </span>
                     )}
                     <button
                       className="tab-close"
-                      title="Close tab (Ctrl+W)"
+                      aria-label="Close tab"
+                      data-tip="Close tab (Ctrl+W)"
                       onClick={(e) => {
                         e.stopPropagation();
                         requestCloseTab(t.id);
@@ -2424,7 +2435,12 @@ function App() {
                   </div>
                 );
               })}
-              <button className="tab-new" title="New note (Ctrl+T)" onClick={() => void newNote()}>
+              <button
+                className="tab-new"
+                aria-label="New note"
+                data-tip="New note (Ctrl+T)"
+                onClick={() => void newNote()}
+              >
                 +
               </button>
             </div>
@@ -2520,9 +2536,16 @@ function App() {
       </div>
       {paletteOpen && (
         <Palette
-          items={paletteOpen === "notes" ? noteEntries : commandEntries}
+          items={paletteItems}
           placeholder={paletteOpen === "notes" ? "Switch to note…" : "Type a command or note…"}
           emptyText={paletteOpen === "notes" ? "No matching notes" : "No matches"}
+          prefix={{
+            char: ">",
+            label: "commands",
+            items: commandOnly,
+            placeholder: "Type a command…",
+            emptyText: "No matching commands",
+          }}
           onSelect={runEntry}
           onClose={() => setPaletteOpen(null)}
         />

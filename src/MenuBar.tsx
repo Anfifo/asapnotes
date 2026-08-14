@@ -219,7 +219,7 @@ export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) 
       <div className="menubar-drag" data-tauri-drag-region />
       <button
         className="menubar-search"
-        title="Search notes and commands (Ctrl+K)"
+        data-tip="Search notes and commands (Ctrl+K)"
         onMouseDown={(e) => e.preventDefault()}
         onClick={onSearch}
       >
@@ -228,13 +228,28 @@ export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) 
       </button>
       <div className="menubar-drag" data-tauri-drag-region />
       {/* Segoe Fluent Icons caption glyphs: minimize / maximize / close */}
-      <button className="win-btn" title="Minimize" onClick={() => void win.minimize()}>
+      <button
+        className="win-btn"
+        aria-label="Minimize"
+        data-tip="Minimize"
+        onClick={() => void win.minimize()}
+      >
         {""}
       </button>
-      <button className="win-btn" title="Maximize" onClick={() => void win.toggleMaximize()}>
+      <button
+        className="win-btn"
+        aria-label="Maximize"
+        data-tip="Maximize"
+        onClick={() => void win.toggleMaximize()}
+      >
         {""}
       </button>
-      <button className="win-btn win-close" title="Hide to tray (Esc)" onClick={onHide}>
+      <button
+        className="win-btn win-close"
+        aria-label="Hide to tray"
+        data-tip="Hide to tray (Esc)"
+        onClick={onHide}
+      >
         {""}
       </button>
     </div>

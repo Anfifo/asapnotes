@@ -34,8 +34,8 @@ export function StatusBar({ register, summonMs, zoom }: StatusBarProps) {
         </>
       )}
       <span className="statusbar-spacer" />
-      {zoom !== 1 && <span title="Zoom (Ctrl+0 resets)">{Math.round(zoom * 100)}%</span>}
-      {summonMs !== null && <span title="summon → paint">{summonMs} ms</span>}
+      {zoom !== 1 && <span data-tip="Zoom (Ctrl+0 resets)">{Math.round(zoom * 100)}%</span>}
+      {summonMs !== null && <span data-tip="summon → paint">{summonMs} ms</span>}
     </footer>
   );
 }

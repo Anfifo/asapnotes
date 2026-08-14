@@ -488,6 +488,16 @@ not registered (0x80070002)``) and errors _before_ the draft/history
       other entry follows the section's little-title → value row pattern (Version /
       Notes folder / Auto-update). Make it fit that layout — e.g. as table rows
       (Made by → Anfifo, Support → Buy me a coffee) or otherwise aligned with it.
+      **Picked the two-row shape and implemented 2026-08-14, gates clean, pending
+      hands-on check.** The free-floating flex row is gone; About now ends with
+      `Made by` → Anfifo and `Support` → ☕ Buy me a coffee, each a normal row, so
+      the section has one layout instead of two. The links read as plain values
+      (inherit ink, underline on hover) except the coffee one, which keeps its
+      amber — the one value in About meant to stand out. Dropped with the flex
+      row: the `·` separator, the bold on the name (a value cell is already the
+      emphasis), and the WebView2 baseline workaround the row needed, which a
+      table cell doesn't. Pending hands-on: both themes, and that the ☕ doesn't
+      grow the row.
 
 ## Today (2026-08-12)
 
@@ -1121,7 +1131,27 @@ not registered (0x80070002)``) and errors _before_ the draft/history
       `aria-label` since SVG buttons have no text content. Toolbar + preview eye
       converted; **other `title=` sites (tabs, explorer, status bar, search) still
       native** — mechanical follow-up: swap `title` → `data-tip` per site. Gates
-      clean. 2026-08-09 visual check done (summon + PrintWindow capture — the
+      clean.
+      **2026-08-14: the follow-up is done — no `title=` is left in `src/`.** All
+      ~25 remaining sites (tabs + dirty dot + close/new, the rail, explorer bar
+      and panel buttons, mount paths, both resize handles, search hits, status
+      bar, menubar and window buttons, Settings' project row buttons, the diff
+      lens, changes rows, toasts) now carry `data-tip`. Two limits the sweep
+      exposed in `Tooltip.tsx`, both fixed because the long-text sites depend on
+      them: the bubble was `white-space: nowrap` with no `max-width` (a search
+      hit's tip is a whole line of note text, a mount's is a full path), so it
+      now wraps inside `min(22rem, 90vw)` with `overflow-wrap: anywhere` — paths
+      have no spaces to break at; and it was centered on the anchor with no
+      clamping, so it ran off-screen at the window buttons and would have gone
+      _below_ the window at the status bar. Placement now measures the bubble in
+      a layout effect (before paint, so the corrected spot is the first one
+      drawn), pulls it inside the horizontal edges, and flips it above an anchor
+      with no room beneath. Every converted glyph-only button gained an
+      `aria-label`, the same rule the toolbar's SVG buttons already follow — a
+      `×` or `«` is not an accessible name. Gates clean; pending hands-on: hover
+      a long search hit and a mount row, the far-right window buttons, and the
+      status-bar readouts (the flip).
+      2026-08-09 visual check done (summon + PrintWindow capture — the
       window sat behind VS Code, so screen capture alone showed the wrong thing):
       all six stroke icons render crisp and theme-correct in dark, chevrons have
       air, color-emoji link gone. Still pending hands-on: tooltip position/delay
@@ -1301,8 +1331,21 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
     real note if a keystroke drops (which happened once this session), so it
     was left for a human: rename any note to the name of another note in the
     same project — the guard fires before anything touches disk.
-  - [ ] **Spellcheck** — Win11 Notepad has it; CM's content is contenteditable, so
-        `EditorView.contentAttributes.of({ spellcheck: "true" })` gets native squiggles.
+  - [ ] **Spellcheck — needs a real design; the one-line version is ruled out**
+        (re-scoped 2026-08-14). The cheap take was `EditorView.contentAttributes
+    .of({ spellcheck: "true" })`, since the editor's content is
+        contenteditable and the engine would then underline misspellings for
+        free. **Dropped:** the suggestions that make it useful are only reachable
+        through the engine's own context menu, and the editor's `contextmenu` is
+        the app's Edit menu — with no API that exposes the suggestion list to
+        page script, so they can't be folded into that menu either. Turning it on
+        would ship squiggles nobody can act on. The escape hatch (a modifier
+        letting the native menu through) was considered and rejected as a
+        discoverability problem: an editing feature reachable only by a chord
+        nobody is told about. So spellcheck becomes a real item when it's wanted:
+        a bundled dictionary, a suggestion list the app owns, and its entries in
+        the Edit menu — a day's work with a dictionary dependency and a licensing
+        question of its own, not a one-liner. Parked at that size.
   - **Theme selector** (light/dark/system) — implemented 2026-08-10, pending hands-on
     check. `src/theme.ts` resolves the setting (system → `matchMedia`) and stamps the
     result as `data-theme` on the root element; `initTheme()` runs in `main.tsx`
@@ -1338,13 +1381,13 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
   - [ ] **Explorer**: F2 inline rename, drag notes between projects, filter box, keyboard
         tree navigation, reveal-active-note.
   - [ ] **Scrollbar search-match markers** + `highlightSelectionMatches`.
-  - [ ] **Ctrl+Shift+P palette alias** + `>` prefix support in Ctrl+P (VSCode muscle memory).
 
   Suggested next slice: search, external-change detection, toasts and the theme
   selector have all landed, and the remaining Tier 2 items (multi-cursor, tab
   reorder, split view) are optional polish. What's left in this list is genuinely
-  small — spellcheck is a one-liner, the remaining `title=` → `data-tip` sites are
-  mechanical. The next item with real leverage isn't in this list at all: it was the
+  small, with two corrections from 2026-08-14: the `title=` → `data-tip` sweep is
+  finished, and spellcheck turned out _not_ to be a one-liner (see its entry). The
+  next item with real leverage isn't in this list at all: it was the
   **project-model design doc**, which four separate items above were blocked behind —
   written 2026-08-10 as [docs/project-model.md](project-model.md), so the leverage now
   sits in the first slice of _implementing_ it (settings file + note-type registry are
@@ -1394,6 +1437,18 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       (↑↓ / ↵ / Esc, Claude-style), and slim inset scrollbars — applied app-wide
       (::-webkit-scrollbar), not just in the palette. Remaining: hands-on check;
       AI-assisted actions still future.
+      **2026-08-14: `>` narrows either palette to commands alone**, gates clean,
+      pending hands-on. One optional `prefix` prop on `Palette` — `{ char, label,
+    items, placeholder, emptyText }` — so a query starting with the char swaps
+      the list and matches on the rest; the component stays generic (it never
+      names "commands"; the caller does). One rule in both modes: Ctrl+P is notes
+      until you type `>`, Ctrl+K is both until you do. The footer gains a
+      `>` commands hint while the prefix isn't already in use, since a prefix
+      nobody can see is a prefix nobody uses. Rejected: lifting the query into
+      `App` as controlled state — it would re-render the whole tree per keystroke,
+      which this codebase avoids on purpose (editor status goes through a ref for
+      the same reason). Pending hands-on: `>` in both palettes, the section
+      headers with the prefix alone typed, and backspacing the `>` away.
 - [ ] **Editor round 2: projects, preview, formatting, images** (2026-08-07) — agreed
       design, implemented pending hands-on check: folders-as-projects
       ([decision](decisions/2026-08-07-folders-are-projects.md)) with note ids as

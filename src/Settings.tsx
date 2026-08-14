@@ -109,13 +109,6 @@ export function Settings({
       <div className="settings" onClick={(e) => e.stopPropagation()}>
         <h1>Settings</h1>
         <h2>About</h2>
-        <div className="settings-credits">
-          <ExternalLink href="https://anfifo.com">
-            Made by <b>Anfifo</b>
-          </ExternalLink>
-          <span aria-hidden>·</span>
-          <ExternalLink href="https://buymeacoffee.com/anfifo">☕ Buy me a coffee</ExternalLink>
-        </div>
         <table>
           <tbody>
             <tr>
@@ -129,6 +122,20 @@ export function Settings({
             <tr>
               <td>Auto-update</td>
               <td>Planned — updates are manual for now</td>
+            </tr>
+            <tr>
+              <td>Made by</td>
+              <td className="settings-credits">
+                <ExternalLink href="https://anfifo.com">Anfifo</ExternalLink>
+              </td>
+            </tr>
+            <tr>
+              <td>Support</td>
+              <td className="settings-credits settings-support">
+                <ExternalLink href="https://buymeacoffee.com/anfifo">
+                  ☕ Buy me a coffee
+                </ExternalLink>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -206,14 +213,16 @@ export function Settings({
                           {" "}
                           <button
                             className="settings-edit"
-                            title="Change folder — new projects root at the repo's docs/"
+                            aria-label={`Change folder for ${name}`}
+                            data-tip="Change folder — new projects root at the repo's docs/"
                             onClick={() => onChangeProjectPath(name)}
                           >
                             ✎
                           </button>
                           <button
                             className="settings-remove"
-                            title="Unlink — the folder and its files stay untouched"
+                            aria-label={`Unlink ${name}`}
+                            data-tip="Unlink — the folder and its files stay untouched"
                             onClick={() => onUnlinkProject(name)}
                           >
                             ✕

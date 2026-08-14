@@ -16,7 +16,7 @@ export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
           key={t.id}
           className={`toast toast-${t.kind}`}
           role="status"
-          title="Click to dismiss"
+          data-tip="Click to dismiss"
           onClick={() => onDismiss(t.id)}
         >
           {t.message}
