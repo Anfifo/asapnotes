@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "asapnotes",
-        "width": 800,
-        "height": 600,
+        "width": 1040,
+        "height": 720,
         "center": true,
         "visible": false,
         "decorations": false

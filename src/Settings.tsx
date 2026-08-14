@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Theme } from "./theme";
@@ -47,7 +47,7 @@ const KEYBINDS: [string, string][] = [
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["Tab / Shift+Tab", "Indent / outdent list"],
   ["Ctrl+= / Ctrl+- / Ctrl+0", "Zoom in / out / reset (also Ctrl+scroll)"],
-  ["Alt", "Menu bar (Alt+F/E/O/V/H open a menu)"],
+  ["Alt", "Menu bar (Alt+F/E/O/V/S open a menu)"],
   ["Esc", "Hide window"],
 ];
 
@@ -83,6 +83,8 @@ interface SettingsProps {
   /** Popup text size (menus, context menus, palette) as a % of the default. */
   popupScale: number;
   onPopupScaleChange: (scale: number) => void;
+  /** Where to land on open — "shortcuts" scrolls to that table. */
+  section: "top" | "shortcuts";
   onClose: () => void;
 }
 
@@ -97,12 +99,20 @@ export function Settings({
   onExplorerTintChange,
   popupScale,
   onPopupScaleChange,
+  section,
   onClose,
 }: SettingsProps) {
   const [version, setVersion] = useState("");
   useEffect(() => {
     void getVersion().then(setVersion);
   }, []);
+
+  // "Keyboard shortcuts" opens straight onto its table — it's the last
+  // section, buried below the fold at any window size.
+  const shortcutsRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (section === "shortcuts") shortcutsRef.current?.scrollIntoView();
+  }, [section]);
 
   return (
     <div className="palette-backdrop" onClick={onClose}>
@@ -236,7 +246,7 @@ export function Settings({
             </table>
           </>
         )}
-        <h2>Keyboard shortcuts</h2>
+        <h2 ref={shortcutsRef}>Keyboard shortcuts</h2>
         <table>
           <tbody>
             {KEYBINDS.map(([keys, action]) => (

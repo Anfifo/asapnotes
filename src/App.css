@@ -242,7 +242,7 @@ body,
   color: #ffffff;
 }
 
-/* Alt-mnemonic letters (Alt+F/E/O/V/H) stay subtly underlined. */
+/* Alt-mnemonic letters (Alt+F/E/O/V/S) stay subtly underlined. */
 .menu-btn u {
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
@@ -838,13 +838,18 @@ body,
 
 .lens-jump button {
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 1rem;
   line-height: 1;
   color: inherit;
   background: none;
   border: none;
-  border-radius: 4px;
-  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  padding: 0;
+  min-width: 1.7rem;
+  min-height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 

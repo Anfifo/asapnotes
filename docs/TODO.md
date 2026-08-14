@@ -12,6 +12,45 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-14)
+
+- [ ] **Canvas work kicked off — setups first** (2026-08-14) — the project board is
+      the agreed first slice (see the canvas item under 2026-08-10), but two setups
+      were named before it: **(a) a way to define canvas as the default open for
+      notes** — wording to pin down in the design pass: whether a project opens
+      onto its board by default (instead of expanding the tree), whether `.canvas`
+      becomes a creatable note type, or both; **(b)** the registry's `canvas` entry
+      ships only when something implements the view (recorded in the canvas item).
+      Design pass next, no code yet.
+- [ ] **Draw on images from a markdown note** (2026-08-14) — requested: double-click
+      (or right-click) an image in an `.md` note pops the image up so it can be
+      drawn on, like the canvas ink option — an image-annotation surface reusing
+      the canvas engine's ink layer. Not designed yet; open points: where the
+      inked result is written (overwrite the asset, a sibling copy, strokes as a
+      sidecar), and how the popup relates to the canvas view (same module,
+      lazy-loaded). Builds on the canvas engine; sequence after the project board
+      proves it.
+- [ ] **Bigger default window + remember the last size** (2026-08-14) — requested:
+      the first-run window should be ~30% wider and ~20% taller, or the app should
+      just remember the last size across restarts (it already survives hide-to-tray,
+      since the window object never dies — only a real quit lost it). Picked: **both**
+      — default 800×600 → 1040×720, plus size persistence — and **size only, stay
+      centered** (over remembering position: centered-on-summon is predictable and
+      immune to unplugged monitors). **Implemented 2026-08-14, all gates clean,
+      pending hands-on check.** New `src/windowSize.ts` (init from `main.tsx`):
+      restore runs once at app launch while the window is still hidden — read the
+      localStorage `windowSize`, `setSize` + re-center (setSize keeps the top-left
+      corner, so a fresh launch would sit off-center without it) — so a summon never
+      sees the window move; recording rides `onResized` debounced 300 ms, skipped
+      while maximized or minimized (only the normal size is worth restoring; minimize
+      reports a meaningless size), stored in logical units so DPI changes don't warp
+      it, with a 320×240 floor filtering degenerate events and corrupt entries.
+      Five new window grants in `capabilities/default.json` (set-size, center,
+      is-maximized, is-minimized, scale-factor) — clippy validated them at compile.
+      Pending hands-on: quit fully, relaunch, and see the resized shape come back
+      centered; first-run shape needs a cleared localStorage (or the second-instance
+      trick) to see 1040×720.
+
 ## Today (2026-08-13)
 
 - [ ] **Explorer sections as separate panels, resizable splits** (2026-08-13) — feedback:
@@ -482,6 +521,18 @@ not registered (0x80070002)``) and errors _before_ the draft/history
       target project/folder, which a menubar entry doesn't have — decide whether they
       act on the open note's location, prompt for a target, or only the target-less
       ones (e.g. associate into a picked project) appear.
+      **Picked 2026-08-14: creation verbs only, acting on the open note's folder.**
+      Implemented same day, gates clean, pending hands-on check. File gains New
+      folder / New virtual folder / Associate virtual folder…, each naming its
+      target in the label (`New folder in "docs"`) so the implicit target is
+      stated, running the same explorer flows (inline name-first row / picker).
+      The trio appears only when the open note sits in a project — a loose note's
+      root can't hold folders (a top-level folder is a project), and a diff tab
+      has no folder. Detach and Delete stay right-click-only, deliberately:
+      destructive verbs against an implicit target invite deleting the wrong
+      folder, and the heading menu names its target by position. Pending
+      hands-on: the trio with a project note / loose note / diff tab open, each
+      verb landing its input or picker in the right place.
 - [ ] **Settings: credits line doesn't fit the label–value layout** (2026-08-13) —
       feedback: in Settings → About, the "Made by Anfifo · ☕ Buy me a coffee" line
       (`settings-credits` in `Settings.tsx`) floats free above the table, while every
@@ -1094,7 +1145,17 @@ not registered (0x80070002)``) and errors _before_ the draft/history
   markdown image link into a `.log`). The `canvas` type is **not** shipped yet — nothing
   implements that view, so it lands with the canvas work.
 
-  Still open here: **(a)** the menubar move and the Help fold; **(b)** the explorer's
+  **(a) landed 2026-08-14, gates clean, pending hands-on check.** Settings is its
+  own top-level menu (mnemonic S — the keybinds table and the mnemonic notes
+  updated from H) holding Settings…, Keyboard shortcuts, and About asapnotes;
+  Help is gone as a top-level menu and File's Settings entry with it. Folding
+  Help in earned one small addition: the overlay takes a `section` prop and
+  "Keyboard shortcuts" scrolls straight to its table (it's the last section,
+  below the fold at any size); About is the first section, so it needs no
+  scroll of its own. Pending hands-on: Alt+S, arrow-through, and the shortcuts
+  entry landing on the table from menu and palette both.
+
+  Still open here: **(b)** the explorer's
   per-type icon and color, and a UI for editing note types — `icon` and `color` are carried
   in the file but nothing renders them yet, so editing them by hand currently does nothing.
   **(d) landed 2026-08-11** — the per-project `.asapnotes.json` and its `files` patterns
@@ -1333,7 +1394,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
     same project — the guard fires before anything touches disk.
   - [ ] **Spellcheck — needs a real design; the one-line version is ruled out**
         (re-scoped 2026-08-14). The cheap take was `EditorView.contentAttributes
-    .of({ spellcheck: "true" })`, since the editor's content is
+.of({ spellcheck: "true" })`, since the editor's content is
         contenteditable and the engine would then underline misspellings for
         free. **Dropped:** the suggestions that make it useful are only reachable
         through the engine's own context menu, and the editor's `contextmenu` is
@@ -1439,7 +1500,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       AI-assisted actions still future.
       **2026-08-14: `>` narrows either palette to commands alone**, gates clean,
       pending hands-on. One optional `prefix` prop on `Palette` — `{ char, label,
-    items, placeholder, emptyText }` — so a query starting with the char swaps
+items, placeholder, emptyText }` — so a query starting with the char swaps
       the list and matches on the rest; the component stays generic (it never
       names "commands"; the caller does). One rule in both modes: Ctrl+P is notes
       until you type `>`, Ctrl+K is both until you do. The footer gains a

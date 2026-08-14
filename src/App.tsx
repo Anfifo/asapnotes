@@ -311,7 +311,8 @@ function App() {
   // Folders created this session that hold no note yet: the explorer tree
   // derives from note files, so these are remembered to stay visible.
   const [newFolders, setNewFolders] = useState<string[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Which Settings section to land on — null = closed, "top" = the overlay as-is.
+  const [settingsOpen, setSettingsOpen] = useState<null | "top" | "shortcuts">(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [summonMs, setSummonMs] = useState<number | null>(null);
@@ -1267,7 +1268,7 @@ function App() {
         setScanResults(null);
         editorRef.current?.focus();
       } else if (settingsOpen) {
-        setSettingsOpen(false);
+        setSettingsOpen(null);
         editorRef.current?.focus();
       } else if (creatingProject) {
         setCreatingProject(false);
@@ -1503,6 +1504,13 @@ function App() {
   // below keep the narrowed string type.
   const openName = open?.name ?? null;
 
+  // The open note's containing folder, as an id — the target the File menu's
+  // folder verbs act on. Null when there's no folder to act on: nothing open,
+  // a diff tab, or a loose note (the notes root can't hold folders — a
+  // top-level folder is a project).
+  const openDir =
+    open && !diffOpen && open.id.includes("/") ? open.id.slice(0, open.id.lastIndexOf("/")) : null;
+
   // Ctrl+K: command palette — commands first (New note on top), recent
   // notes below; typing fuzzy-searches across both.
   const commands: CommandEntry[] = [
@@ -1590,13 +1598,13 @@ function App() {
       kind: "command",
       id: "cmd:keybinds",
       label: "Keyboard shortcuts",
-      run: () => setSettingsOpen(true),
+      run: () => setSettingsOpen("shortcuts"),
     },
     {
       kind: "command",
       id: "cmd:settings",
       label: "Settings",
-      run: () => setSettingsOpen(true),
+      run: () => setSettingsOpen("top"),
     },
     {
       kind: "command",
@@ -1641,8 +1649,27 @@ function App() {
         "sep",
         { label: "New project…", run: () => setCreatingProject(true) },
         { label: "Scan folder for projects…", run: () => void scanForProjects() },
-        "sep",
-        { label: "Settings", run: () => setSettingsOpen(true) },
+        // The folder verbs need a target a menubar entry doesn't have, so they
+        // act on the open note's folder, named in the label. Detach/Delete stay
+        // right-click-only: destructive verbs against an implicit target invite
+        // deleting the wrong folder.
+        ...(openDir
+          ? [
+              "sep" as const,
+              {
+                label: `New folder in "${fileOf(openDir)}"`,
+                run: () => startExplorerCreate(openDir, "folder"),
+              },
+              {
+                label: `New virtual folder in "${fileOf(openDir)}"`,
+                run: () => startExplorerCreate(openDir, "virtual"),
+              },
+              {
+                label: `Associate virtual folder into "${fileOf(openDir)}"…`,
+                run: () => void associateVirtualFolder(openDir),
+              },
+            ]
+          : []),
         "sep",
         { label: "Hide window", detail: "Esc", run: hideWindow },
         { label: "Quit", run: () => void api.quit() },
@@ -1690,11 +1717,15 @@ function App() {
         { label: "Reset zoom", detail: "Ctrl+0", run: () => setZoom(1) },
       ],
     },
+    // Settings at the top level, with Help's items folded in — About is the
+    // overlay's first section, so it needs no scroll of its own.
     {
-      label: "Help",
+      label: "Settings",
       items: [
-        { label: "Keyboard shortcuts", run: () => setSettingsOpen(true) },
-        { label: "About asapnotes", run: () => setSettingsOpen(true) },
+        { label: "Settings…", run: () => setSettingsOpen("top") },
+        { label: "Keyboard shortcuts", run: () => setSettingsOpen("shortcuts") },
+        "sep",
+        { label: "About asapnotes", run: () => setSettingsOpen("top") },
       ],
     },
   ];
@@ -2230,7 +2261,7 @@ function App() {
     { label: "New note", detail: "Ctrl+N", run: () => void newNote() },
     { label: "New project…", run: () => setCreatingProject(true) },
     { label: "Scan folder for projects…", run: () => void scanForProjects() },
-    { label: "Settings", run: () => setSettingsOpen(true) },
+    { label: "Settings", run: () => setSettingsOpen("top") },
   ];
   let welcomeRecent: WelcomeRecent[] = [];
   if (welcome) {
@@ -2591,8 +2622,9 @@ function App() {
           }}
           popupScale={popupScale}
           onPopupScaleChange={setPopupScale}
+          section={settingsOpen}
           onClose={() => {
-            setSettingsOpen(false);
+            setSettingsOpen(null);
             editorRef.current?.focus();
           }}
         />
