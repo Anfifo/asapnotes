@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import Editor from "../Editor";
 import { FileIcon } from "../fileIcons";
 import { renderMarkdown } from "../markdown";
@@ -13,6 +13,7 @@ import {
   DEFAULT_NODE_W,
   DEFAULT_TEXT_H,
   DEFAULT_TEXT_W,
+  type InkStroke,
   newId,
   parseCanvas,
   serializeCanvas,
@@ -102,6 +103,9 @@ interface BoardViewProps {
   block: BlockEditing;
   /** Right-click menus render through the app's shared context menu. */
   onMenu: (e: React.MouseEvent, entries: BoardMenuEntry[]) => void;
+  /** Whether the type declares the `ink` feature — gates the Draw tools the
+   * same way `images` gates drops. Foreign strokes render regardless. */
+  inkTools: boolean;
 }
 
 const MIN_W = 120;
@@ -117,6 +121,16 @@ const HTML_CACHE_MAX = 200;
 /** Longest side a freshly placed image node gets, in canvas units. Big enough
  * to read, small enough that several fit a screen. */
 const IMAGE_MAX = 320;
+/** Margin kept between strokes and their ink node's border. */
+const INK_PAD = 8;
+/** An ink node can be a single dot, so the card minimum would be absurd. */
+const INK_MIN = 24;
+/** Pen widths on offer, in canvas units: fine and wide. */
+const INK_WIDTHS = [2, 5] as const;
+/** Eraser reach in screen pixels, so it stays forgiving at any zoom. */
+const ERASE_RADIUS = 6;
+/** Reach for pressing a stroke with the pointer, in screen pixels. */
+const PICK_RADIUS = 4;
 
 interface Camera {
   x: number;
@@ -135,6 +149,10 @@ type Drag =
   | { kind: "pan"; startX: number; startY: number; camX: number; camY: number }
   | { kind: "marquee"; startX: number; startY: number; base: Set<string> }
   | { kind: "connect" }
+  /** A stroke being drawn: points in canvas coordinates until it commits. */
+  | { kind: "ink"; points: [number, number, number][] }
+  /** An eraser pass: strokes vanish live, one journal entry on release. */
+  | { kind: "erase"; orig: Scene; erased: boolean }
   | {
       kind: "move" | "resize";
       /** Every node the gesture carries — one for a resize, the whole
@@ -260,6 +278,116 @@ const nodeAccent = (color: string | undefined): string | undefined => {
   return Number.isInteger(n) && n >= 1 && n <= 6 ? PRESET_COLORS[n - 1] : undefined;
 };
 
+/** Pointer pressure for a stroke point: 0.5 is the neutral "no pen data"
+ * value, which is also what a mouse reports — a zero (some pens on hover
+ * transitions) would draw nothing. */
+const penPressure = (e: { pressure: number }) => (e.pressure > 0 ? e.pressure : 0.5);
+
+/** How pressure modulates the nominal width: neutral 0.5 is 1×, a light pen
+ * touch thins toward 0.4×, full pressure doubles. */
+const pressureScale = (p: number) => Math.min(2, Math.max(0.4, p * 2));
+
+/** Draw one stroke: each segment carries its own width so pressure reads as a
+ * taper, and round caps make the per-segment joints invisible. A single point
+ * is a dot. Coordinates are whatever space `ctx` is transformed into. */
+const strokePath = (ctx: CanvasRenderingContext2D, s: InkStroke, color: string) => {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const pts = s.points;
+  if (pts.length === 1) {
+    ctx.beginPath();
+    ctx.arc(pts[0][0], pts[0][1], (s.width * pressureScale(pts[0][2])) / 2, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  for (let i = 1; i < pts.length; i++) {
+    ctx.beginPath();
+    ctx.moveTo(pts[i - 1][0], pts[i - 1][1]);
+    ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.lineWidth = (s.width * (pressureScale(pts[i - 1][2]) + pressureScale(pts[i][2]))) / 2;
+    ctx.stroke();
+  }
+};
+
+/** Bounding box of stroke points, padded so the line's own width (up to its
+ * 2× pressure ceiling) never clips at the node border. */
+const strokeBounds = (points: [number, number, number][], width: number) => {
+  const pad = width + INK_PAD;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+};
+
+const shiftStroke = (s: InkStroke, dx: number, dy: number): InkStroke =>
+  dx === 0 && dy === 0 ? s : { ...s, points: s.points.map(([x, y, p]) => [x + dx, y + dy, p]) };
+
+/** Distance from a point to the segment a→b. */
+const distToSeg = (p: Point, a: Point, b: Point) => {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+};
+
+/** Is a node-local point within `reach` of the stroke's polyline? */
+const strokeNear = (q: Point, s: InkStroke, reach: number) => {
+  const pts = s.points;
+  if (pts.length === 1) return Math.hypot(q.x - pts[0][0], q.y - pts[0][1]) <= reach;
+  for (let i = 1; i < pts.length; i++) {
+    if (
+      distToSeg(q, { x: pts[i - 1][0], y: pts[i - 1][1] }, { x: pts[i][0], y: pts[i][1] }) <= reach
+    )
+      return true;
+  }
+  return false;
+};
+
+/** An ink node's bitmap — a cache of the vector strokes, which stay the truth
+ * in the file. Redrawn when the strokes change and re-rasterized (debounced)
+ * when zoom settles; during a drag or zoom frame the bitmap only rides the
+ * surface transform, so no frame ever pays for rasterization. */
+const InkCanvas = memo(function InkCanvas({
+  node,
+  zoom,
+  themeTick,
+}: {
+  node: CanvasNode;
+  zoom: number;
+  /** Bumped when the app theme swaps: the default stroke color is the theme's
+   * ink, resolved at draw time, so the bitmap must be told to look again. */
+  themeTick: number;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [res, setRes] = useState(zoom);
+  useEffect(() => {
+    const t = setTimeout(() => setRes(zoom), 150);
+    return () => clearTimeout(t);
+  }, [zoom]);
+  useEffect(() => {
+    const cv = ref.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !ctx) return;
+    const scale = Math.min(3, Math.max(0.25, res)) * (window.devicePixelRatio || 1);
+    cv.width = Math.max(1, Math.round(node.width * scale));
+    cv.height = Math.max(1, Math.round(node.height * scale));
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    const ink = getComputedStyle(cv).color;
+    for (const s of node.strokes ?? []) strokePath(ctx, s, nodeAccent(s.color) ?? ink);
+  }, [node.strokes, node.width, node.height, res, themeTick]);
+  return <canvas ref={ref} className="board-ink-bitmap" />;
+});
+
 /** Natural size of an image, scaled into IMAGE_MAX — read once, when the node
  * is created, so a picture arrives the right shape without the file ever
  * rewriting node geometry on open. */
@@ -295,6 +423,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     pickImages,
     block,
     onMenu,
+    inkTools,
   },
   ref,
 ) {
@@ -319,6 +448,14 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   const [cam, setCam] = useState<Camera>({ x: 0, y: 0, z: 1 });
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
+  /** Active tool: select is every gesture built so far; pen and eraser take
+   * over the left button while they hold it. */
+  const [tool, setTool] = useState<"select" | "pen" | "eraser">("select");
+  const [penColor, setPenColor] = useState<string | undefined>(undefined);
+  const [penWidth, setPenWidth] = useState<number>(INK_WIDTHS[0]);
+  /** Bumped when the root element's theme stamp changes — ink bitmaps resolve
+   * the theme's ink color at draw time and must redraw on a swap. */
+  const [themeTick, setThemeTick] = useState(0);
 
   const outerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -346,6 +483,13 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   /** A text box added but never typed in: its blur drops it *and* the journal
    * entry its creation pushed, so one Ctrl+Z doesn't restore an empty box. */
   const pendingAddRef = useRef<string | null>(null);
+  /** The ink node this pen session appends to: one node per session, cleared
+   * when the tool goes back to select. An eraser detour keeps it — putting the
+   * pen down and picking it back up is still the same sitting. */
+  const sessionInkRef = useRef<string | null>(null);
+  /** Screen-space canvas the in-progress stroke draws on, so drawing never
+   * re-renders the surface or touches a node bitmap mid-gesture. */
+  const overlayRef = useRef<HTMLCanvasElement>(null);
 
   /** The scene as it would be written: the focused block's live text folded in. */
   const written = (s: Scene): Scene => {
@@ -403,6 +547,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     rawRef.current = doc.raw;
     liveRef.current = null;
     pendingAddRef.current = null;
+    sessionInkRef.current = null;
     setParseError(error);
     setScene({ nodes: doc.nodes, edges: doc.edges });
     pastRef.current = [];
@@ -411,6 +556,14 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     setSelectedEdges(new Set());
     setEditing(null);
   }, [initialDoc]);
+
+  // The theme is a `data-theme` stamp on the root element; watching it is what
+  // lets ink bitmaps repaint their theme-colored strokes.
+  useEffect(() => {
+    const mo = new MutationObserver(() => setThemeTick((t) => t + 1));
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => mo.disconnect();
+  }, []);
 
   /** Zoom keeping the screen point (px, py) fixed under the pointer. */
   const zoomAt = (px: number, py: number, factor: number) =>
@@ -742,9 +895,128 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     return null;
   };
 
+  /** Switch tools. Leaving select clears the selection — anchors and resize
+   * handles have no meaning under a pen — and going back to select ends the
+   * drawing session, so the next pen picks up a fresh node. */
+  const pickTool = (t: "select" | "pen" | "eraser") => {
+    setTool(t);
+    if (t === "select") {
+      sessionInkRef.current = null;
+      return;
+    }
+    stopEditing();
+    setAddOpen(false);
+    setSelected(new Set());
+    setSelectedEdges(new Set());
+    outerRef.current?.focus();
+  };
+
+  /** Paint the in-progress stroke onto the screen-space overlay: clear and
+   * redraw one stroke, which stays cheap at any stroke length that matters. */
+  const drawOverlay = () => {
+    const cv = overlayRef.current;
+    const el = outerRef.current;
+    const d = dragRef.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !el || !ctx || d?.kind !== "ink") return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(el.clientWidth * dpr);
+    const h = Math.round(el.clientHeight * dpr);
+    if (cv.width !== w) cv.width = w;
+    if (cv.height !== h) cv.height = h;
+    const c = camRef.current;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, el.clientWidth, el.clientHeight);
+    ctx.transform(c.z, 0, 0, c.z, c.x, c.y);
+    strokePath(
+      ctx,
+      { points: d.points, width: penWidth, color: penColor },
+      nodeAccent(penColor) ?? getComputedStyle(cv).color,
+    );
+  };
+
+  const clearOverlay = () => {
+    const cv = overlayRef.current;
+    cv?.getContext("2d")?.clearRect(0, 0, cv.width, cv.height);
+  };
+
+  /** Topmost ink node with a stroke within reach of a canvas-space point. Ink
+   * divs are pointer-transparent — their mostly-empty bounding box must not
+   * shadow the nodes beneath — so pressing a stroke is resolved here instead.
+   * A card overlapping the strokes still wins the press: its div is solid and
+   * the event never reaches the surface, which is the accepted trade. */
+  const inkAt = (p: Point) => {
+    const reach = PICK_RADIUS / camRef.current.z;
+    const ns = sceneRef.current.nodes;
+    for (let i = ns.length - 1; i >= 0; i--) {
+      const n = ns[i];
+      if (n.type !== "ink" || !n.strokes) continue;
+      if (
+        p.x < n.x - reach ||
+        p.x > n.x + n.width + reach ||
+        p.y < n.y - reach ||
+        p.y > n.y + n.height + reach
+      )
+        continue;
+      const q = { x: p.x - n.x, y: p.y - n.y };
+      if (n.strokes.some((s) => strokeNear(q, s, s.width + reach))) return n;
+    }
+    return null;
+  };
+
+  /** Remove every stroke within the eraser's reach of a canvas-space point.
+   * Live scene only — the journal entry lands once, when the pass ends. */
+  const eraseAt = (p: Point, d: { orig: Scene; erased: boolean }) => {
+    const reach = ERASE_RADIUS / camRef.current.z;
+    const cur = sceneRef.current;
+    const gone = new Set<string>();
+    let changed = false;
+    const nodes = cur.nodes.flatMap((n) => {
+      if (n.type !== "ink" || !n.strokes || n.strokes.length === 0) return [n];
+      if (
+        p.x < n.x - reach ||
+        p.x > n.x + n.width + reach ||
+        p.y < n.y - reach ||
+        p.y > n.y + n.height + reach
+      )
+        return [n];
+      const q = { x: p.x - n.x, y: p.y - n.y };
+      const kept = n.strokes.filter((s) => !strokeNear(q, s, s.width + reach));
+      if (kept.length === n.strokes.length) return [n];
+      changed = true;
+      if (kept.length === 0) {
+        gone.add(n.id); // its last stroke went: the node goes with it
+        return [];
+      }
+      // The rect shrinks back around what is left, so the pointer-transparent
+      // box doesn't keep claiming space its strokes no longer reach.
+      const bb = strokeBounds(
+        kept.flatMap((s) => s.points),
+        Math.max(...kept.map((s) => s.width)),
+      );
+      return [
+        {
+          ...n,
+          x: n.x + bb.x,
+          y: n.y + bb.y,
+          width: bb.w,
+          height: bb.h,
+          strokes: kept.map((s) => shiftStroke(s, -bb.x, -bb.y)),
+        },
+      ];
+    });
+    if (!changed) return;
+    d.erased = true;
+    setScene({
+      nodes,
+      edges: cur.edges.filter((e) => !gone.has(e.fromNode) && !gone.has(e.toNode)),
+    });
+  };
+
   /** A press on empty canvas. Left-drag draws a selection rectangle — the
    * surface's primary gesture — and panning moves to the middle button, a
-   * held Space, and the wheel, which was already the main way to pan. */
+   * held Space, and the wheel, which was already the main way to pan. With a
+   * draw tool up, the left button draws or erases instead. */
   const startSurfaceDrag = (e: React.PointerEvent) => {
     const panning = e.button === 1 || (e.button === 0 && panReady);
     if (e.button !== 0 && !panning) return;
@@ -761,6 +1033,26 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
         camX: cam.x,
         camY: cam.y,
       };
+      return;
+    }
+    if (tool === "pen") {
+      e.preventDefault();
+      const p = toCanvas(localPoint(e));
+      dragRef.current = { kind: "ink", points: [[p.x, p.y, penPressure(e)]] };
+      drawOverlay();
+      return;
+    }
+    if (tool === "eraser") {
+      e.preventDefault();
+      const d = { kind: "erase" as const, orig: sceneRef.current, erased: false };
+      dragRef.current = d;
+      eraseAt(toCanvas(localPoint(e)), d);
+      return;
+    }
+    // A press on a stroke moves its ink node, exactly as pressing a card would.
+    const ink = inkAt(toCanvas(localPoint(e)));
+    if (ink) {
+      startNodeDrag(e, ink.id, "move");
       return;
     }
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -830,6 +1122,26 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
       setConnect((c) => (c ? { ...c, to } : c));
       return;
     }
+    if (d.kind === "ink") {
+      // Coalesced events carry the pen's real sample rate; the browser only
+      // delivers one merged move per frame without them.
+      const native = e.nativeEvent;
+      const events = native.getCoalescedEvents?.() ?? [native];
+      const z = camRef.current.z;
+      for (const ev of events) {
+        const p = toCanvas(localPoint(ev));
+        const last = d.points[d.points.length - 1];
+        // Sample only real travel: closer than ~1.5 screen pixels is jitter.
+        if (Math.hypot(p.x - last[0], p.y - last[1]) * z < 1.5) continue;
+        d.points.push([p.x, p.y, penPressure(ev)]);
+      }
+      drawOverlay();
+      return;
+    }
+    if (d.kind === "erase") {
+      eraseAt(toCanvas(localPoint(e)), d);
+      return;
+    }
     if (!d.moved && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) < DRAG_SLOP)
       return;
     d.moved = true;
@@ -840,13 +1152,27 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
       ...d.orig,
       nodes: d.orig.nodes.map((n) => {
         if (!carried.has(n.id)) return n;
-        return d.kind === "move"
-          ? { ...n, x: n.x + dx, y: n.y + dy }
-          : {
-              ...n,
-              width: Math.max(MIN_W, n.width + dx),
-              height: Math.max(MIN_H, n.height + dy),
-            };
+        if (d.kind === "move") return { ...n, x: n.x + dx, y: n.y + dy };
+        // An ink node can be smaller than a card ever is, so the card minimum
+        // must not snap it up the moment a resize starts.
+        const ink = n.type === "ink";
+        const width = Math.max(ink ? INK_MIN : MIN_W, n.width + dx);
+        const height = Math.max(ink ? INK_MIN : MIN_H, n.height + dy);
+        if (!ink || !n.strokes) return { ...n, width, height };
+        // Resizing ink scales the drawing itself — points stretch with the
+        // rect (from the drag's origin scene, so nothing accumulates); the
+        // nominal line width stays, the way text keeps its size in a box.
+        const sx = width / n.width;
+        const sy = height / n.height;
+        return {
+          ...n,
+          width,
+          height,
+          strokes: n.strokes.map((s) => ({
+            ...s,
+            points: s.points.map(([x, y, p]) => [x * sx, y * sy, p] as [number, number, number]),
+          })),
+        };
       }),
     });
   };
@@ -856,6 +1182,72 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     dragRef.current = null;
     if (!d) return;
     if (d.kind === "pan") return;
+    if (d.kind === "ink") {
+      clearOverlay();
+      const stroke: InkStroke = { points: d.points, width: penWidth, color: penColor };
+      const bb = strokeBounds(d.points, penWidth);
+      const cur = sceneRef.current;
+      // The session's node, if it still exists — an undo may have taken it.
+      const target = cur.nodes.find(
+        (n) => n.id === sessionInkRef.current && n.type === "ink" && n.strokes,
+      );
+      if (!target) {
+        const id = newId();
+        sessionInkRef.current = id;
+        commit({
+          ...cur,
+          nodes: [
+            ...cur.nodes,
+            {
+              id,
+              type: "ink",
+              x: bb.x,
+              y: bb.y,
+              width: bb.w,
+              height: bb.h,
+              strokes: [shiftStroke(stroke, -bb.x, -bb.y)],
+              raw: {},
+            },
+          ],
+        });
+        return;
+      }
+      // Grow the node to hold the new stroke; if the origin moves up or left,
+      // the strokes already inside shift to stay put on the canvas.
+      const nx = Math.min(target.x, bb.x);
+      const ny = Math.min(target.y, bb.y);
+      const nw = Math.max(target.x + target.width, bb.x + bb.w) - nx;
+      const nh = Math.max(target.y + target.height, bb.y + bb.h) - ny;
+      commit({
+        ...cur,
+        nodes: cur.nodes.map((n) =>
+          n.id === target.id
+            ? {
+                ...n,
+                x: nx,
+                y: ny,
+                width: nw,
+                height: nh,
+                strokes: [
+                  ...(n.strokes ?? []).map((s) => shiftStroke(s, target.x - nx, target.y - ny)),
+                  shiftStroke(stroke, -nx, -ny),
+                ],
+              }
+            : n,
+        ),
+      });
+      return;
+    }
+    if (d.kind === "erase") {
+      // The strokes already vanished live; this records the whole pass as one
+      // undo step, the same shape a node drag's ending takes.
+      if (!d.erased) return;
+      pendingAddRef.current = null;
+      pastRef.current.push(d.orig);
+      futureRef.current = [];
+      emit(sceneRef.current);
+      return;
+    }
     if (d.kind === "connect") {
       const c = connectRef.current;
       setConnect(null);
@@ -936,7 +1328,13 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     if ((e.target as Element).closest("input")) return; // the picker owns its keys
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
-    if (e.key === "Escape" && editing !== null) {
+    if (e.key === "Escape" && tool !== "select") {
+      // The window's Esc means "hide"; an active draw tool owns the key the
+      // way an open block does, and puts the pen down instead.
+      pickTool("select");
+      e.preventDefault();
+      e.stopPropagation();
+    } else if (e.key === "Escape" && editing !== null) {
       stopEditing();
       outerRef.current?.focus();
       // The window's Esc means "hide"; an open block owns the key instead.
@@ -989,6 +1387,9 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   const nodeBody = (n: CanvasNode) => {
     if (n.type === "group") {
       return n.label ? <div className="board-group-label">{n.label}</div> : null;
+    }
+    if (n.type === "ink") {
+      return <InkCanvas node={n} zoom={cam.z} themeTick={themeTick} />;
     }
     if (n.type === "link" && n.url) {
       // A URL, not an embed: rendering the page would be a network request the
@@ -1052,10 +1453,21 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     return <span className="board-node-detail">{n.type}</span>;
   };
 
+  /** Pick the pen back up over an existing drawing: new strokes join it
+   * instead of starting a node of their own. */
+  const drawMore = (n: CanvasNode) => {
+    pickTool("pen");
+    sessionInkRef.current = n.id;
+  };
+
   /** What double-clicking a node does: open what it stands for. */
   const openNode = (n: CanvasNode) => {
     if (n.type === "text") {
       setEditing(n.id);
+      return;
+    }
+    if (n.type === "ink") {
+      drawMore(n);
       return;
     }
     if (n.type === "link" && n.url) {
@@ -1075,6 +1487,8 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     const entries: BoardMenuEntry[] = [];
     if (ids.length === 1) {
       if (n.type === "text") entries.push({ label: "Edit text", run: () => setEditing(n.id) });
+      if (n.type === "ink" && inkTools)
+        entries.push({ label: "Draw more here", run: () => drawMore(n) });
       if (target?.kind === "note" && target.id)
         entries.push({ label: "Open note", run: () => onOpenNote(target.id!) });
       if (n.type === "link" && n.url)
@@ -1135,7 +1549,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     const only = selected.has(n.id) && selected.size === 1 && editing !== n.id;
     const cls = [
       "board-node",
-      `board-node-${n.type === "group" || n.type === "link" ? n.type : "box"}`,
+      `board-node-${n.type === "group" || n.type === "link" || n.type === "ink" ? n.type : "box"}`,
       selected.has(n.id) ? "selected" : "",
       editing === n.id ? "editing" : "",
       target?.kind === "missing" ? "missing" : "",
@@ -1165,9 +1579,13 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
             e.stopPropagation();
             return;
           }
+          // With a draw tool up the press belongs to the surface: strokes go
+          // over nodes, so the node must neither drag nor swallow it.
+          if (tool !== "select") return;
           startNodeDrag(e, n.id, "move");
         }}
         onDoubleClick={(e) => {
+          if (tool !== "select") return;
           e.stopPropagation();
           openNode(n);
         }}
@@ -1243,7 +1661,12 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     <div
       ref={outerRef}
       // `board-editing` tells the window's Esc handler that a block owns the key.
-      className={["board", editing !== null ? "board-editing" : "", panReady ? "board-pan" : ""]
+      className={[
+        "board",
+        editing !== null ? "board-editing" : "",
+        panReady ? "board-pan" : "",
+        tool !== "select" ? `board-tool-${tool}` : "",
+      ]
         .filter(Boolean)
         .join(" ")}
       tabIndex={0}
@@ -1256,8 +1679,22 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
       onKeyDown={onKeyDown}
       onKeyUp={onKeyUp}
       onPaste={onPaste}
+      onDoubleClick={(e) => {
+        // Ink divs are pointer-transparent, so their double-click lands here.
+        if (tool !== "select" || !inkTools) return;
+        const ink = inkAt(toCanvas(localPoint(e)));
+        if (ink) drawMore(ink);
+      }}
       onContextMenu={(e) => {
         e.stopPropagation();
+        // Same story for the right button: a stroke's menu is resolved here.
+        const ink = tool === "select" ? inkAt(toCanvas(localPoint(e))) : null;
+        if (ink) {
+          setSelected(new Set([ink.id]));
+          setSelectedEdges(new Set());
+          onMenu(e, nodeEntries(ink, [ink.id]));
+          return;
+        }
         onMenu(e, surfaceEntries());
       }}
       style={{
@@ -1328,6 +1765,9 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
         </svg>
         {cards.map(renderNode)}
       </div>
+      {/* The in-progress stroke: screen space, cleared when the stroke commits
+          into its node's own bitmap. */}
+      {tool === "pen" && <canvas ref={overlayRef} className="board-ink-overlay" />}
       {/* Selection rectangle: screen space, so it doesn't scale with the camera. */}
       {marquee && (
         <div
@@ -1410,6 +1850,61 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
             </div>
           )}
         </div>
+        {inkTools && (
+          <div className="board-draw">
+            <button
+              className={tool === "pen" ? "board-btn active" : "board-btn"}
+              data-tip="Draw on the canvas (Esc puts the pen down)"
+              onClick={() => pickTool(tool === "pen" ? "select" : "pen")}
+            >
+              ✎ Draw
+            </button>
+            <button
+              className={tool === "eraser" ? "board-btn active" : "board-btn"}
+              data-tip="Erase strokes (whole strokes, not pixels)"
+              onClick={() => pickTool(tool === "eraser" ? "select" : "eraser")}
+            >
+              Erase
+            </button>
+            {tool === "pen" && (
+              <>
+                <span className="board-swatches">
+                  <button
+                    className={penColor === undefined ? "board-swatch active" : "board-swatch"}
+                    data-tip="Ink"
+                    aria-label="Ink color"
+                    onClick={() => setPenColor(undefined)}
+                  />
+                  {PRESET_COLORS.map((c, i) => (
+                    <button
+                      key={c}
+                      className={
+                        penColor === String(i + 1) ? "board-swatch active" : "board-swatch"
+                      }
+                      style={{ background: c }}
+                      data-tip={`Color ${i + 1}`}
+                      aria-label={`Stroke color ${i + 1}`}
+                      onClick={() => setPenColor(String(i + 1))}
+                    />
+                  ))}
+                </span>
+                <span className="board-widths">
+                  {INK_WIDTHS.map((w) => (
+                    <button
+                      key={w}
+                      className={penWidth === w ? "board-btn active" : "board-btn"}
+                      data-tip={w === INK_WIDTHS[0] ? "Fine line" : "Wide line"}
+                      aria-label={w === INK_WIDTHS[0] ? "Fine line" : "Wide line"}
+                      onClick={() => setPenWidth(w)}
+                    >
+                      {w === INK_WIDTHS[0] ? "•" : "●"}
+                    </button>
+                  ))}
+                </span>
+              </>
+            )}
+          </div>
+        )}
         <div className="board-zoom">
           <button className="board-btn" data-tip="Zoom out" onClick={() => zoomCenter(1 / 1.2)}>
             −

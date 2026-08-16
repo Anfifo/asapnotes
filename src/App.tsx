@@ -3026,6 +3026,7 @@ function App() {
                     features: markdownFeatures(),
                   }}
                   onMenu={openContextMenu}
+                  inkTools={hasFeature(open.id, "ink")}
                 />
               </Suspense>
             )}

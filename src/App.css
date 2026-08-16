@@ -2503,6 +2503,86 @@ body,
   min-width: 3.4rem;
 }
 
+/* Draw tools. The active wash is the app's one toggle idiom. */
+.board-draw {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.board-btn.active {
+  background: rgba(217, 154, 6, 0.22);
+}
+
+.board-swatches {
+  display: inline-flex;
+  gap: 0.2rem;
+  margin: 0 0.15rem;
+}
+
+.board-swatch {
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  cursor: pointer;
+  /* The unset swatch is the theme's own ink. */
+  background: currentColor;
+}
+
+.board-swatch.active {
+  box-shadow: 0 0 0 2px var(--tint-amber);
+}
+
+/* Tools swap the surface cursor so the mode is visible before the first mark. */
+.board-tool-pen {
+  cursor: crosshair;
+}
+
+.board-tool-eraser {
+  cursor: cell;
+}
+
+/* Ink nodes are strokes floating on the canvas, not cards. The div exists for
+   geometry and selection only: its mostly-empty rectangle must not steal
+   clicks from nodes beneath, so it is pointer-transparent and stroke presses
+   are hit-tested by the surface instead. */
+.board-node-ink {
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.board-node-ink.selected {
+  border-color: var(--tint-amber);
+  box-shadow: 0 0 0 1px var(--tint-amber);
+}
+
+/* The corner and anchors take the pointer back through the transparent node. */
+.board-node-ink > .board-resize,
+.board-node-ink > .board-anchor {
+  pointer-events: auto;
+}
+
+.board-ink-bitmap {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The in-progress stroke, in screen space above the surface. */
+.board-ink-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 .board-picker {
   position: absolute;
   top: calc(100% + 4px);
@@ -2666,6 +2746,25 @@ body,
 
   .board-btn:hover {
     background: #454545;
+  }
+
+  .board-btn.active {
+    background: rgba(217, 154, 6, 0.28);
+  }
+
+  .board-node-ink {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .board-node-ink.selected {
+    border-color: var(--tint-amber);
+    box-shadow: 0 0 0 1px var(--tint-amber);
+  }
+
+  .board-swatch {
+    border-color: rgba(255, 255, 255, 0.25);
   }
 
   .board-picker input {

@@ -12,9 +12,23 @@ const SIDES: Side[] = ["top", "right", "bottom", "left"];
 const asSide = (v: unknown): Side | undefined =>
   typeof v === "string" && (SIDES as string[]).includes(v) ? (v as Side) : undefined;
 
+/** One drawn stroke on an ink node. Points are `[x, y, pressure]`, relative to
+ * the node's own origin so a node move never rewrites them; pressure is 0..1
+ * with 0.5 meaning "no pen data" (what a mouse reports). */
+export interface InkStroke {
+  points: [number, number, number][];
+  /** Nominal line width in canvas units; pressure modulates around it. */
+  width: number;
+  /** Same rule as node color: a preset "1".."6" or hex. Absent means the
+   * theme's ink color. */
+  color?: string;
+}
+
 export interface CanvasNode {
   id: string;
-  /** Spec node types: "file" | "text" | "link" | "group"; unknown kept as-is. */
+  /** Spec node types: "file" | "text" | "link" | "group"; unknown kept as-is.
+   * "ink" is this app's documented extension — freehand strokes, which the
+   * spec's axis-aligned rectangles can't carry. */
   type: string;
   x: number;
   y: number;
@@ -32,6 +46,9 @@ export interface CanvasNode {
   /** Spec color: a preset "1".."6" or a hex value. Rendered, never authored
    * here — a foreign file's colors survive and show. */
   color?: string;
+  /** Ink nodes: their strokes. A conforming reader that doesn't know the
+   * extension opens the file and skips them. */
+  strokes?: InkStroke[];
   /** The node as the file carried it, for the round trip. */
   raw: Record<string, unknown>;
 }
@@ -75,6 +92,25 @@ const empty = (): CanvasDoc => ({ nodes: [], edges: [], raw: {} });
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** Strokes of an ink node, tolerantly: a malformed stroke is skipped rather
+ * than failing the node, the same spirit as the node loop itself. A missing
+ * pressure reads as 0.5 — the "no pen data" value. */
+const parseStrokes = (v: unknown): InkStroke[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const strokes: InkStroke[] = [];
+  for (const s of v) {
+    if (!isObject(s) || !Array.isArray(s.points)) continue;
+    const points: [number, number, number][] = [];
+    for (const p of s.points) {
+      if (!Array.isArray(p) || typeof p[0] !== "number" || typeof p[1] !== "number") continue;
+      points.push([p[0], p[1], typeof p[2] === "number" ? p[2] : 0.5]);
+    }
+    if (points.length === 0) continue;
+    strokes.push({ points, width: num(s.width, 2), color: str(s.color) });
+  }
+  return strokes;
+};
+
 /** Parse a canvas file. Empty text is a new, empty canvas; malformed JSON is
  * an error the caller must surface and stop editing on — a later write would
  * shed whatever the unreadable file holds. */
@@ -103,6 +139,7 @@ export function parseCanvas(text: string): { doc: CanvasDoc; error: string | nul
       url: str(n.url),
       label: str(n.label),
       color: str(n.color),
+      strokes: str(n.type) === "ink" ? (parseStrokes(n.strokes) ?? []) : undefined,
       raw: n,
     });
   }
@@ -140,6 +177,17 @@ const isEmptyDoc = (doc: CanvasDoc) =>
  * absent instead of appearing as `null`. */
 const opt = <T>(key: string, value: T | undefined) => (value === undefined ? {} : { [key]: value });
 
+/** Two decimals: node geometry is whole pixels, but a stroke's shape lives in
+ * the fractions — whole-pixel points turn a pen's curve into stairsteps. */
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
+const serializeStrokes = (strokes: InkStroke[]) =>
+  strokes.map((s) => ({
+    points: s.points.map(([x, y, p]) => [round2(x), round2(y), round2(p)]),
+    width: s.width,
+    ...opt("color", s.color),
+  }));
+
 /** Serialize back to JSONCanvas text. Unknown node, edge and top-level fields
  * ride through untouched; geometry is written in whole pixels, as the spec's
  * own examples do. */
@@ -154,6 +202,7 @@ export function serializeCanvas(doc: CanvasDoc): string {
     ...opt("url", n.url),
     ...opt("label", n.label),
     ...opt("color", n.color),
+    ...(n.strokes !== undefined ? { strokes: serializeStrokes(n.strokes) } : {}),
     x: Math.round(n.x),
     y: Math.round(n.y),
     width: Math.round(n.width),

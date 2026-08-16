@@ -12,6 +12,111 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-16)
+
+- [ ] **Ink (canvas step 3) — design picked, building** (2026-08-16) — the last slice
+      of the canvas item under 2026-08-10. The two decisions that item flagged as
+      needing an answer up front, plus two more the code surfaced, all went up as
+      options and **all recommendations were picked 2026-08-16**:
+
+  1. **One ink node per drawing session.** Activating the pen starts an ink node;
+     every stroke until the tool is put down joins it, and the node's rect is the
+     strokes' bounding box, growing as you draw. Strokes store points relative to
+     the node's origin, so a move never rewrites them. An ink node then selects,
+     moves, deletes and z-orders like any node with no new selection code.
+     _Rejected:_ one layer-node per canvas (can't move or delete one annotation
+     without all of them) and time/proximity clustering (invisible boundary,
+     confusing when the guess is wrong).
+  2. **Raster per node, always — there is no crossover.** Each ink node renders
+     into its own `<canvas>` bitmap; committed strokes draw into it, re-rasterized
+     debounced on zoom so lines stay crisp. The bitmap is only a cache — the vector
+     points in the file stay the truth. This answers the flagged "decide the
+     SVG→raster crossover before it is slow" with one renderer and no number to
+     tune; per-frame cost during a drag is only the live stroke on a screen-space
+     overlay, never a re-rasterization. _Rejected:_ SVG-until-slow (two renderers
+     to keep pixel-identical forever) and SVG-only (exactly the failure mode the
+     item said to decide against).
+  3. **Erase removes whole strokes.** A scene mutation, so undo, autosave and
+     round-trip come free and the file stays pure vector. _Rejected:_ pixel erase —
+     it forces either bitmaps baked into the JSON (file size, no longer readable
+     data) or erase-ops a foreign reader would render wrongly. Nearly one-way, so
+     decided deliberately.
+  4. **v1 tools: pen + eraser + a few colors.** A Draw toggle, an eraser, a small
+     preset color row riding the spec's "1".."6" colors (so foreign tools show the
+     same colors), two widths. Pressure from pointer events where a real pen
+     provides it. Highlighter and more deferred; strokes already carry color, so
+     later tools land against the same data.
+
+  _Knock-ons accepted with the picks:_ the ink node is the documented JSONCanvas
+  extension the format decision reserved (schema to be appended to that decision
+  entry when it ships); the canvas registry type gains `ink` — a sixth migration
+  hop with `v5_note_types` frozen as the previous shape; and an ink node's div must
+  be pointer-transparent with stroke-distance hit testing at the surface, because
+  its bounding box overlaps other nodes and a card-style div would swallow their
+  clicks.
+
+  **Implemented 2026-08-16, all gates + tests clean (36), verified live over the
+  webview devtools protocol.** What shipped:
+
+  - **Format** (`jsoncanvas.ts`): the `ink` node type — `strokes` as
+    `[x, y, pressure]` triples relative to the node origin, nominal `width`,
+    optional `color` on the node-color rule; strokes parse tolerantly (a
+    malformed stroke is skipped, missing pressure reads as the neutral 0.5)
+    and serialize with two-decimal points. Schema documented in the format
+    decision entry. One accepted normalization, recorded there: unknown fields
+    _inside_ a stroke are rewritten on save, unlike unknown node fields.
+  - **Rendering**: raster per node, always — `InkCanvas` draws each node's
+    strokes into its own bitmap (per-segment width follows pressure, round
+    caps), re-rasterized debounced 150 ms when zoom settles and on theme swap
+    (a `MutationObserver` on the root's `data-theme`, since canvas 2D can't
+    follow `currentColor`). During drags and zoom the bitmap only rides the
+    surface transform; the in-progress stroke draws on a screen-space overlay,
+    so no frame ever pays for rasterization.
+  - **Tools**: Draw and Erase in the board bar (gated by the type's `ink`
+    feature, the same way `images` gates drops), a seven-swatch color row
+    (theme ink + the spec's six presets) and two widths while the pen is up;
+    Esc puts the pen down (owning the key the way an editing block does).
+    Strokes group into one ink node per pen session; the node's rect is the
+    strokes' padded bounding box and grows as it draws, shifting existing
+    points when the origin moves. "Draw more here" (context menu or
+    double-click on a stroke) re-enters the session on an existing node.
+    Coalesced pointer events are consumed for real pen sample rates, with a
+    1.5-screen-px jitter floor.
+  - **Ink nodes are nodes**: select, move, delete, z-order, edges and undo all
+    ride the existing machinery — a stroke commit or a whole eraser pass is
+    one journal entry each. The div is pointer-transparent (its mostly-empty
+    bbox must not shadow nodes beneath), so stroke presses, double-clicks and
+    context menus are stroke-distance hit-tested at the surface; the resize
+    corner and anchors re-enable their own pointer. Resizing scales the points
+    with the rect while the nominal width stays, and ink nodes get a smaller
+    resize floor than cards. Erasing shrinks the rect back around what
+    remains; an emptied node is removed with its edges.
+  - **Registry**: canvas features become `images` + `ink` — sixth hop,
+    `v5_note_types` frozen (composed from the frozen v4), era test added.
+
+  **Verified live** (second instance over the devtools protocol, scratch canvas
+  seeded with a foreign ink node carrying an unknown `pen` field, a foreign
+  top-level key and a text node; full cleanup after): the v5 migration fired on
+  the real settings.json; the foreign strokes rasterized (pixel-checked); two
+  pen drags autosaved into _one_ new ink node with the foreign fields riding
+  through untouched; each stroke was one Ctrl+Z and two redos restored both;
+  an eraser drag across one stroke removed that stroke alone, shrank the rect,
+  left the foreign node intact, and one undo restored the whole pass; Esc
+  returned to select; pressing a stroke moved its node (+50 exactly); resize
+  scaled rect and points ×1.5 with width preserved.
+
+  _Pending hands-on (a pointer-and-eyes list, like every canvas slice):_ how
+  drawing _feels_ — smoothing, the jitter floor, pressure with a real pen
+  (the devtools mouse always reports the neutral 0.5); eraser reach; both
+  themes for strokes, swatches and the active-tool wash; the bitmap crispness
+  ladder across zoom levels; and whether the pen staying active after a stroke
+  (deliberate — sessions) reads as sticky or as stuck.
+
+  _Left deliberately:_ a highlighter (one more preset against the same data),
+  pixel erase (rejected in the design — nearly one-way), stroke smoothing
+  beyond the sample floor, and scrollbar-style stroke minimaps. The
+  image-annotation item below builds on this layer and sequences next.
+
 ## Today (2026-08-14)
 
 - [ ] **Freeform canvas (canvas step 2) — design picked, building** (2026-08-14) —
@@ -1291,8 +1396,12 @@ not registered (0x80070002)``) and errors _before_ the draft/history
 
   **2026-08-14: step 2 (freeform canvas) is implemented** — see the "Freeform canvas
   (canvas step 2)" item under 2026-08-14 for the picks, what shipped and what is pending
-  hands-on. Only **step 3 (ink)** is left of this item, plus the image-annotation surface
-  below that builds on the same layer.
+  hands-on.
+
+  **2026-08-16: step 3 (ink) is implemented** — see the "Ink (canvas step 3)" item under
+  2026-08-16. All three steps of this item are now built; what remains of the canvas
+  thread is the hands-on passes recorded on each step's own item, and the
+  image-annotation surface below that builds on the ink layer.
 
   _Promoted to `decisions/` 2026-08-14_, both entries this item called for:
   [canvas is a native view, not a plugin](decisions/2026-08-14-canvas-is-a-native-view.md)
