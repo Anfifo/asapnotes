@@ -14,6 +14,101 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Today (2026-08-16)
 
+- [ ] **Convert a folder between virtual and real** (2026-08-16) — requested: right-click
+      a folder (or a file in one) offers converting a virtual folder to a real one and a
+      real folder to a virtual one. Converting needs a destination pick — a virtual
+      folder's backing directory lives in the virtual-folders home, so "make it real"
+      must ask where the directory should go (and the reverse may ask which project the
+      mount joins). Also requested alongside: manually moving files between a virtual
+      folder and the real folder it becomes, so a conversion doesn't have to be
+      all-at-once. Not designed yet; open points: what conversion means for note ids and
+      open tabs (a backing-directory move re-roots every contained note's id — drafts,
+      history and tabs all key off it), whether "convert" is move-the-directory or
+      create-and-migrate, and how conflicts at the destination surface.
+- [ ] **Project board: auto-generate the layout from the project's structure**
+      (2026-08-16) — requested: an option on the project board to generate its content
+      from what the project already knows — notes as file nodes, an `.md` referencing
+      other `.md`s (mention links) becoming edges, and the folder a note lives in
+      grouping its notes (the spec's `group` nodes are the natural fit). Wanted on the
+      project board specifically, and interesting for any canvas holding a project's
+      notes. Also in the same ask: the project's canvas "should be by default a canvas
+      file" — read as the board being the project's default open surface, which is
+      picked reading (1) of the canvas-as-default-open item under 2026-08-14 ("project
+      opens onto its board", waiting on "opening a project" becoming a real event);
+      flag if a different reading was meant.
+      _2026-08-16 design pass — four decisions up as options, **three picked as
+      recommended, one refined by the user**:_ **(1) additive only** — Generate places
+      what's missing (unplaced notes, new reference edges, new folder groups) and never
+      moves or removes anything hand-placed; running it twice is safe by construction,
+      no rebuild verb, no preview machinery. **(2) real edges in the file** — generated
+      reference edges are normal JSONCanvas edges other tools can see, deduped by
+      endpoints on re-run; accepted consequence, stated plainly: deleting a reference
+      in the `.md` does not remove its edge — the board is a snapshot, not a mirror.
+      **(3) folders become group backdrops** — the spec vocabulary already renders.
+      **(4) grid per folder group**, with the user's own refinement: nesting worried
+      them ("wouldn't it become strange if there's more than 1 layered?") and the
+      answer is **one flat layer of groups keyed by full folder path** — `recipes` and
+      `recipes/desserts` are two side-by-side groups, the path label carrying the
+      hierarchy, groups never nest (which would also compound the parked
+      group-drag-doesn't-carry-members question). Still open before code: where the
+      verb lives (lean: board toolbar + surface context menu + palette, like every
+      other board verb), and reference extraction (markdown links resolved relative to
+      each note, the same resolution mention links use; no Rust-side extraction exists
+      today, so it's either N note-reads on generate — fine for an explicit verb — or
+      a small backend command).
+      _Extension requested 2026-08-16:_ the generated map should cover **references to
+      files and folders, not just `.md` → `.md`** — an `.md` linking an asset, any real
+      file, or a folder gets a visual representation of that reference. Files are the
+      easy half: the spec's `file` node already points at any path and the board's
+      target resolution already answers "image / other real file / missing", so a
+      referenced file becomes a placed file node plus an edge. Folders are the open
+      design half: a `file` node pointing at a directory (spec-legal, but what does its
+      card show and what does double-click do) versus routing the edge to the folder's
+      _group_ backdrop when that folder is already on the board as a group — an edge to
+      a group is spec-legal and reads as "references this cluster". Also open: whether
+      images the note embeds inline count as references worth an edge, or only explicit
+      file/folder links do — lean: skip embedded images, map pointed-at links.
+      **Re-designed 2026-08-16, same day — the pivot is the user's:** _"the goal is to
+      view the project connections"_ — the project surface becomes **a computed,
+      read-only map**, not an editable board that generation adds to. Three picks:
+      the map **replaces** the editable board as what the project chip opens (any
+      `.canvas` file stays fully editable — it just isn't the project's front door,
+      and existing `board.canvas` files keep opening as normal canvases); a
+      **"Save as canvas…"** escape hatch ships day one (snapshot the computed layout
+      into a real `.canvas` to arrange, annotate, ink — the honest answer to "I want
+      to move this one node": fork a snapshot, the live map stays true); the surface
+      is called **MAP**. What this supersedes from the morning picks, recorded so the
+      history reads honestly: _additive generate_ and _real edges in the file_
+      dissolve — there is no file and no generation step, the map recomputes from the
+      notes on open and is never stale, which also deletes the accepted
+      snapshot-not-mirror wart along with the merge/dedupe machinery. What survives:
+      _flat path-keyed groups_ and _grid layout_ carry over as the map's layout
+      algorithm, and the whole file/folder-reference extension above applies to the
+      map as-is. Implementation lean: the map is a lens-idiom tab (like the changes
+      lens — computed, read-only, never persisted) rendering through the existing
+      canvas engine with editing disabled; reference extraction reads the project's
+      notes on open.
+- [ ] **Rework the project-board button on project headings** (2026-08-16) — feedback,
+      verbatim intent: the current hover-`▦` on project headings reads as trash — it
+      only appears on hover, the glyph is weak, and it sits awkwardly mid-row. Wanted:
+      always visible, a better icon, and a placement that doesn't interrupt the
+      heading. Candidate-sheet material (icon options × placement options, both
+      themes); the affordance itself is settled — a project's board stays one click
+      from its heading.
+      _2026-08-16: candidate sheet published._ Two axes, composable: placement **A**
+      today's hover-`▦` (reference) / **B** always-visible icon at the right edge /
+      **C** inline icon after the project name / **D** a worded "board" chip; glyph
+      ladder `▦` / offset cards / dashboard panes / kanban square / frame.
+      **Placement picked same day: D, the worded chip** — always visible and worded
+      won over icon-only. Glyph went to a round 2 on the same sheet after the user
+      asked for marks that show a _diagram_: kanban (4) and frame (5) — their leans —
+      beside workflow (6, two boxes joined by a connector), network (7) and waypoints
+      (8), each rendered inside the chip at its real 11px. Recommended workflow;
+      **picked same day: 7, network** — the user's reasoning carried it past the
+      recommendation: _"the goal is to view the project connections"_, and that goal
+      also re-designed what the chip opens (see the project-map item above). Final
+      design, ready to build: **a worded MAP chip, network glyph, always visible on
+      project headings**, opening the computed read-only project map. No code yet.
 - [ ] **Ink (canvas step 3) — design picked, building** (2026-08-16) — the last slice
       of the canvas item under 2026-08-10. The two decisions that item flagged as
       needing an answer up front, plus two more the code surfaced, all went up as
@@ -116,6 +211,36 @@ The AI (or anyone) working on this repo keeps this file current while working:
   pixel erase (rejected in the design — nearly one-way), stroke smoothing
   beyond the sample floor, and scrollbar-style stroke minimaps. The
   image-annotation item below builds on this layer and sequences next.
+
+- [ ] **Settings → MCP section** (2026-08-16) — requested, lands once the MCP sidecar
+      exists (item under 2026-08-06): a section in Settings that pops up instructions
+      and details for the sidecar — what it is, how to set it up locally (the client
+      config snippet to paste, where the server binary/script lives), and if possible
+      a status readout (is a client connected / when was it last used). Not designed
+      yet; open points: what "status" can honestly mean for a stdio server the app
+      doesn't spawn (the client does), and whether the per-project access grants
+      (already designed into the sidecar item) surface here or stay in Projects.
+- [ ] **View the MCP's change log** (2026-08-16) — requested, sequences with the
+      sidecar: a way to see what was changed by the MCP specifically, so its edits
+      are reviewable. The recent-changes view (2026-08-13) already captures and shows
+      external edits — including the future sidecar — but can only say "not this
+      app". This ask is the finer attribution: since the sidecar is ours, it can
+      identify itself (its writes tagged as an `mcp` origin in the same snapshot
+      store, or its own append-only log of tool calls with note + section + summary).
+      Open points: whether this is a filter/origin badge on the existing changes view
+      (lean — one machinery, one place to look) or a separate log surface, and
+      whether tool-call metadata (which tool, which section) is worth storing beyond
+      the content diff.
+- [ ] **MCP can read and edit canvases** (2026-08-16) — requested, extends the
+      sidecar's tool surface past `.md`: ideally the MCP also allows reading, editing
+      and general usage of `.canvas` files — the files are already an open JSON
+      format other tools can parse, so the contract holds. Open points: tool shape
+      (raw JSON read/write vs. structured verbs like "add a node", "connect A to B" —
+      structured is friendlier to agents and safer against clobbering, but is a
+      bigger surface), whether the per-project grants gate canvases the same as
+      notes (lean: yes, same `off`/`read`/`write`), and how canvas edits land in the
+      change-tracking above (a JSON diff isn't the readable hunk view; may need a
+      node-level summary).
 
 ## Today (2026-08-14)
 
