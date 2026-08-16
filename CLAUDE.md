@@ -31,6 +31,9 @@ summoned by a global hotkey; notes are plain `.md` files; an MCP sidecar is plan
 
 ## Working loop (`docs/`)
 
+- `docs/handoff.md` — **read first.** Where the work stands right now: what is in flight, what
+  is verified live against what merely compiles, and the traps that cost the last session
+  time. Overwrite it when handing off — it describes the present, not history.
 - `docs/TODO.md` — keep current while working: add item with date + one-line context, update
   as it progresses.
 - `docs/decisions/` — when a finished TODO item embodied a real decision or main integration,
