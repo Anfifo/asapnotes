@@ -46,3 +46,5 @@ Deep docs, migrations, key files.
 | 2026-08-07 | [External projects linked in place](2026-08-07-external-projects-linked-in-place.md)     | Scan finds README-marked folders; notes edited where they live   |
 | 2026-08-10 | [A project is a location plus mounts](2026-08-10-a-project-is-a-location-plus-mounts.md) | One model for root, linked and virtual folders; ids unchanged    |
 | 2026-08-10 | [Config splits by trust, not by scope](2026-08-10-config-splits-by-trust.md)             | Personal config in app data, portable config in the project      |
+| 2026-08-14 | [Canvas is a native view, not a plugin](2026-08-14-canvas-is-a-native-view.md)           | Lazy in-tree view; the registry adds formats, never views        |
+| 2026-08-14 | [Canvas files are JSONCanvas](2026-08-14-canvas-files-are-jsoncanvas.md)                 | Open spec for boards and canvases; ink as a documented extension |
