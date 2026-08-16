@@ -265,13 +265,26 @@ fn default_note_types() -> Vec<NoteType> {
             view: "canvas".into(),
             icon: Some("file-canvas".into()),
             color: Some("amber".into()),
-            // Images only: a canvas takes pasted and dropped pictures as file
-            // nodes. `ink` joins this list when strokes exist — a feature name
-            // is something the app implements, not something it plans.
-            features: strings(&["images"]),
+            // What a canvas implements today: pasted and dropped pictures as
+            // file nodes, and drawn ink strokes. A feature name is something
+            // the app implements, not something it plans.
+            features: strings(&["images", "ink"]),
             listed: true,
         },
     ]
+}
+
+/// The registry as shipped 2026-08-14 with the freeform canvas: the canvas
+/// type declared `images` but not `ink` — strokes didn't exist yet. Composed
+/// from the frozen [`v4_note_types`], so this snapshot cannot drift either.
+fn v5_note_types() -> Vec<NoteType> {
+    let mut types = v4_note_types();
+    for t in &mut types {
+        if t.id == "canvas" {
+            t.features = vec!["images".into()];
+        }
+    }
+    types
 }
 
 /// The registry as shipped earlier on 2026-08-14: the canvas type had arrived
@@ -522,6 +535,7 @@ fn load(app: &AppHandle) -> Result<Loaded, String> {
                     || settings.note_types == v2_note_types()
                     || settings.note_types == v3_note_types()
                     || settings.note_types == v4_note_types()
+                    || settings.note_types == v5_note_types()
                 {
                     settings.note_types = default_note_types();
                     let _ = write(&path, &settings);
@@ -743,7 +757,29 @@ mod tests {
     }
 
     #[test]
-    fn canvas_type_is_a_listed_note_that_takes_images() {
+    fn v5_era_registry_round_trips_and_upgrades() {
+        // An untouched settings.json from the freeform-canvas build parses
+        // back to the snapshot…
+        let data = serde_json::to_string(&v5_note_types()).expect("serializes");
+        let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
+        assert_eq!(parsed, v5_note_types());
+        // …and differs from today's only in what canvas declares, so the
+        // upgrade is exactly the `ink` feature and nothing else.
+        assert_ne!(v5_note_types(), default_note_types());
+        let strip = |types: Vec<NoteType>| {
+            types
+                .into_iter()
+                .map(|mut t| {
+                    t.features.clear();
+                    t
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(strip(v5_note_types()), strip(default_note_types()));
+    }
+
+    #[test]
+    fn canvas_type_is_a_listed_note_that_takes_images_and_ink() {
         let s = Settings::default();
         assert!(s.is_note("board.canvas"));
         assert!(s.is_listed("board.canvas"));
@@ -756,7 +792,6 @@ mod tests {
             .map(|t| t.features.clone())
             .unwrap_or_default();
         assert!(features.contains(&"images".to_string()));
-        // Ink is not implemented, so the type must not advertise it.
-        assert!(!features.contains(&"ink".to_string()));
+        assert!(features.contains(&"ink".to_string()));
     }
 }
