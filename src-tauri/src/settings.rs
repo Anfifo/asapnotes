@@ -56,6 +56,15 @@ pub struct Settings {
     /// The global summon hotkey; absent means the shipped default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summon_hotkey: Option<String>,
+    /// Registry type id a deliberate "New note" creates; absent means markdown.
+    /// Capture — the blank note a summon lands in — is always markdown whatever
+    /// this says, because a canvas is not a place to start typing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_note_type: Option<String>,
+    /// Note id of a canvas the window opens on at launch, instead of the last
+    /// active tab. Absent means the tab that was up stays up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_at_launch: Option<String>,
 }
 
 impl Default for Settings {
@@ -69,6 +78,8 @@ impl Default for Settings {
             virtual_folders_root: None,
             keybinds: BTreeMap::new(),
             summon_hotkey: None,
+            default_note_type: None,
+            open_at_launch: None,
         }
     }
 }
@@ -254,10 +265,34 @@ fn default_note_types() -> Vec<NoteType> {
             view: "canvas".into(),
             icon: Some("file-canvas".into()),
             color: Some("amber".into()),
-            features: Vec::new(),
+            // Images only: a canvas takes pasted and dropped pictures as file
+            // nodes. `ink` joins this list when strokes exist — a feature name
+            // is something the app implements, not something it plans.
+            features: strings(&["images"]),
             listed: true,
         },
     ]
+}
+
+/// The registry as shipped earlier on 2026-08-14: the canvas type had arrived
+/// but declared no features, because nothing on a canvas took an image yet.
+/// Composed from [`v3_note_types`] rather than spelled out — that snapshot is
+/// itself frozen, so this one cannot drift either, which is the property the
+/// literal snapshots are there to guarantee.
+fn v4_note_types() -> Vec<NoteType> {
+    let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+    let mut types = v3_note_types();
+    types.push(NoteType {
+        id: "canvas".into(),
+        name: "Canvas".into(),
+        extensions: strings(&["canvas"]),
+        view: "canvas".into(),
+        icon: Some("file-canvas".into()),
+        color: Some("amber".into()),
+        features: Vec::new(),
+        listed: true,
+    });
+    types
 }
 
 /// The registry as shipped 2026-08-13: nine types with `listed` flags, no
@@ -486,6 +521,7 @@ fn load(app: &AppHandle) -> Result<Loaded, String> {
                 if settings.note_types == v1_note_types()
                     || settings.note_types == v2_note_types()
                     || settings.note_types == v3_note_types()
+                    || settings.note_types == v4_note_types()
                 {
                     settings.note_types = default_note_types();
                     let _ = write(&path, &settings);
@@ -602,6 +638,36 @@ pub fn set_keybinds(app: AppHandle, keybinds: BTreeMap<String, String>) -> Resul
     })
 }
 
+/// Which registry type "New note" creates. `None` (or an id no type claims)
+/// means markdown; the id is checked here so a stale setting can't leave the
+/// verb creating a file the app has no view for.
+#[tauri::command]
+pub fn set_default_note_type(app: AppHandle, id: Option<String>) -> Result<(), String> {
+    update(&app, |s| {
+        s.default_note_type = match id {
+            Some(id) if s.note_types.iter().any(|t| t.id == id) => Some(id),
+            Some(id) => return Err(format!("no note type with id \"{id}\"")),
+            None => None,
+        };
+        Ok(())
+    })
+}
+
+/// The canvas the window opens on at launch, or `None` to go back to the last
+/// active tab. Only a note the registry opens as a canvas qualifies — the point
+/// of the setting is a surface to land on, not any file at all.
+#[tauri::command]
+pub fn set_open_at_launch(app: AppHandle, note: Option<String>) -> Result<(), String> {
+    update(&app, |s| {
+        s.open_at_launch = match note {
+            Some(note) if s.type_for(&note).is_some_and(|t| t.view == "canvas") => Some(note),
+            Some(note) => return Err(format!("\"{note}\" is not a canvas")),
+            None => None,
+        };
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,7 +721,29 @@ mod tests {
     }
 
     #[test]
-    fn canvas_type_is_a_listed_note() {
+    fn v4_era_registry_round_trips_and_upgrades() {
+        // An untouched settings.json from the first canvas build parses back to
+        // the snapshot…
+        let data = serde_json::to_string(&v4_note_types()).expect("serializes");
+        let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
+        assert_eq!(parsed, v4_note_types());
+        // …and differs from today's only in what canvas declares, so the
+        // upgrade is exactly the feature and nothing else.
+        assert_ne!(v4_note_types(), default_note_types());
+        let strip = |types: Vec<NoteType>| {
+            types
+                .into_iter()
+                .map(|mut t| {
+                    t.features.clear();
+                    t
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(strip(v4_note_types()), strip(default_note_types()));
+    }
+
+    #[test]
+    fn canvas_type_is_a_listed_note_that_takes_images() {
         let s = Settings::default();
         assert!(s.is_note("board.canvas"));
         assert!(s.is_listed("board.canvas"));
@@ -663,5 +751,12 @@ mod tests {
             s.type_for("board.canvas").map(|t| t.view.as_str()),
             Some("canvas")
         );
+        let features = s
+            .type_for("board.canvas")
+            .map(|t| t.features.clone())
+            .unwrap_or_default();
+        assert!(features.contains(&"images".to_string()));
+        // Ink is not implemented, so the type must not advertise it.
+        assert!(!features.contains(&"ink".to_string()));
     }
 }

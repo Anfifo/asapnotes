@@ -219,6 +219,8 @@ pub fn run() {
             settings::get_settings,
             settings::set_appearance,
             settings::set_keybinds,
+            settings::set_default_note_type,
+            settings::set_open_at_launch,
             notes::list_notes,
             notes::list_projects,
             notes::project_config_errors,
