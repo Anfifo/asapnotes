@@ -1,7 +1,7 @@
 # Canvas files are JSONCanvas plus an ink extension
 
-- Date: 2026-08-14
-- Status: Built (nodes and edges; the ink node is still a plan)
+- Date: 2026-08-14 (ink schema added 2026-08-16)
+- Status: Built (nodes, edges, and the ink node)
 
 ## Context
 
@@ -40,8 +40,8 @@ than rendering as an empty box. Verified live by opening a file carrying a forei
 key, a dangling edge and a `wormhole` node, and reading it back intact.
 
 **Two accepted trades, recorded so they aren't rediscovered.** JSONCanvas nodes are
-axis-aligned rectangles with no rotation and no freehand, so the planned ink layer is a
-documented custom node type: a conforming reader will open the file and skip the strokes.
+axis-aligned rectangles with no rotation and no freehand, so the ink layer is a documented
+custom node type: a conforming reader will open the file and skip the strokes.
 And a node's `file` is a real relative path from the canvas to its target, computed with the
 same `relativePath` that backs `@`-mention links, so other readers can follow it — falling
 back to the project-relative id only when no relative path exists (a target on another
@@ -59,6 +59,58 @@ vocabularies per file (unenforceable, and it forbids the annotation that makes a
 looking at); and letting a geometry write and a text edit follow different persistence rules,
 since serialization is whole-document — a geometry write must serialize the in-flight text or
 write stale text, and the only way out would be moving layout back out of the `.canvas` file.
+
+## The ink extension (2026-08-16)
+
+The documented custom node type the decision above reserved. An ink node is a normal node —
+it has `id`, `x`, `y`, `width`, `height`, and participates in selection, movement, deletion
+and edges like any other — whose `type` is `"ink"` and which carries a `strokes` array:
+
+```json
+{
+  "id": "…",
+  "type": "ink",
+  "x": 0,
+  "y": 0,
+  "width": 120,
+  "height": 80,
+  "strokes": [
+    {
+      "points": [
+        [20, 20, 0.5],
+        [60, 30.25, 0.62]
+      ],
+      "width": 2
+    },
+    {
+      "points": [
+        [30, 60, 0.8],
+        [80, 20, 0.3]
+      ],
+      "width": 5,
+      "color": "4"
+    }
+  ]
+}
+```
+
+- **`points`** — `[x, y, pressure]` triples, **relative to the node's own origin**, so moving
+  the node never rewrites them. Pressure is 0..1; `0.5` means "no pen data" (what a mouse
+  reports) and renders the nominal width. Written with two decimals — node geometry is whole
+  pixels, but a stroke's shape lives in the fractions.
+- **`width`** — nominal line width in canvas units; pressure modulates around it (0.4×..2×).
+- **`color`** — optional, the same rule as node color: a preset `"1"`..`"6"` or a hex value.
+  Absent means the reading app's default ink.
+
+The node's rectangle is the strokes' padded bounding box, maintained by the writer; resizing
+the node scales the points with it (the nominal width stays). Erasing removes whole strokes —
+strokes are data, and the file never carries erase-ops or baked bitmaps, which is what keeps
+it pure vector and readable. One normalization is accepted: fields inside a stroke object
+beyond the three above are not round-tripped (strokes are rewritten on save), unlike unknown
+fields on the node itself, which ride through like any other node's.
+
+A conforming JSONCanvas reader that doesn't know the extension opens the file and shows an
+empty rectangle where the drawing is — degraded, never broken.
 
 ## Links
 
