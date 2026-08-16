@@ -2136,10 +2136,16 @@ body,
   position: relative;
   overflow: hidden;
   outline: none;
-  cursor: grab;
   user-select: none;
   touch-action: none;
   background-image: radial-gradient(rgba(0, 0, 0, 0.09) 1px, transparent 1px);
+}
+
+/* Left-drag on empty canvas draws a selection rectangle; panning is the middle
+   button, the wheel, or a held Space — which says so with the cursor. */
+.board-pan,
+.board-pan .board-node {
+  cursor: grab;
 }
 
 .board-surface {
@@ -2207,11 +2213,127 @@ body,
   mask-image: linear-gradient(to bottom, #000 calc(100% - 1rem), transparent);
 }
 
-/* Text nodes other tools may have put in the file — shown, not editable yet. */
+/* A static text block: rendered markdown, clipped and faded at the cut like a
+   note card's excerpt. The focused block swaps this for a real editor. */
 .board-node-text {
+  flex: 1;
+  min-height: 0;
   font-size: 0.8rem;
-  white-space: pre-wrap;
+  line-height: 1.45;
+  word-break: break-word;
   overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 0.75rem), transparent);
+}
+
+.board-node-text > :first-child {
+  margin-top: 0;
+}
+
+.board-node-text > :last-child {
+  margin-bottom: 0;
+}
+
+.board-node-text p,
+.board-node-text ul,
+.board-node-text ol,
+.board-node-text blockquote {
+  margin: 0.25rem 0;
+}
+
+.board-node-text ul,
+.board-node-text ol {
+  padding-left: 1.1rem;
+}
+
+.board-node-text h1,
+.board-node-text h2,
+.board-node-text h3,
+.board-node-text h4 {
+  font-size: 0.95rem;
+  margin: 0.2rem 0;
+}
+
+.board-node-text img {
+  max-width: 100%;
+}
+
+.board-node-text pre {
+  overflow-x: auto;
+}
+
+/* The one live editor, mounted in the focused block only. */
+.board-node.editing {
+  border-color: var(--tint-amber);
+  box-shadow: 0 0 0 1px var(--tint-amber);
+  padding-top: 0.85rem;
+}
+
+.board-block-editor {
+  user-select: text;
+  cursor: text;
+}
+
+.board-block-editor .cm-scroller {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 0;
+}
+
+/* Drag strip along the top of a block being edited: inside the text the
+   pointer belongs to the editor, so the node needs its own grab area. */
+.board-node-grip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0.75rem;
+  cursor: grab;
+  background: var(--tint-amber);
+  opacity: 0.25;
+}
+
+.board-node-grip:hover {
+  opacity: 0.45;
+}
+
+/* Group nodes: a labelled backdrop, painted behind everything else. */
+.board-node-group {
+  background: rgba(0, 0, 0, 0.03);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.board-group-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #6f6f6f;
+}
+
+/* Link nodes: the URL, never an embed — loading the page would be a request
+   the user never made. */
+.board-link-body {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+/* Image nodes are file nodes whose target is a picture: the picture is the
+   whole card, and the node keeps the pointer so a drag still works. */
+.board-node.image {
+  padding: 0;
+}
+
+.board-node-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* A node carrying a spec color ("1".."6", or a hex value): shown, not authored. */
+.board-node.accent {
+  border-left: 3px solid var(--node-accent);
 }
 
 .board-resize {
@@ -2224,6 +2346,104 @@ body,
   border-right: 2px solid var(--tint-amber);
   border-bottom: 2px solid var(--tint-amber);
   border-radius: 0 0 7px 0;
+}
+
+/* Connections. The layer rides the camera with the nodes, draws outside its own
+   1×1 box, and lets every press through except the ones on a line. */
+.board-edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.board-edge-line {
+  fill: none;
+  stroke: var(--node-accent, rgba(0, 0, 0, 0.38));
+  stroke-width: 2;
+}
+
+/* A fat invisible twin: a 2px curve is far too thin to click. */
+.board-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.board-edge.selected .board-edge-line {
+  stroke: var(--tint-amber);
+  stroke-width: 3;
+}
+
+.board-edge-label {
+  font-size: 11px;
+  fill: #6f6f6f;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: #ffffff;
+  stroke-width: 3;
+}
+
+.board-edge-preview {
+  fill: none;
+  stroke: var(--tint-amber);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+/* Connection handles on the selected node, inset because the card clips. */
+.board-anchor {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tint-amber);
+  opacity: 0.55;
+  cursor: crosshair;
+}
+
+.board-anchor:hover {
+  opacity: 1;
+  transform: scale(1.25);
+}
+
+.board-anchor-top {
+  top: 1px;
+  left: 50%;
+  margin-left: -4.5px;
+}
+
+.board-anchor-bottom {
+  bottom: 1px;
+  left: 50%;
+  margin-left: -4.5px;
+}
+
+.board-anchor-left {
+  left: 1px;
+  top: 50%;
+  margin-top: -4.5px;
+}
+
+.board-anchor-right {
+  right: 1px;
+  top: 50%;
+  margin-top: -4.5px;
+}
+
+/* The selection rectangle, drawn in screen space so its outline stays 1px at
+   every zoom level. */
+.board-marquee {
+  position: absolute;
+  border: 1px solid var(--tint-amber);
+  background: rgba(216, 160, 74, 0.12);
+  pointer-events: none;
 }
 
 .board-hint {
@@ -2419,6 +2639,23 @@ body,
 
   .board-node-body {
     color: #a8a8a8;
+  }
+
+  .board-node-group {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .board-group-label {
+    color: #a8a8a8;
+  }
+
+  .board-edge-line {
+    stroke: var(--node-accent, rgba(255, 255, 255, 0.42));
+  }
+
+  .board-edge-label {
+    fill: #c8c8c8;
+    stroke: #2f2f2f;
   }
 
   .board-btn,

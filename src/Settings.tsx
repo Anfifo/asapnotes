@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { creatableTypes } from "./noteTypes";
 import type { Theme } from "./theme";
 import {
   APP_ACTIONS,
@@ -155,6 +156,13 @@ interface SettingsProps {
   /** The global summon hotkey, and the rebind that re-registers it live. */
   summonHotkey: string;
   onChangeSummonHotkey: (chord: string) => void;
+  /** Registry type id "New note" creates; null means markdown. */
+  defaultNoteType: string | null;
+  onDefaultNoteTypeChange: (id: string | null) => void;
+  /** A canvas the window opens on at launch — set from the canvas itself, so
+   * this row only shows and clears it. */
+  openAtLaunch: string | null;
+  onClearOpenAtLaunch: () => void;
   /** Where to land on open — "shortcuts" scrolls to that table. */
   section: "top" | "shortcuts";
   onClose: () => void;
@@ -175,6 +183,10 @@ export function Settings({
   onSetKeybind,
   summonHotkey,
   onChangeSummonHotkey,
+  defaultNoteType,
+  onDefaultNoteTypeChange,
+  openAtLaunch,
+  onClearOpenAtLaunch,
   section,
   onClose,
 }: SettingsProps) {
@@ -243,6 +255,48 @@ export function Settings({
                 </div>
               </td>
             </tr>
+          </tbody>
+        </table>
+        <h2>Notes</h2>
+        <table>
+          <tbody>
+            <tr>
+              <td>New note format</td>
+              <td>
+                <div className="segmented" role="group" aria-label="New note format">
+                  {creatableTypes().map((t) => (
+                    <button
+                      key={t.id}
+                      className={t.id === (defaultNoteType ?? "markdown") ? "active" : undefined}
+                      aria-pressed={t.id === (defaultNoteType ?? "markdown")}
+                      onClick={() => onDefaultNoteTypeChange(t.id === "markdown" ? null : t.id)}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="settings-note">
+                  What “New note” creates. A note captured from the summon hotkey is always markdown
+                  — capture means start typing.
+                </p>
+              </td>
+            </tr>
+            {openAtLaunch !== null && (
+              <tr>
+                <td>Opens at launch</td>
+                <td className="settings-path">
+                  {openAtLaunch}{" "}
+                  <button
+                    className="settings-edit"
+                    aria-label="Stop opening this canvas at launch"
+                    data-tip="Go back to reopening the last tab"
+                    onClick={() => onClearOpenAtLaunch()}
+                  >
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
         <h2>Storage</h2>

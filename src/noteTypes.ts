@@ -70,6 +70,15 @@ export const featuresOf = (path: string): Feature[] => {
   return FEATURES.filter((f) => declared.includes(f));
 };
 
+/** What the app offers for markdown, whichever type claims that view. A text
+ * block on a canvas is markdown wherever it sits, so it takes these rather than
+ * the canvas type's own features — those describe the canvas file to the
+ * chrome (a Format toolbar over a board would have nothing to talk to). */
+export const markdownFeatures = (): Feature[] => {
+  const declared = registry.find((t) => t.view === "markdown")?.features ?? [];
+  return FEATURES.filter((f) => declared.includes(f));
+};
+
 /** Editing surface for a path. */
 export const viewOf = (path: string): ViewId => {
   const view = noteTypeOf(path)?.view;
@@ -90,3 +99,18 @@ export function colorOf(path: string): string | null {
 
 /** Glyph id for a path's type, null when it declares none. */
 export const iconOf = (path: string): string | null => noteTypeOf(path)?.icon ?? null;
+
+/** Extension a new note of this type takes: the first one it claims. Null when
+ * no type carries that id — a stale `defaultNoteType` in settings.json. */
+export const extOfType = (id: string): string | null =>
+  registry.find((t) => t.id === id)?.extensions[0] ?? null;
+
+/** Extension of whichever type owns a view — how the app names a new canvas
+ * without hardcoding `.canvas` next to a registry that already says so. */
+export const extOfView = (view: ViewId): string | null =>
+  registry.find((t) => t.view === view)?.extensions[0] ?? null;
+
+/** Types a "new note of this format" choice can offer: the ones with a view
+ * that authors content, listed so the walks show what gets created. */
+export const creatableTypes = (): NoteType[] =>
+  registry.filter((t) => t.listed !== false && (t.view === "markdown" || t.view === "canvas"));

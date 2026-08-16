@@ -72,6 +72,11 @@ interface EditorProps {
   onStatus?: (status: EditorStatus | null) => void;
   /** Hide instead of unmounting (preview mode) so undo history survives. */
   hidden?: boolean;
+  /** Container class, when this isn't the full-height note editor — the canvas
+   * mounts one of these inside a text node, which sizes itself. */
+  className?: string;
+  /** Empty-document prompt; the default speaks for a whole note. */
+  placeholder?: string;
   /** Editing surface from the open note's type: the markdown view brings the
    * parser, anything else is a bare text editor. */
   view: ViewId;
@@ -292,6 +297,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     onOpenLink,
     onStatus,
     hidden,
+    className,
+    placeholder: placeholderText,
     view: noteView,
     features,
   },
@@ -321,6 +328,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   noteViewRef.current = noteView;
   const featuresRef = useRef(features);
   featuresRef.current = features;
+  const placeholderRef = useRef(placeholderText);
+  placeholderRef.current = placeholderText;
   const has = (feature: Feature) => featuresRef.current.includes(feature);
 
   useImperativeHandle(
@@ -394,7 +403,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             : []),
           linkify((target) => onOpenLinkRef.current(target)),
           EditorView.lineWrapping,
-          placeholder("Capture a thought…"),
+          placeholder(placeholderRef.current ?? "Capture a thought…"),
           Prec.high(
             keymap.of([
               ...(has("format")
@@ -473,7 +482,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   return (
     <div
       ref={containerRef}
-      className={noteView === "markdown" ? "editor" : "editor editor-plain"}
+      className={className ?? (noteView === "markdown" ? "editor" : "editor editor-plain")}
       hidden={hidden}
     />
   );

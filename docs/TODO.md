@@ -14,6 +14,183 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Today (2026-08-14)
 
+- [ ] **Freeform canvas (canvas step 2) — design picked, building** (2026-08-14) —
+      the second slice of the canvas item under 2026-08-10: nodes become arbitrary
+      content on the same engine. Five open questions went up as options and **all
+      recommendations were picked 2026-08-14**. What the code turned up first, because
+      it reshaped three of the five: **(a)** JSONCanvas has no image node — an image is
+      a `file` node pointing at an asset, so the freeform vocabulary _is_ the board's;
+      **(b)** `edges` are already preserved verbatim in `doc.raw` but never drawn, so a
+      canvas from another tool silently hides its arrows today; **(c)** `.canvas` files
+      get no snapshots (`history.rs::tracked` requires the markdown view), so neither
+      save policy has a version net behind it; **(d)** `draftName`'s `untitled-\d+\.md`
+      regex and `deriveName`'s hardcoded `.md` + first-line naming make an untitled
+      canvas a _named_ draft that would save under a name derived from `{`; **(e)** the
+      shipped `canvas` registry type has **no** features, so `images` is a fifth
+      migration hop with a new frozen snapshot.
+
+  _Picks:_
+
+  1. **Canvases autosave, and the policy is per view, declared in the provider table** —
+     code, not the registry, because the registry is user data and must not be able to
+     make notes autosave. Debounced after the last commit, plus a flush on blur / tab
+     switch / window hide / close; Ctrl+S stays as an immediate flush. Shadow drafts are
+     skipped for autosaving views so dirty state keeps one source of truth. The
+     external-change guard must not pop its modal on an autosave path: an mtime mismatch
+     **stops autosaving**, toasts once, and requires an explicit Ctrl+S (which pops the
+     existing prompt). Lazy creation gets sharper rather than weaker — pan/zoom/fit don't
+     commit, so looking at a board still writes nothing and the file appears on the first
+     placement. The decisive argument: pasting an image already writes its asset
+     immediately, so an unsaved canvas leaves an orphan asset with no node referencing
+     it — half the surface autosaved already. _Rejected:_ geometry autosaves but text
+     doesn't — serialization is whole-document, so a geometry write must serialize
+     in-flight text or write stale text; it only works if layout leaves the `.canvas`
+     file, which contradicts the format decision.
+  2. **One format, one code path; only the chrome defaults differ.** A project's
+     `board.canvas` leads with "Add note" and the project picker, any other `.canvas`
+     leads with "Add text / Add image", and **no node kind is ever refused** — a board
+     can hold a sticky note, a canvas can hold note cards (which is how a canvas becomes
+     a hub, and the direct answer to the bare board reading as thin). Enforced separation
+     was rejected on a fact, not a preference: foreign files mix and we must render them
+     anyway, so enforcement would be a lie at the edges. Knock-on: `resolveBoardTarget`
+     grows a third answer — "not a note, but a real file" — for assets, resolved through
+     `convertFileSrc`. Two sub-picks: `link` nodes render as a chip with the URL and
+     click opens externally, **never** an iframe or fetched preview, which the
+     no-unrequested-network invariant forbids; `group` nodes render (backdrop + label)
+     with authoring deferred.
+  3. **Text nodes reuse `Editor`** with `docKey` = node id — mentions, live preview,
+     linkify, format keys and paste-image come free, and mount-per-focus is one rebuild
+     per focus change, which the existing `docKey` effect already does. A slim second
+     CodeMirror under `src/canvas/` was rejected: no bundle saving (CodeMirror is already
+     in the main chunk) against a second editor configuration to keep in sync. Single
+     click selects, **double-click or Enter** edits, **Esc or click-away** blurs (an
+     editing block owns Esc, the way the picker already does); the drag affordance moves
+     to the node's header strip so a pointerdown inside the editor never starts a drag;
+     text clips rather than inner-scrolls, and growing the node is the answer.
+     **Undo splits at focus:** CodeMirror owns Ctrl+Z while a block is focused (the
+     `closest("input")` guard grows to skip `.cm-editor`), and the whole editing session
+     lands as **one** entry on the canvas journal at blur — so you cannot Ctrl+Z into the
+     middle of a finished text edit, which is both the predictable answer and the cheap
+     one. Ctrl+Z past the start of a block's own history **falls through** to the canvas
+     journal, which CodeMirror's `undo` returning false gives us for free. **The
+     interaction that bites if missed:** with autosave a write can land mid-typing, so
+     serialization reads the _live_ editor's text through a ref (emit on every change,
+     journal entry only at blur) — otherwise an autosave writes stale text over what is
+     on screen.
+  4. **Multi-select and marquee now**, because the `Set` selection change threads through
+     drag, resize, delete, z-order and undo, and only gets worse to retrofit once edges
+     and ink add more selectable things. Left-drag is the marquee; pan moves to
+     middle-drag, Space+drag, and the wheel (already the primary pan). Resize stays
+     single-node. If the pan feel turns out to matter more than expected hands-on, the
+     same code behind Shift+drag is the fallback.
+  5. **Edges: rendered always, authored geometry-only.** Rendering lands regardless of
+     the authoring decision, because we already carry the data and hide it. Authoring
+     picks the nearest sides and writes them; labels and colors are preserved but not
+     authored (foreign values ride through, the same rule unmodeled node fields follow).
+     Sequenced **after** multi-select so the selection model absorbs "an edge is
+     selectable" once instead of twice.
+
+  _Riders landing with this slice_ — the three "canvas as the default open" readings
+  sequenced here by the kicked-off item below:
+
+  - **`.canvas` creatable** — "New canvas" as a real verb (File menu, palette, explorer
+    context menu); `draftName` generalized past `.md`; an untitled canvas names itself
+    from a per-type default base (`canvas`, `canvas 2`, …) through the provider table
+    instead of `deriveName`'s first-line derivation.
+  - **New notes default to `.canvas`** — `defaultNoteType` in settings.json. The subtlety
+    that _is_ the feature: `newNote()` serves the deliberate verbs, the summon/welcome
+    path, and the startup fallback, and capture must stay `.md` — so it splits into
+    `newCapture()` (always `.md`) and `newNote(type)`. "New canvas" ships as an explicit
+    verb regardless, so the setting is a convenience rather than the only route.
+  - **A chosen canvas opens on summon** — read as "the window opens on this canvas", not
+    "every summon switches tabs", which fights capture-now and the tab model. Built so
+    nothing loads before the first paint: the tab paints active with a placeholder and the
+    module import fires after the first animation frame, which keeps idle rule (3)'s
+    intent (a restored canvas tab loads on activation, not at startup) rather than
+    relaxing it. Verify with the existing summon→paint log, not by argument.
+
+  _Build order:_ node vocabulary + static blocks → focused-block editor → autosave →
+  images (paste + drop-at-point; the drop payload carries a position, so a dropped image
+  lands under the cursor) → multi-select/marquee → edges → riders.
+
+  **Implemented 2026-08-14, all gates + tests clean (35), verified live over the webview
+  devtools protocol.** What shipped:
+
+  - **Format layer** (`jsoncanvas.ts`): `edges` modeled first-class (endpoints, sides, ends,
+    color, label) instead of riding in `raw`, plus node `url` / `label` / `color`. Unknown
+    node types, unknown keys and unknown top-level keys still round-trip untouched; an edge
+    missing an endpoint is kept but not drawn.
+  - **Surface** (`BoardView.tsx`): all four spec node types render — file cards (with the
+    note excerpt), images (a file node whose target is a picture, sized from its natural
+    aspect once at creation), link chips, and group backdrops painted behind everything.
+    Text nodes render through the app's one markdown renderer, hoisted out of `Preview.tsx`
+    into `src/markdown.ts` on its second use, cached by the text itself because the surface
+    re-renders every drag frame. Connections draw as beziers between facing sides with
+    arrowheads and labels; dragging a side handle onto another node authors one.
+    Multi-select is a `Set` throughout: left-drag marqueees, middle-drag / Space+drag /
+    wheel pan, group move, Ctrl+A, resize stays single-node.
+  - **One live editor, N static blocks**: the focused text node mounts the real `Editor`
+    (`docKey` = node id) with `className="editor board-block-editor"` so every live-preview
+    rule scoped to `.editor` applies. Undo splits at focus — the `e.defaultPrevented` guard
+    lets CodeMirror keep Ctrl+Z while a block is focused, and its `undo` returning false on
+    an empty history is what makes Ctrl+Z fall through to the canvas journal for free. One
+    journal entry per editing session, at blur. Serialization folds in the live editor text
+    on every keystroke, so an autosave mid-typing can't write stale text.
+  - **Autosave** per view policy in the new `src/views.ts` (`persist`, `nameBase`): debounced
+    real-file writes plus a flush on hide/switch/close, drafts skipped, and the close path
+    short-circuited so the Save/Discard prompt can't fire for a canvas. An mtime conflict
+    stands autosave down, toasts once, and writes a draft until an explicit Ctrl+S resolves
+    it through the existing prompt. A silent save skips the corpus re-list unless the file
+    wasn't listed yet.
+  - **Images**: the canvas type gains `images` (fifth migration hop, `v4_note_types` frozen
+    as v3 + the featureless canvas entry), paste onto the surface, drop-at-point (the drop
+    position is physical pixels → window scale factor → webview zoom, with a
+    not-on-the-surface fallback to the middle), and an "+ Image" file picker.
+  - **Riders**: `newNote` split from `newCapture` (summon and the startup fallback stay
+    markdown whatever the setting says) plus `newCanvas`; "New canvas" in the File menu, the
+    palette, the welcome panel and both explorer context menus; `draftName`'s regex
+    generalized past `.md`; `deriveName` bypassed for a view whose text can't name itself,
+    via `uniqueName` hoisted out of it; `defaultNoteType` and `openAtLaunch` in
+    settings.json with validating setters (`set_open_at_launch` refuses a non-canvas), a
+    Settings → Notes section, and the launch canvas set from a palette command on the canvas
+    itself. The launch handover fires on the animation frame _after_ the restore path
+    paints, so no chunk fetch or parse ever precedes a frame.
+
+  **Verified live** (second instance over the devtools protocol, scratch canvas carrying every
+  node kind, two edges plus a dangling one, a foreign top-level key and a `wormhole` node;
+  full cleanup after): the registry migrated on the real settings.json; all six nodes rendered
+  with the right badges, accent and rendered markdown (`<h1>`, `<strong>`, `<ul>`); 2 of 3
+  edges drawn with the label, the dangling one skipped; the file read back with the foreign
+  key, all three edges and the unknown node type intact; the launch canvas opened the window
+  and a non-canvas was refused; a node drag wrote the file with no Ctrl+S and Ctrl+Z put it
+  back; a marquee took all six and a click collapsed to one; an anchor drag wrote a fourth
+  edge; the block editor mounted on double-click, typing autosaved into the file mid-edit,
+  Escape left the block without hiding the window, and one Ctrl+Z undid the whole session.
+
+  **Two real bugs the live check caught:** the excerpt loader's liveness ref was cleared on
+  unmount and never re-armed, so a mount/unmount/mount cycle (which dev's double-invoke
+  guarantees) discarded every excerpt — the card text feature from slice 1 was silently dead
+  in dev; and a click inside a multi-selection kept all of it selected, because the press has
+  to preserve the group for a drag — releasing without moving now collapses to the one node
+  pressed.
+
+  _Pending hands-on:_ drag/marquee/pan feel with a real pointer (the gesture split is the
+  part a devtools check can't judge), both themes for edges, groups, link chips and the block
+  editor, the cursor landing at position 0 when a block opens (consistent with how notes
+  open, but "at the end" may read better for appending), edge hit-target size at low zoom,
+  the Settings → Notes section with a long launch-canvas path, and whether autosave ever
+  feels _too_ eager.
+
+  _Left deliberately:_ authoring colors and edge labels (rendered and preserved, not
+  created); group membership — dragging a group doesn't carry the nodes inside it, since spec
+  membership is geometric and "what moves with a group" is its own design question; group
+  resize (scale or stretch is undecided, so resize stays single-node); and ink, which is
+  step 3.
+
+  **Both `decisions/` entries promoted 2026-08-14:**
+  [canvas is a native view](decisions/2026-08-14-canvas-is-a-native-view.md) and
+  [canvas files are JSONCanvas](decisions/2026-08-14-canvas-files-are-jsoncanvas.md).
+
 - [ ] **Settings/About split + editable keybinds** (2026-08-14) — requested: About
       stops being Settings' first section and becomes its own overlay (Version /
       Auto-update / Made by / Support, opened by Settings → About asapnotes and a
@@ -132,6 +309,13 @@ The AI (or anyone) working on this repo keeps this file current while working:
       canvas serializes back to the empty text it opened from; and the
       vanished-file safety net no longer fires for files that never existed
       (the focus-bounce dirty edge above, now an mtime-reference check).
+      **Verified live 2026-08-15** over the devtools protocol against a scratch
+      notes-root project: excerpts render on placed cards, a never-saved board
+      stays clean through a focus bounce and writes no draft, a note typed into
+      and undone back to its file content closes with no prompt and its draft
+      dropped, and — the check that matters, since this fix's failure mode is
+      silently discarding work — a note with real unsaved edits still stops the
+      close. Re-run that last one if the close path is touched.
 - [ ] **Draw on images from a markdown note** (2026-08-14) — requested: double-click
       (or right-click) an image in an `.md` note pops the image up so it can be
       drawn on, like the canvas ink option — an image-annotation surface reusing
@@ -1105,11 +1289,17 @@ not registered (0x80070002)``) and errors _before_ the draft/history
   are still open, and the picked "default open" behaviors (new-note default,
   summon canvas) ride on step 2.
 
-  _Promote to `decisions/` when this work starts landing_ — at least two entries are
-  earned here: **"canvas is a native view, not a plugin"** (the seam, and why the
-  plugin API is deferred) and **"canvas files are JSONCanvas plus an ink extension"**
-  (which softens the plain-text-files-are-the-store line the same way the plain-text
-  formats item does, and should link to it).
+  **2026-08-14: step 2 (freeform canvas) is implemented** — see the "Freeform canvas
+  (canvas step 2)" item under 2026-08-14 for the picks, what shipped and what is pending
+  hands-on. Only **step 3 (ink)** is left of this item, plus the image-annotation surface
+  below that builds on the same layer.
+
+  _Promoted to `decisions/` 2026-08-14_, both entries this item called for:
+  [canvas is a native view, not a plugin](decisions/2026-08-14-canvas-is-a-native-view.md)
+  (the seam, and why the plugin API is deferred) and
+  [canvas files are JSONCanvas plus an ink extension](decisions/2026-08-14-canvas-files-are-jsoncanvas.md)
+  (which softens the plain-text-files-are-the-store line the same way the plain-text formats
+  item does, and links to it).
 
 - [ ] **Dev environment for a public repo — questions written, F5 shipped** (2026-08-10) —
       triggered by "why doesn't F5 work?": it did nothing because no launch config existed.

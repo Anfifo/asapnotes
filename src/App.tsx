@@ -17,7 +17,18 @@ import { NewProject } from "./NewProject";
 import { fileOf, projectOf, relativePath, resolvePath, validFileName, winPath } from "./paths";
 import { AppActionId, bindingTable, chordFor, chordOfEvent, DEFAULT_SUMMON } from "./keybinds";
 import { About } from "./About";
-import { featuresOf, hasFeature, isNoteFile, noteTypeOf, setNoteTypes, viewOf } from "./noteTypes";
+import type { CanvasHandle, NodeTarget } from "./canvas/BoardView";
+import {
+  extOfType,
+  extOfView,
+  featuresOf,
+  hasFeature,
+  isNoteFile,
+  markdownFeatures,
+  noteTypeOf,
+  setNoteTypes,
+  viewOf,
+} from "./noteTypes";
 import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
 import { ScanProjects } from "./ScanProjects";
@@ -29,6 +40,7 @@ import { ToastStack } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { WelcomePanel, type WelcomeRecent } from "./WelcomePanel";
 import { errText, useToasts } from "./toasts";
+import { policyOf } from "./views";
 import * as api from "./notes";
 import "./App.css";
 
@@ -188,10 +200,25 @@ interface CommandEntry extends PaletteItem {
 
 type Entry = NoteEntry | CommandEntry;
 
-/** The name a draft id carries: null only for app-generated `untitled-<ts>` ids.
- * A named draft keeps its name even when the backing file is gone (deleted
- * externally) — the titlebar stays honest and Ctrl+S recreates the file. */
-const draftName = (id: string) => (/^untitled-\d+\.md$/.test(fileOf(id)) ? null : id);
+/** The name a draft id carries: null only for app-generated `untitled-<ts>` ids,
+ * whatever extension the new note was created with. A named draft keeps its name
+ * even when the backing file is gone (deleted externally) — the titlebar stays
+ * honest and Ctrl+S recreates the file. */
+const draftName = (id: string) => (/^untitled-\d+\.[a-z0-9]+$/i.test(fileOf(id)) ? null : id);
+
+/** Extension of a note id, without the dot; markdown when it carries none. */
+const extOf = (id: string) => {
+  const file = fileOf(id);
+  const dot = file.lastIndexOf(".");
+  return dot > 0 ? file.slice(dot + 1) : "md";
+};
+
+/** `<base>.<ext>`, numbered until the name is free. */
+function uniqueName(base: string, ext: string, taken: Set<string>): string {
+  let name = `${base}.${ext}`;
+  for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}.${ext}`;
+  return name;
+}
 
 /** File name for an untitled note, derived from its first non-empty line. */
 function deriveName(doc: string, prefix: string, taken: Set<string>): string {
@@ -203,9 +230,7 @@ function deriveName(doc: string, prefix: string, taken: Set<string>): string {
     .slice(0, 60)
     .trim();
   const base = cleaned.length > 0 ? cleaned : "untitled";
-  let name = `${prefix}${base}.md`;
-  for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${prefix}${base} ${n}.md`;
-  return name;
+  return uniqueName(`${prefix}${base}`, "md", taken);
 }
 
 function App() {
@@ -311,9 +336,9 @@ function App() {
   // gets an inline input row in the tree, Enter creates the file — or, with
   // kind "folder", a real directory.
   const [explorerCreate, setExplorerCreate] = useState<string | null>(null);
-  const [explorerCreateKind, setExplorerCreateKind] = useState<"note" | "folder" | "virtual">(
-    "note",
-  );
+  const [explorerCreateKind, setExplorerCreateKind] = useState<
+    "note" | "canvas" | "folder" | "virtual"
+  >("note");
   // Folders created this session that hold no note yet: the explorer tree
   // derives from note files, so these are remembered to stay visible.
   const [newFolders, setNewFolders] = useState<string[]>([]);
@@ -330,6 +355,13 @@ function App() {
     bindingsRef.current = bindingTable(keybinds);
   }, [keybinds]);
   const [summonHotkey, setSummonHotkeyState] = useState(DEFAULT_SUMMON);
+  // Which format "New note" creates, and the canvas (if any) the window opens
+  // on at launch. Both null until settings load, which is markdown and
+  // last-active-tab — the shipped behavior.
+  const [defaultNoteType, setDefaultNoteTypeState] = useState<string | null>(null);
+  const [openAtLaunch, setOpenAtLaunchState] = useState<string | null>(null);
+  const defaultExtRef = useRef("md");
+  defaultExtRef.current = (defaultNoteType && extOfType(defaultNoteType)) || "md";
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [summonMs, setSummonMs] = useState<number | null>(null);
@@ -356,6 +388,9 @@ function App() {
   const [welcome, setWelcome] = useState(false);
 
   const editorRef = useRef<EditorHandle>(null);
+  // The canvas surface, for the one thing it can't listen for itself: files
+  // dropped on the window arrive as paths at the app level.
+  const canvasRef = useRef<CanvasHandle>(null);
   const contentRef = useRef("");
   const openRef = useRef<OpenNote | null>(null);
   openRef.current = open;
@@ -380,6 +415,12 @@ function App() {
   rootPathRef.current = rootPath;
   const noteDirRef = useRef("");
   const autosaveTimer = useRef<number | null>(null);
+  /** Autosave stood down for the open note: its file changed on disk behind
+   * us, and resolving that needs the user. Cleared when a doc opens. */
+  const autosaveOffRef = useRef(false);
+  /** `save` in its silent form — held in a ref because the change handler is
+   * defined before it and must not depend on its identity. */
+  const autoSaveRef = useRef<() => Promise<void>>(async () => {});
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   const dirtyRef = useRef(dirty);
@@ -512,14 +553,29 @@ function App() {
     return false;
   };
 
-  /** Write a pending (debounced) draft immediately — called before switching away. */
+  /** Does the open buffer write its own file, rather than waiting for Ctrl+S?
+   * A view whose policy says so (canvas), once it has a file to write — an
+   * unnamed note keeps the draft path, because autosave keeps a file in sync
+   * and never invents one the user hasn't named. Suspended by an external
+   * change, so a conflict can't be resolved silently. */
+  const autoPersists = () => {
+    const cur = openRef.current;
+    if (!cur || cur.name === null || isDiffTab(cur.id)) return false;
+    return policyOf(viewOf(cur.id)).persist === "auto" && !autosaveOffRef.current;
+  };
+
+  /** Write a pending (debounced) change immediately — called before switching
+   * away, hiding, or closing, so nothing is left sitting in a timer. */
   const flushDraft = useCallback(async () => {
     if (!cancelAutosave()) return;
     const cur = openRef.current;
-    if (cur) {
-      await api.writeDraft(cur.id, contentRef.current);
-      upsertDraft(cur.id);
+    if (!cur) return;
+    if (autoPersists()) {
+      await autoSaveRef.current();
+      return;
     }
+    await api.writeDraft(cur.id, contentRef.current);
+    upsertDraft(cur.id);
   }, []);
 
   const hideWindow = useCallback(() => {
@@ -534,10 +590,13 @@ function App() {
     autosaveTimer.current = window.setTimeout(() => {
       autosaveTimer.current = null;
       const cur = openRef.current;
-      if (cur) {
-        void api.writeDraft(cur.id, doc);
-        upsertDraft(cur.id);
+      if (!cur) return;
+      if (autoPersists()) {
+        void autoSaveRef.current();
+        return;
       }
+      void api.writeDraft(cur.id, doc);
+      upsertDraft(cur.id);
     }, AUTOSAVE_MS);
   }, []);
 
@@ -547,6 +606,9 @@ function App() {
       // Dirty on arrival means the content came from a draft, not the file —
       // no baseline to compare a close against.
       baselineRef.current = isDirty ? null : content;
+      // A stand-down belongs to the doc that hit the conflict, not to the tab
+      // that opens next.
+      autosaveOffRef.current = false;
       setOpen(note);
       setWelcome(false);
       setTabs((ts) =>
@@ -570,13 +632,33 @@ function App() {
     setTabs((ts) => ts.map((t) => (t.id === oldId ? note : t)));
   }, []);
 
-  const newNote = useCallback(
-    async (project?: string | null) => {
+  /** Open a fresh untitled note of some extension. */
+  const newDoc = useCallback(
+    async (project: string | null | undefined, ext: string) => {
       await flushDraft();
       const prefix = project ? `${project}/` : "";
-      showDoc({ id: `${prefix}untitled-${Date.now()}.md`, name: null }, "", false);
+      showDoc({ id: `${prefix}untitled-${Date.now()}.${ext}`, name: null }, "", false);
     },
     [flushDraft, showDoc],
+  );
+
+  /** Capture: the blank note a summon, a startup with nothing to restore, or a
+   * closed last tab lands in. Always markdown — capture means "type now", and
+   * that is not a thing a canvas does, whatever the default-format setting
+   * says. The deliberate verbs go through `newNote`. */
+  const newCapture = useCallback((project?: string | null) => newDoc(project, "md"), [newDoc]);
+
+  /** The "New note" verb: the extension comes from the default note type, so a
+   * user who works in canvases gets one from the File menu, the palette and the
+   * explorer alike. */
+  const newNote = useCallback(
+    (project?: string | null) => newDoc(project, defaultExtRef.current),
+    [newDoc],
+  );
+
+  const newCanvas = useCallback(
+    (project?: string | null) => newDoc(project, extOfView("canvas") ?? "canvas"),
+    [newDoc],
   );
 
   /** Open a note (or draft) into the editor; false when its file could not be
@@ -795,7 +877,7 @@ function App() {
   }, [docKey]);
 
   const save = useCallback(
-    async (asName?: string) => {
+    async (asName?: string, silent = false) => {
       const cur = openRef.current;
       if (!cur || isDiffTab(cur.id)) return null;
       cancelAutosave();
@@ -805,13 +887,31 @@ function App() {
       if (!name) {
         const project = projectOf(cur.id);
         const taken = new Set(notesRef.current.map((n) => n.name.toLowerCase()));
-        name = deriveName(doc, project ? `${project}/` : "", taken);
+        // A document whose text can't name itself (a canvas is JSON) takes its
+        // view's base name instead of a first line reading "{".
+        const base = policyOf(viewOf(cur.id)).nameBase;
+        const prefix = project ? `${project}/` : "";
+        name = base
+          ? uniqueName(`${prefix}${base}`, extOf(cur.id), taken)
+          : deriveName(doc, prefix, taken);
       }
       // External-change guard: the file is shared with other tools by design —
       // if it changed on disk since this buffer loaded, never overwrite silently.
       if (cur.name && openMtimeRef.current !== null) {
         const now = await api.noteMtime(cur.name).catch(() => null);
         if (now !== null && now !== openMtimeRef.current) {
+          // An autosave cannot ask, and must not decide: it stands down, says
+          // so once, and leaves a draft holding the edits until an explicit
+          // Ctrl+S resolves the conflict through the prompt below.
+          if (silent) {
+            autosaveOffRef.current = true;
+            await api.writeDraft(cur.id, doc);
+            upsertDraft(cur.id);
+            toast(
+              `"${fileOf(cur.name)}" changed on disk — this canvas stopped saving itself. Ctrl+S to overwrite.`,
+            );
+            return null;
+          }
           const ok = await confirmDialog(
             `"${fileOf(cur.name)}" changed on disk since you opened it. Overwrite those changes?`,
             { title: "Note changed on disk", kind: "warning" },
@@ -820,20 +920,37 @@ function App() {
         }
       }
       await api.saveNote(name, doc);
+      autosaveOffRef.current = false;
       baselineRef.current = doc;
       mtimeTokenRef.current++; // invalidate any in-flight track
       openMtimeRef.current = (await api.noteMtime(name).catch(() => null)) ?? null;
-      await api.deleteDraft(cur.id);
-      setDrafts((d) => d.filter((x) => x.name !== cur.id));
-      retagOpen(cur.id, { id: name, name });
+      if (draftsRef.current.some((d) => d.name === cur.id)) {
+        await api.deleteDraft(cur.id);
+        setDrafts((d) => d.filter((x) => x.name !== cur.id));
+      }
+      if (cur.id !== name) retagOpen(cur.id, { id: name, name });
       setDirty(false);
-      setNotes(await api.listNotes());
+      // A silent save runs every few seconds; walking the whole corpus each
+      // time would be the cost of a drag. Only a file that wasn't listed yet
+      // changes what the explorer shows.
+      if (!silent || !notesRef.current.some((n) => n.name === name)) {
+        setNotes(await api.listNotes());
+      }
       // The id the note now lives under — callers that close after saving
       // need it, since an untitled tab changed identity on the way.
       return name;
     },
-    [retagOpen],
+    [retagOpen, toast],
   );
+
+  autoSaveRef.current = async () => {
+    await save(undefined, true).catch((err: unknown) => {
+      // Stop retrying every keystroke against a folder that isn't there.
+      autosaveOffRef.current = true;
+      toast(`Couldn't save this canvas — ${errText(err)}`);
+      return null;
+    });
+  };
 
   /** Move the open note (or retarget the open untitled draft) to a project. */
   const changeProject = useCallback(
@@ -938,6 +1055,33 @@ function App() {
     [assetLink, toast],
   );
 
+  /** Copy an image already on disk into the open note's assets folder, and hand
+   * back the path a canvas node should store. */
+  const importImage = useCallback(
+    async (path: string): Promise<string | null> => {
+      try {
+        return assetLink(await api.importAsset(path, openRef.current?.id ?? null));
+      } catch (err) {
+        toast(`Couldn't import that image — ${errText(err)}`);
+        return null;
+      }
+    },
+    [assetLink, toast],
+  );
+
+  /** "Add image" on a canvas: pick files, copy them in, hand back node paths. */
+  const pickImages = useCallback(async (): Promise<string[]> => {
+    const picked = await openFolderDialog({
+      multiple: true,
+      filters: [
+        { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] },
+      ],
+    }).catch(() => null);
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    const imported = await Promise.all(paths.map((p) => importImage(p)));
+    return imported.filter((f): f is string => f !== null);
+  }, [importImage]);
+
   /** Adopt a settings document: the note-type registry, project locations, and
    * appearance — the file is the source of truth, so it wins over the boot
    * mirror the first paint read. */
@@ -991,10 +1135,41 @@ function App() {
       }
       setKeybindsState(settings.keybinds ?? {});
       setSummonHotkeyState(settings.summonHotkey ?? DEFAULT_SUMMON);
+      setDefaultNoteTypeState(settings.defaultNoteType ?? null);
+      setOpenAtLaunchState(settings.openAtLaunch ?? null);
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
     },
     [applyZoom, toast],
+  );
+
+  /** Which canvas the window opens on at launch (null = the last active tab). */
+  const setLaunchCanvas = useCallback(
+    (note: string | null) => {
+      setOpenAtLaunchState(note);
+      void api
+        .setOpenAtLaunch(note)
+        .then(() =>
+          toast(note ? `"${fileOf(note)}" will open at launch` : "Launch opens the last tab again"),
+        )
+        .catch((err: unknown) => {
+          setOpenAtLaunchState(openAtLaunch);
+          toast(`Couldn't save that setting — ${errText(err)}`);
+        });
+    },
+    [openAtLaunch, toast],
+  );
+
+  /** Which format "New note" creates. */
+  const setDefaultNoteType = useCallback(
+    (id: string | null) => {
+      setDefaultNoteTypeState(id);
+      void api.setDefaultNoteType(id).catch((err: unknown) => {
+        setDefaultNoteTypeState(defaultNoteType);
+        toast(`Couldn't save that setting — ${errText(err)}`);
+      });
+    },
+    [defaultNoteType, toast],
   );
 
   /** Override one app shortcut (chord null = back to the defaults). The whole
@@ -1128,6 +1303,18 @@ function App() {
         // Same reasoning for the changes scan: it reads only what changed, but
         // the first paint shouldn't wait for even that.
         refreshChanges();
+        // A chosen launch canvas outranks the restored tab — but only after the
+        // first frame: the canvas module is a dynamic import, and awaiting it
+        // here would put a chunk fetch and a JSON parse in front of the first
+        // paint, which is exactly what the idle-footprint rule forbids. So the
+        // tab paints from the restore path below, and this hands over on the
+        // next frame; nothing is loaded before something is on screen.
+        const launch = cfg.settings.openAtLaunch ?? null;
+        if (launch && ns.some((n) => n.name === launch)) {
+          requestAnimationFrame(() => {
+            void openItem({ id: launch, isNote: true }, new Set(ds.map((d) => d.name)));
+          });
+        }
         // Restored tabs win: reopen the last active one (content loads here, the
         // rest stay lazy). A tab whose note vanished is dropped and we fall back.
         const restored = tabsRef.current;
@@ -1167,6 +1354,9 @@ function App() {
         showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
       }
     })();
+    // Runs once at launch; `openItem` is stable but naming it as a dependency
+    // would re-run the whole startup sequence when its identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDoc, applySettings, applyProjects, refreshChanges, toast]);
 
   // Tabs (and which one is active) survive restarts — diff tabs excepted,
@@ -1195,8 +1385,25 @@ function App() {
       if (event.payload.type !== "drop" || modeRef.current !== "edit") return;
       const cur = openRef.current;
       if (!cur || !hasFeature(cur.id, "images")) return;
-      for (const path of event.payload.paths) {
-        if (!IMAGE_FILE.test(path)) continue;
+      const images = event.payload.paths.filter((p) => IMAGE_FILE.test(p));
+      if (images.length === 0) return;
+      // On a canvas a dropped picture is a node, and it belongs where it was
+      // let go. The position arrives in physical pixels: the window's scale
+      // factor takes it to logical, and the webview zoom to the CSS pixels the
+      // surface measures itself in.
+      if (viewOf(cur.id) === "canvas") {
+        const scale = await getCurrentWindow()
+          .scaleFactor()
+          .catch(() => 1);
+        const divisor = scale * (zoomRef.current || 1);
+        canvasRef.current?.dropImages(
+          images,
+          event.payload.position.x / divisor,
+          event.payload.position.y / divisor,
+        );
+        return;
+      }
+      for (const path of images) {
         try {
           const rel = await api.importAsset(path, cur.id);
           editorRef.current?.insertText(`![](${assetLink(rel)})\n`);
@@ -1354,8 +1561,14 @@ function App() {
         if (undoSeen(key === "y" || e.shiftKey)) e.preventDefault();
       }
     } else if (e.key === "Escape") {
-      if (document.querySelector(".menu-drop") || document.querySelector(".board-picker")) {
-        // An open menubar dropdown, context menu, or board picker owns Esc.
+      if (
+        document.querySelector(".menu-drop") ||
+        document.querySelector(".board-picker") ||
+        document.querySelector(".board-editing")
+      ) {
+        // An open menubar dropdown, context menu, canvas picker, or focused
+        // text block on a canvas owns Esc — Esc there means "leave this", not
+        // "hide the window".
       } else if (renaming) {
         setRenaming(false);
         editorRef.current?.focus();
@@ -1507,7 +1720,7 @@ function App() {
     const unlisten = listen<number>("summoned", (event) => {
       // Summon lands in a ready-to-type note even past the welcome panel —
       // the panel is a parked state, and summoning means "capture, now".
-      if (welcomeRef.current) void newNote();
+      if (welcomeRef.current) void newCapture();
       editorRef.current?.focus();
       requestAnimationFrame(() => {
         const ms = Date.now() - event.payload;
@@ -1518,7 +1731,7 @@ function App() {
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [newNote]);
+  }, [newCapture]);
 
   const draftIds = new Set(drafts.map((d) => d.name));
   const noteNames = new Set(notes.map((n) => n.name));
@@ -1560,20 +1773,33 @@ function App() {
   const noteDir = open && !diffOpen ? noteDirOf(open.id) : rootPath;
   noteDirRef.current = noteDir;
 
-  // Board plumbing: a node's `file` is a path relative to the board's own
+  // Canvas plumbing: a node's `file` is a path relative to the canvas's own
   // folder (the same rule mention links follow), with the bare note id as the
   // recorded fallback for targets a relative path can't reach (other drive).
   const boardDir = canvasOpen ? noteDir : null;
   const boardProject = canvasOpen && open ? projectOf(open.id) : null;
-  const resolveBoardTarget = (
-    file: string,
-  ): { id: string | null; exists: boolean; modifiedMs: number } => {
-    if (!boardDir) return { id: null, exists: false, modifiedMs: 0 };
-    let id = noteIdOf(resolvePath(boardDir, file));
+  /** A project's `board.canvas` leads with note cards; every other canvas
+   * leads with text and images. Same format, same surface — only the order of
+   * the verbs differs, and neither refuses the other's nodes. */
+  const canvasRole = open && fileOf(open.id) === "board.canvas" ? "board" : "canvas";
+  /** What a node's path points at. The spec has no image node — an image is a
+   * file node — so this is also where a card learns what it is showing. */
+  const resolveBoardTarget = (file: string): NodeTarget => {
+    const none: NodeTarget = { kind: "missing", id: null, url: null, modifiedMs: 0 };
+    if (!boardDir) return none;
+    const abs = resolvePath(boardDir, file);
+    // Extension first: an image is never a note, but it does resolve to an id
+    // when it sits under the notes root, which would read as a missing note.
+    if (IMAGE_FILE.test(file))
+      return { kind: "image", id: null, url: convertFileSrc(abs), modifiedMs: 0 };
+    let id = noteIdOf(abs);
     if (!id && noteNames.has(file)) id = file;
+    if (id === null) return { kind: "file", id: null, url: null, modifiedMs: 0 };
+    if (!noteNames.has(id)) return { ...none, id };
     return {
+      kind: "note",
       id,
-      exists: id !== null && noteNames.has(id),
+      url: null,
       // The card excerpt's cache key — a changed note re-reads its excerpt.
       modifiedMs: notes.find((n) => n.name === id)?.modified_ms ?? 0,
     };
@@ -1673,6 +1899,7 @@ function App() {
       detail: kb("new-note"),
       run: () => void newNote(),
     },
+    { kind: "command", id: "cmd:new-canvas", label: "New canvas", run: () => void newCanvas() },
     {
       kind: "command",
       id: "cmd:save",
@@ -1681,6 +1908,21 @@ function App() {
       run: () => void save(),
     },
     { kind: "command", id: "cmd:rename", label: "Rename note", run: startRename },
+    // Setting the launch canvas belongs where you can see the canvas, not in a
+    // Settings picker over every note in the corpus.
+    ...(canvasOpen && open?.name
+      ? [
+          {
+            kind: "command" as const,
+            id: "cmd:open-at-launch",
+            label:
+              openAtLaunch === open.name
+                ? "Stop opening this canvas at launch"
+                : "Open this canvas at launch",
+            run: () => setLaunchCanvas(openAtLaunch === open.name ? null : open.name),
+          },
+        ]
+      : []),
     {
       kind: "command",
       id: "cmd:search",
@@ -1807,6 +2049,7 @@ function App() {
       label: "File",
       items: [
         { label: "New note", detail: kb("new-note"), run: () => void newNote() },
+        { label: "New canvas", run: () => void newCanvas() },
         { label: "Save note", detail: kb("save"), run: () => void save() },
         { label: "Rename note", run: startRename },
         ...(openName ? [{ label: "Delete note", run: () => void deleteNote(openName) }] : []),
@@ -2023,6 +2266,14 @@ function App() {
       return;
     }
     if (openRef.current?.id === id) {
+      if (autoPersists()) {
+        // For an autosaving view the file *is* the buffer: write whatever the
+        // debounce still holds and close. There is nothing a Save/Discard
+        // prompt could protect, and asking would be the same false alarm the
+        // baseline check exists to prevent.
+        void flushDraft().then(() => closeTab(id));
+        return;
+      }
       if (openRef.current.name === null && contentRef.current.trim() === "") {
         cancelAutosave();
         void api.deleteDraft(id);
@@ -2229,7 +2480,10 @@ function App() {
     setRenaming(true);
   };
 
-  const startExplorerCreate = (dir: string, kind: "note" | "folder" | "virtual" = "note") => {
+  const startExplorerCreate = (
+    dir: string,
+    kind: "note" | "canvas" | "folder" | "virtual" = "note",
+  ) => {
     setExplorerOpen(true);
     setExplorerView("files");
     // Creation targeting the Notes panel reopens it, the way creation into a
@@ -2244,12 +2498,13 @@ function App() {
   };
 
   /** Inline name-first creation: write the (empty) file immediately, open it as
-   * a saved note. A typed extension the registry claims sticks, else `.md`. */
-  const createNamedNote = async (dir: string, name: string) => {
+   * a saved note. A typed extension the registry claims sticks, else the one
+   * the verb implies — `.md` for a note, the canvas type's own for a canvas. */
+  const createNamedNote = async (dir: string, name: string, ext = "md") => {
     setExplorerCreate(null);
     const trimmed = name.trim().replace(/^\/+|\/+$/g, "");
     if (!trimmed) return;
-    const file = isNoteFile(trimmed) ? trimmed : `${trimmed}.md`;
+    const file = isNoteFile(trimmed) ? trimmed : `${trimmed}.${ext}`;
     const id = dir ? `${dir}/${file}` : file;
     if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
       toast(`"${name}" isn't a valid note name`);
@@ -2390,6 +2645,7 @@ function App() {
         ? [{ label: "Open project board", run: () => void openBoard(dir) }, "sep" as const]
         : []),
       { label: "New note here", run: () => startExplorerCreate(dir) },
+      { label: "New canvas here", run: () => startExplorerCreate(dir, "canvas") },
       // All three need a project to land in, which the notes-root heading ("")
       // isn't — a top-level folder is a project, created by "New project…".
       // "New folder" makes a real directory right here; "New virtual folder"
@@ -2431,6 +2687,7 @@ function App() {
   const explorerBodyMenu = (e: React.MouseEvent) =>
     openContextMenu(e, [
       { label: "New note", run: () => startExplorerCreate("") },
+      { label: "New canvas", run: () => startExplorerCreate("", "canvas") },
       { label: "New project…", run: () => setCreatingProject(true) },
       "sep",
       { label: "Scan folder for projects…", run: () => void scanForProjects() },
@@ -2457,6 +2714,7 @@ function App() {
   // name at the newest timestamp — the explorer's Recent rule, shortened.
   const welcomeActions = [
     { label: "New note", detail: kb("new-note"), run: () => void newNote() },
+    { label: "New canvas", run: () => void newCanvas() },
     { label: "New project…", run: () => setCreatingProject(true) },
     { label: "Scan folder for projects…", run: () => void scanForProjects() },
     { label: "Settings", run: () => setSettingsOpen("top") },
@@ -2534,7 +2792,11 @@ function App() {
                 ? createNamedFolder(dir, name)
                 : explorerCreateKind === "virtual"
                   ? createNamedVirtualFolder(dir, name)
-                  : createNamedNote(dir, name))
+                  : createNamedNote(
+                      dir,
+                      name,
+                      explorerCreateKind === "canvas" ? (extOfView("canvas") ?? "canvas") : "md",
+                    ))
             }
             onCreateCancel={() => setExplorerCreate(null)}
             newFolders={newFolders}
@@ -2739,17 +3001,30 @@ function App() {
                 onError={(msg) => toast(`Recent changes — ${msg}`)}
               />
             )}
-            {canvasOpen && (
+            {canvasOpen && open && (
               <Suspense fallback={null}>
                 <BoardView
                   key={docKey}
+                  ref={canvasRef}
                   initialDoc={initialDoc}
                   onChange={handleChange}
+                  role={canvasRole}
+                  noteDir={noteDir}
                   resolveTarget={resolveBoardTarget}
                   loadExcerpt={boardExcerpt}
                   fileFor={boardFileFor}
                   addItems={boardAddItems}
                   onOpenNote={(id) => void openItem({ id, isNote: true }, draftIds)}
+                  onOpenLink={openLink}
+                  importImage={importImage}
+                  pickImages={pickImages}
+                  block={{
+                    onPasteImage: pasteImage,
+                    resolveImage,
+                    mentionItems,
+                    mentionLink,
+                    features: markdownFeatures(),
+                  }}
                   onMenu={openContextMenu}
                 />
               </Suspense>
@@ -2851,6 +3126,10 @@ function App() {
           onSetKeybind={setKeybind}
           summonHotkey={summonHotkey}
           onChangeSummonHotkey={(chord) => void changeSummonHotkey(chord)}
+          defaultNoteType={defaultNoteType}
+          onDefaultNoteTypeChange={setDefaultNoteType}
+          openAtLaunch={openAtLaunch}
+          onClearOpenAtLaunch={() => setLaunchCanvas(null)}
           section={settingsOpen}
           onClose={() => {
             setSettingsOpen(null);

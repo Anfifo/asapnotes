@@ -256,6 +256,11 @@ export interface Settings {
   keybinds?: Record<string, string>;
   /** The global summon hotkey; absent means the shipped default. */
   summonHotkey?: string | null;
+  /** Registry type id "New note" creates; absent means markdown. Capture stays
+   * markdown regardless — see `newCapture` in App. */
+  defaultNoteType?: string | null;
+  /** A canvas the window opens on at launch, instead of the last active tab. */
+  openAtLaunch?: string | null;
 }
 
 /** `error` is set when the file couldn't be parsed: shipped defaults are in
@@ -275,5 +280,12 @@ export const setKeybinds = (keybinds: Record<string, string>) =>
 /** Re-register the global summon hotkey live and persist it; rejects with the
  * reason when the chord can't be parsed or is taken by another app. */
 export const setSummonHotkey = (hotkey: string) => invoke<void>("set_summon_hotkey", { hotkey });
+/** Which note type "New note" creates; null goes back to markdown. */
+export const setDefaultNoteType = (id: string | null) =>
+  invoke<void>("set_default_note_type", { id });
+/** The canvas the window opens on at launch; null goes back to the last tab.
+ * Rejects when the note isn't one the registry opens as a canvas. */
+export const setOpenAtLaunch = (note: string | null) =>
+  invoke<void>("set_open_at_launch", { note });
 
 export const quit = () => invoke<void>("quit");
