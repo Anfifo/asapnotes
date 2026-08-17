@@ -18,11 +18,14 @@ import { fileOf, projectOf, relativePath, resolvePath, validFileName, winPath } 
 import { AppActionId, bindingTable, chordFor, chordOfEvent, DEFAULT_SUMMON } from "./keybinds";
 import { About } from "./About";
 import type { CanvasHandle, NodeTarget } from "./canvas/BoardView";
+import { FileIcon } from "./fileIcons";
 import {
+  colorOf,
   extOfType,
   extOfView,
   featuresOf,
   hasFeature,
+  iconOf,
   isNoteFile,
   markdownFeatures,
   noteTypeOf,
@@ -74,6 +77,15 @@ const MAP_PREFIX = "map:";
 const isMapTab = (id: string) => id.startsWith(MAP_PREFIX);
 /** The project a map tab shows. */
 const mapProjectOf = (id: string) => id.slice(MAP_PREFIX.length);
+
+// A referenced file, read-only: what double-clicking a file card that isn't a
+// note opens. Same lens idiom as the map — never persisted or drafted, one
+// tab at most, retargeted by the next open, closes silently — showing any
+// real file as plain text, inside the corpus or out.
+const FILE_PREFIX = "file:";
+const isFileTab = (id: string) => id.startsWith(FILE_PREFIX);
+/** The absolute path (forward slashes) a file tab shows. */
+const filePathOf = (id: string) => id.slice(FILE_PREFIX.length);
 
 const EXPLORER_DEFAULT_W = 224;
 const EXPLORER_MIN_W = 168;
@@ -280,7 +292,14 @@ function App() {
       const stored = JSON.parse(localStorage.getItem("tabs") ?? "[]") as OpenNote[];
       // Lens tabs (diff, map) are session-temporary and never restored.
       return Array.isArray(stored)
-        ? stored.filter((t) => t && typeof t.id === "string" && !isDiffTab(t.id) && !isMapTab(t.id))
+        ? stored.filter(
+            (t) =>
+              t &&
+              typeof t.id === "string" &&
+              !isDiffTab(t.id) &&
+              !isMapTab(t.id) &&
+              !isFileTab(t.id),
+          )
         : [];
     } catch {
       return [];
@@ -292,6 +311,13 @@ function App() {
   // read. Its own state, not `initialDoc` — the map is a lens, and the note
   // plumbing (drafts, saves, baselines) must never see its content.
   const [mapDoc, setMapDoc] = useState<{ key: string; text: string } | null>(null);
+  // What the open file lens shows: the text, or the reason it can't be shown
+  // (binary, huge, gone). Keyed by tab id so a stale read is dropped.
+  const [fileDoc, setFileDoc] = useState<{
+    id: string;
+    text: string | null;
+    error: string | null;
+  } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [paletteOpen, setPaletteOpen] = useState<"notes" | "commands" | null>(null);
@@ -385,6 +411,9 @@ function App() {
   // last-active-tab — the shipped behavior.
   const [defaultNoteType, setDefaultNoteTypeState] = useState<string | null>(null);
   const [openAtLaunch, setOpenAtLaunchState] = useState<string | null>(null);
+  // Double-clicking a non-markdown file card: false opens the in-app
+  // read-only view, true hands it to the system default app.
+  const [openFilesExternally, setOpenFilesExternallyState] = useState(false);
   const defaultExtRef = useRef("md");
   defaultExtRef.current = (defaultNoteType && extOfType(defaultNoteType)) || "md";
   const [renaming, setRenaming] = useState(false);
@@ -873,6 +902,38 @@ function App() {
     [flushDraft, trackMtime, projectDirOf, noteDirOf, noteIdOf],
   );
 
+  /** Open a referenced file read-only: any real file a canvas or map points
+   * at, corpus or not. The tab appears at once; the text lands when the read
+   * does — or the reason it can't be shown, with "Open externally" still on
+   * offer. */
+  const openFileTab = useCallback(
+    async (abs: string) => {
+      await flushDraft();
+      const id = `${FILE_PREFIX}${abs}`;
+      const tab = { id, name: null };
+      contentRef.current = "";
+      setOpen(tab);
+      setWelcome(false);
+      setTabs((ts) => {
+        const at = ts.findIndex((t) => isFileTab(t.id));
+        if (at < 0) return [...ts, tab];
+        return ts[at].id === id ? ts : ts.map((t, i) => (i === at ? tab : t));
+      });
+      setDirty(false);
+      setMode("edit");
+      setPaletteOpen(null);
+      trackMtime(null);
+      setFileDoc(null);
+      try {
+        const text = await api.readFileText(winPath(abs));
+        if (openRef.current?.id === id) setFileDoc({ id, text, error: null });
+      } catch (err) {
+        if (openRef.current?.id === id) setFileDoc({ id, text: null, error: errText(err) });
+      }
+    },
+    [flushDraft, trackMtime],
+  );
+
   /** Follow a Ctrl+Clicked editor target: URLs → browser; paths resolving to
    * a note → open in-app; other paths → OS default. Relative ones resolve
    * against `from` — the open note's directory, except in the changes lens,
@@ -1002,7 +1063,8 @@ function App() {
   const changeProject = useCallback(
     async (target: string | null) => {
       const cur = openRef.current;
-      if (!cur || isDiffTab(cur.id) || isMapTab(cur.id) || target === projectOf(cur.id)) return;
+      if (!cur || isDiffTab(cur.id) || isMapTab(cur.id) || isFileTab(cur.id)) return;
+      if (target === projectOf(cur.id)) return;
       const newId = (target ? `${target}/` : "") + fileOf(cur.id);
       if (cur.name) {
         try {
@@ -1183,6 +1245,7 @@ function App() {
       setSummonHotkeyState(settings.summonHotkey ?? DEFAULT_SUMMON);
       setDefaultNoteTypeState(settings.defaultNoteType ?? null);
       setOpenAtLaunchState(settings.openAtLaunch ?? null);
+      setOpenFilesExternallyState(settings.openFilesExternally ?? false);
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
     },
@@ -1216,6 +1279,19 @@ function App() {
       });
     },
     [defaultNoteType, toast],
+  );
+
+  /** How a referenced non-markdown file opens from a canvas or map: the
+   * in-app read-only view, or the system default app. */
+  const setOpenFilesExternally = useCallback(
+    (on: boolean) => {
+      setOpenFilesExternallyState(on);
+      void api.setOpenFilesExternally(on).catch((err: unknown) => {
+        setOpenFilesExternallyState(!on);
+        toast(`Couldn't save that setting — ${errText(err)}`);
+      });
+    },
+    [toast],
   );
 
   /** Override one app shortcut (chord null = back to the defaults). The whole
@@ -1410,11 +1486,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       "tabs",
-      JSON.stringify(tabs.filter((t) => !isDiffTab(t.id) && !isMapTab(t.id))),
+      JSON.stringify(tabs.filter((t) => !isDiffTab(t.id) && !isMapTab(t.id) && !isFileTab(t.id))),
     );
   }, [tabs]);
   useEffect(() => {
-    if (open && !isDiffTab(open.id) && !isMapTab(open.id))
+    if (open && !isDiffTab(open.id) && !isMapTab(open.id) && !isFileTab(open.id))
       localStorage.setItem("activeTab", open.id);
   }, [open]);
 
@@ -1815,7 +1891,9 @@ function App() {
   // The open tab is the computed project map: the board view renders it with
   // editing disabled.
   const mapOpen = open !== null && isMapTab(open.id);
-  const lensOpen = diffOpen || mapOpen;
+  // The open tab is the read-only file view of a referenced file.
+  const fileOpen = open !== null && isFileTab(open.id);
+  const lensOpen = diffOpen || mapOpen || fileOpen;
   // The open tab is a canvas: the board view renders instead of the editor.
   const canvasOpen = open !== null && !lensOpen && viewOf(open.id) === "canvas";
   const canPreview = open ? !lensOpen && hasFeature(open.id, "preview") : !welcome;
@@ -1858,7 +1936,13 @@ function App() {
     let id = noteIdOf(abs);
     if (!id && noteNames.has(file)) id = file;
     if (id === null) return { kind: "file", id: null, url: null, modifiedMs: 0 };
-    if (!noteNames.has(id)) return { ...none, id };
+    // Under a base but not listed: a note-shaped path with nothing behind it
+    // is missing; anything else is a real file the corpus doesn't own (code,
+    // data — a map is full of them), which "missing" would wrongly dim.
+    if (!noteNames.has(id))
+      return isNoteFile(id)
+        ? { ...none, id }
+        : { kind: "file", id: null, url: null, modifiedMs: 0 };
     return {
       kind: "note",
       id,
@@ -1867,6 +1951,22 @@ function App() {
       modifiedMs: notes.find((n) => n.name === id)?.modified_ms ?? 0,
     };
   };
+  /** Double-click on a file card that isn't a note: markdown always opens in
+   * the in-app read-only view; images are never text, so always the system
+   * viewer; everything else follows the setting. */
+  const openBoardFile = (file: string) => {
+    const abs = /^[a-z]:[\\/]/i.test(file)
+      ? file.replace(/\\/g, "/")
+      : resolvePath(boardDir ?? noteDirRef.current, file);
+    if (IMAGE_FILE.test(abs) || (openFilesExternally && !/\.md$/i.test(abs))) {
+      void api
+        .openExternal(winPath(abs))
+        .catch((err: unknown) => toast(`Couldn't open that file — ${errText(err)}`));
+      return;
+    }
+    void openFileTab(abs);
+  };
+
   /** Text a board card shows under the note's name; null when the target has
    * none to offer (unreadable, or itself a canvas). */
   const boardExcerpt = async (id: string): Promise<string | null> => {
@@ -1912,7 +2012,7 @@ function App() {
   };
 
   const startRename = () => {
-    if (!open || isDiffTab(open.id) || isMapTab(open.id)) return;
+    if (!open || isDiffTab(open.id) || isMapTab(open.id) || isFileTab(open.id)) return;
     setRenameValue(open.name ? fileOf(open.name) : "");
     setRenaming(true);
   };
@@ -2281,7 +2381,11 @@ function App() {
         ? // Activating the map recomputes it — "recomputed on open" is what
           // makes a computed view trustworthy.
           openMapTab(mapProjectOf(id)).then(() => true)
-        : openItem({ id, isNote: noteNames.has(id) }, draftIds);
+        : isFileTab(id)
+          ? // Re-read on activation; a file that vanished shows the reason,
+            // with "Open externally" still on the header.
+            openFileTab(filePathOf(id)).then(() => true)
+          : openItem({ id, isNote: noteNames.has(id) }, draftIds);
 
   /** Enter the zero-tab state: flush any pending draft, drop the editor
    * surface, show the welcome panel. Reached only by closes that empty the
@@ -2356,7 +2460,7 @@ function App() {
    * A never-typed untitled tab closes silently and its empty draft goes too. */
   const requestCloseTab = (id: string) => {
     // A lens tab holds no content of its own — nothing to save or discard.
-    if (isDiffTab(id) || isMapTab(id)) {
+    if (isDiffTab(id) || isMapTab(id) || isFileTab(id)) {
       closeTab(id);
       return;
     }
@@ -2957,6 +3061,7 @@ function App() {
                 const active = open?.id === t.id;
                 const diffNote = isDiffTab(t.id) ? diffNoteOf(t.id) : null;
                 const mapProject = isMapTab(t.id) ? mapProjectOf(t.id) : null;
+                const lensFile = isFileTab(t.id) ? filePathOf(t.id) : null;
                 return (
                   <div
                     key={t.id}
@@ -2966,7 +3071,9 @@ function App() {
                         ? `Recent changes — ${diffNote}`
                         : mapProject
                           ? `Project map — ${mapProject}`
-                          : (t.name ?? "Unsaved note — double-click to name")
+                          : lensFile
+                            ? `Read-only — ${lensFile}`
+                            : (t.name ?? "Unsaved note — double-click to name")
                     }
                     onClick={() => {
                       if (!active) void openTabItem(t.id);
@@ -3002,6 +3109,13 @@ function App() {
                           <>
                             <span className="tab-map">{MAP_GLYPH}</span>
                             {mapProject}
+                          </>
+                        ) : lensFile ? (
+                          <>
+                            <span className="tab-file">
+                              <FileIcon icon={iconOf(lensFile)} color={colorOf(lensFile)} />
+                            </span>
+                            {fileOf(lensFile)}
                           </>
                         ) : t.name ? (
                           fileOf(t.name)
@@ -3121,6 +3235,7 @@ function App() {
                   addItems={[]}
                   onOpenNote={(id) => void openItem({ id, isNote: true }, draftIds)}
                   onOpenLink={(target) => openLink(target, boardDir ?? undefined)}
+                  onOpenFile={openBoardFile}
                   importImage={async () => null}
                   pickImages={async () => []}
                   block={{
@@ -3134,6 +3249,33 @@ function App() {
                   inkTools={false}
                 />
               </Suspense>
+            )}
+            {fileOpen && open && (
+              <div className="file-lens">
+                <div className="file-lens-head">
+                  <span className="file-lens-path">{filePathOf(open.id)}</span>
+                  <span className="file-lens-badge">read-only</span>
+                  <button
+                    className="file-lens-open"
+                    data-tip="Open with the system default app"
+                    onClick={() =>
+                      void api
+                        .openExternal(winPath(filePathOf(open.id)))
+                        .catch((err: unknown) => toast(`Couldn't open that file — ${errText(err)}`))
+                    }
+                  >
+                    Open externally
+                  </button>
+                </div>
+                {fileDoc?.id === open.id && fileDoc.error !== null && (
+                  <div className="file-lens-error">
+                    This file can’t be shown here — {fileDoc.error}
+                  </div>
+                )}
+                {fileDoc?.id === open.id && fileDoc.text !== null && (
+                  <pre className="file-lens-text">{fileDoc.text}</pre>
+                )}
+              </div>
             )}
             {canvasOpen && open && (
               <Suspense fallback={null}>
@@ -3150,6 +3292,7 @@ function App() {
                   addItems={boardAddItems}
                   onOpenNote={(id) => void openItem({ id, isNote: true }, draftIds)}
                   onOpenLink={openLink}
+                  onOpenFile={openBoardFile}
                   importImage={importImage}
                   pickImages={pickImages}
                   block={{
@@ -3263,6 +3406,8 @@ function App() {
           onChangeSummonHotkey={(chord) => void changeSummonHotkey(chord)}
           defaultNoteType={defaultNoteType}
           onDefaultNoteTypeChange={setDefaultNoteType}
+          openFilesExternally={openFilesExternally}
+          onOpenFilesExternallyChange={setOpenFilesExternally}
           openAtLaunch={openAtLaunch}
           onClearOpenAtLaunch={() => setLaunchCanvas(null)}
           section={settingsOpen}

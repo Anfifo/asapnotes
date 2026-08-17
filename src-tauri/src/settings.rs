@@ -65,6 +65,11 @@ pub struct Settings {
     /// active tab. Absent means the tab that was up stays up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_at_launch: Option<String>,
+    /// Double-clicking a referenced non-markdown file on a canvas opens it
+    /// with the system default app instead of the in-app read-only view.
+    /// Absent means the in-app view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_files_externally: Option<bool>,
 }
 
 impl Default for Settings {
@@ -80,6 +85,7 @@ impl Default for Settings {
             summon_hotkey: None,
             default_note_type: None,
             open_at_launch: None,
+            open_files_externally: None,
         }
     }
 }
@@ -678,6 +684,17 @@ pub fn set_open_at_launch(app: AppHandle, note: Option<String>) -> Result<(), St
             Some(note) => return Err(format!("\"{note}\" is not a canvas")),
             None => None,
         };
+        Ok(())
+    })
+}
+
+/// Whether referenced non-markdown files open with the system default app
+/// instead of the in-app read-only view. Off is the default, so off is stored
+/// as absent — the file never holds shipped behavior.
+#[tauri::command]
+pub fn set_open_files_externally(app: AppHandle, on: bool) -> Result<(), String> {
+    update(&app, |s| {
+        s.open_files_externally = on.then_some(true);
         Ok(())
     })
 }

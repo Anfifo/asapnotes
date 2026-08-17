@@ -882,6 +882,18 @@ body,
   height: 11px;
 }
 
+/* A file-lens tab wears its file-type icon, the same size the map glyph is. */
+.tab-file {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.3rem;
+}
+
+.tab-file svg {
+  width: 11px;
+  height: 11px;
+}
+
 /* No CSS gap here: the 6px between panels is an element — a plain spacer or a
    draggable split. Its own display beats the `hidden` attribute, hence the rule. */
 .explorer-cards {
@@ -2799,6 +2811,77 @@ body,
 .board-broken-msg {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 0.78rem;
+}
+
+/* The read-only file view: any real file a canvas references, as plain text.
+   Never drafted, never persisted — the same etiquette as the map lens. */
+.file-lens {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-lens-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.9rem;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  font-size: 0.78rem;
+  color: #8a8a8a;
+}
+
+.file-lens-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.file-lens-badge {
+  flex-shrink: 0;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+}
+
+.file-lens-open {
+  flex-shrink: 0;
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.76rem;
+  color: inherit;
+  background: none;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 6px;
+  padding: 0.15rem 0.55rem;
+  cursor: pointer;
+}
+
+.file-lens-open:hover {
+  border-color: currentColor;
+}
+
+.file-lens-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0.8rem 1rem;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  user-select: text;
+}
+
+.file-lens-error {
+  padding: 1.4rem 1rem;
+  color: #8a8a8a;
+  font-size: 0.85rem;
 }
 
 /* Dark theme. Keyed off the resolved theme that theme.ts stamps on the root

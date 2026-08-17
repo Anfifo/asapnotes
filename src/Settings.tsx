@@ -159,6 +159,10 @@ interface SettingsProps {
   /** Registry type id "New note" creates; null means markdown. */
   defaultNoteType: string | null;
   onDefaultNoteTypeChange: (id: string | null) => void;
+  /** How a referenced non-markdown file opens from a canvas or map: false is
+   * the in-app read-only view, true the system default app. */
+  openFilesExternally: boolean;
+  onOpenFilesExternallyChange: (on: boolean) => void;
   /** A canvas the window opens on at launch — set from the canvas itself, so
    * this row only shows and clears it. */
   openAtLaunch: string | null;
@@ -185,6 +189,8 @@ export function Settings({
   onChangeSummonHotkey,
   defaultNoteType,
   onDefaultNoteTypeChange,
+  openFilesExternally,
+  onOpenFilesExternallyChange,
   openAtLaunch,
   onClearOpenAtLaunch,
   section,
@@ -278,6 +284,31 @@ export function Settings({
                 <p className="settings-note">
                   What “New note” creates. A note captured from the summon hotkey is always markdown
                   — capture means start typing.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td>Referenced files</td>
+              <td>
+                <div className="segmented" role="group" aria-label="Referenced files">
+                  <button
+                    className={!openFilesExternally ? "active" : undefined}
+                    aria-pressed={!openFilesExternally}
+                    onClick={() => onOpenFilesExternallyChange(false)}
+                  >
+                    In app, read-only
+                  </button>
+                  <button
+                    className={openFilesExternally ? "active" : undefined}
+                    aria-pressed={openFilesExternally}
+                    onClick={() => onOpenFilesExternallyChange(true)}
+                  >
+                    System default
+                  </button>
+                </div>
+                <p className="settings-note">
+                  How double-clicking a file card that isn’t a note opens it. Markdown always opens
+                  in the app; images always open in the system viewer.
                 </p>
               </td>
             </tr>

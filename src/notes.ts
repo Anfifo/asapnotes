@@ -125,6 +125,9 @@ export const saveAsset = (bytes: Uint8Array, ext: string, note?: string | null) 
 export const importAsset = (src: string, note?: string | null) =>
   invoke<string>("import_asset", { src, note: note ?? null });
 export const readNote = (name: string) => invoke<string>("read_note", { name });
+/** A referenced file's text for the read-only file view — any absolute path,
+ * inside the corpus or out. Rejects binary or oversized files with the reason. */
+export const readFileText = (path: string) => invoke<string>("read_file_text", { path });
 /** File mtime in ms, null if the file doesn't exist. */
 export const noteMtime = (name: string) => invoke<number | null>("note_mtime", { name });
 export const saveNote = (name: string, content: string) =>
@@ -261,6 +264,9 @@ export interface Settings {
   defaultNoteType?: string | null;
   /** A canvas the window opens on at launch, instead of the last active tab. */
   openAtLaunch?: string | null;
+  /** Double-clicking a referenced non-markdown file on a canvas opens it with
+   * the system default app instead of the in-app read-only view. */
+  openFilesExternally?: boolean | null;
 }
 
 /** `error` is set when the file couldn't be parsed: shipped defaults are in
@@ -287,5 +293,9 @@ export const setDefaultNoteType = (id: string | null) =>
  * Rejects when the note isn't one the registry opens as a canvas. */
 export const setOpenAtLaunch = (note: string | null) =>
   invoke<void>("set_open_at_launch", { note });
+/** Whether referenced non-markdown files open with the system default app
+ * instead of the in-app read-only view. */
+export const setOpenFilesExternally = (on: boolean) =>
+  invoke<void>("set_open_files_externally", { on });
 
 export const quit = () => invoke<void>("quit");

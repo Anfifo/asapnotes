@@ -628,6 +628,38 @@ pub fn read_note(app: AppHandle, name: String) -> Result<String, String> {
     fs::read_to_string(resolve_note(&app, &name)?).map_err(|e| e.to_string())
 }
 
+/// The read-only file view refuses what it couldn't show anyway, with the
+/// reason as the error.
+const MAX_LENS_BYTES: u64 = 2_000_000;
+
+/// A referenced file's text, for the read-only file view: any real file a
+/// canvas or map points at, inside the corpus or out. Read-only by
+/// construction — there is no write twin.
+#[tauri::command]
+pub fn read_file_text(path: String) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    if !p.is_absolute() {
+        return Err(format!("not an absolute path: {path}"));
+    }
+    let meta = fs::metadata(&p).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    if meta.len() > MAX_LENS_BYTES {
+        return Err("it's too large to view here".into());
+    }
+    let bytes = fs::read(&p).map_err(|e| e.to_string())?;
+    // A NUL early on is the honest binary signal — rendering mojibake would
+    // only pretend the view works on such files.
+    if bytes.iter().take(8192).any(|&b| b == 0) {
+        return Err("it isn't text".into());
+    }
+    // A UTF-8 BOM is encoding plumbing, not content — shown, it reads as a
+    // stray invisible character on the first line.
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned())
+}
+
 /// Modification time of a note's file (ms), `None` if it doesn't exist —
 /// the frontend's external-change detection compares this against the mtime
 /// it saw at load.
