@@ -33,6 +33,85 @@ The AI (or anyone) working on this repo keeps this file current while working:
       smaller ref cards + hidden hub edges remove most of the noise. Force-directed
       layout is the big alternative, deliberately not leaned (nondeterministic, a
       tuning pit, and the grid answer wasn't given a fair chance yet).
+      _2026-08-17: candidate sheet published for the md-heavy-folder half, awaiting a
+      pick_ — five treatments of a 22-note `docs` folder at real card metrics, both
+      themes: **A** today's capped grid (reference, 1072×1200 units), **B** columns
+      scale with count (one formula, cards kept), **C** title-only tiles past a
+      threshold (ladder 9/12/16, lean 12; small folders keep cards), **D** referenced
+      notes keep excerpt cards + degree balls above C's tile index (recommended —
+      pixels go where the connections are), **E** folder collapses to a digest card,
+      double-click expands (needs the single-select state the edge-reveal slice adds;
+      offered as a later zoom-out layer, not a competing pick). Candidates compose —
+      "D over B's ratio" is a valid pick.
+      _2026-08-17 round 2, same sheet, after the user redirected:_ the file cards are
+      fine as they are — the problem is the **group backdrop** committing to a box
+      around many cards. Round 2 drops the box: each card wears its folder as color +
+      name, same-folder cards pack tighter (gap 20 in-folder vs ~110 between), and
+      subfolders read via hue families (`docs/decisions` a deeper shade of `docs`,
+      full path in the label). Four treatments, awaiting a pick: **F** a folder tab
+      rising from the card's top edge (the user's own instinct, recommended — changes
+      the silhouette, tab doubles as the folder-edge target), **G** 3px color spine +
+      one floating label per cluster (quietest; the label is the edge target),
+      **H** folder-tinted header band with the path in it (no extra geometry,
+      tightest packing), **I** corner badge (weak at subfolder path lengths).
+      Mechanics recorded on the sheet: group nodes can stay in the computed document
+      so "Save as canvas…" keeps real groups — the lens just stops painting the box;
+      folder colors cycle a fixed palette keyed by path; folder-link edges retarget
+      the label/tab. Round 1's A–E stay on the sheet for the record; its C/D tile
+      treatments are off the table (cards stay full).
+      _2026-08-17 round 2 picked: **F, the folder tab.** Round 3 published same day,
+      awaiting a pick_ — the user asked for a visible hint of the main folder on a
+      subfolder's tab (round 2's hue-kinship alone read too subtle). Making the link
+      an explicit device also frees subfolders to take their own palette color while
+      still reading as the parent's family. Four variants, each shown at 100% (parent
+      + two sibling subfolders) and as a field scene: **F1** breadcrumb tab — a
+      `docs` segment in the parent's tab material, then the subfolder's segment in
+      its color (recommended: fill beats text at map zoom, the parent is named,
+      siblings read as siblings; depth 3+ collapses middle segments to F2's key),
+      **F2** a small parent-color key square before the subfolder's name (quietest,
+      parent unnamed), **F3** the parent's tab peeking from behind the subfolder's
+      (best metaphor, parent unnamed, +6px headroom), **F4** two-tone path text in
+      one tab (cheapest, weakest at field zoom).
+      _Round 3 picked same day: **F1.** The folder treatment is fully specified and
+      ready to build as its own slice (after the in-flight batch above lands):_ the
+      lens stops painting group backdrops — group nodes may stay in the computed
+      document so "Save as canvas…" snapshots keep real spec groups; every note card
+      wears a folder tab at its top edge (folder color + name; root notes wear
+      nothing); folder colors cycle a fixed palette assigned deterministically by
+      path, so a folder keeps its color across recomputes; a subfolder's tab is
+      breadcrumb-segmented — parent segment in the parent's tab material, subfolder
+      segment in its own color; at depth 3+ middle segments collapse to a parent-
+      color key square; in-folder packing tightens (≈20 gap in-folder, ≈110 between
+      clusters, +14px vertical for tab headroom); folder-link edges retarget the
+      folder's tab/cluster instead of the group backdrop.
+      _The approved sheet (temporary working link, delete with this item — private
+      to this account; rounds 1–3 with the picked F1 rendered at 100% and as a field
+      scene, both themes):_
+      (a private working page, since removed)
+      _Reference metrics for F1, lifted from the approved sheet's CSS so the build
+      matches the approved rendering (tab values in CSS px at zoom 1):_ tab height
+      20, line-height 19, font 10.5px weight 650, radius 6px 6px 0 0, positioned at
+      card left + 8 and rising 20 above the card top, 1px border in the folder color
+      at 55% alpha with no bottom edge so it fuses into the card. Single-folder tab:
+      padding 0 9px, text in the folder color, fill = folder color mixed into the
+      card surface (10% over the light card, 22% over the dark). Breadcrumb tab:
+      parent segment padding 0 7px, parent's ink, fill mixed at 14%/26% of the
+      parent color, then a 1px divider in the parent color at 40%; subfolder segment
+      padding 0 8px in its own color at the single-tab mix. Key square (depth 3+):
+      8×8, radius 2, solid parent color, 6px right margin. Mock hues, one pair each
+      (light/dark): teal #2f7f93/#7cc3d6, olive #5c7d2a/#b3cf7e, rose
+      #a04f6a/#e0a0b8, purple #7a4fa0/#c4a3e2.
+      _Still open — four micro-decisions the mock made silently, with leans:_
+      **(a) the real palette** — the four mock pairs need to become ~6 hand-tuned
+      light/dark pairs (tabs are lens-only chrome, never persisted, so they are not
+      bound to the spec's six canvas colors; lean: extend the mock's four with two
+      more, assignment = stable hash of the folder path → index); **(b) long folder
+      names** — lean: tab max-width ≈ card width − 16, middle-ellipsize the path,
+      full path as the tooltip; **(c) the tab as a hit target** — lean: it behaves
+      as part of its card (drag pans, double-click opens the note) in v1, no
+      folder-level verb on it yet; **(d) where a folder-link edge lands** — lean:
+      the cluster's first card's tab, and subfolder clusters sort adjacent to their
+      parent (path sort already does this) so families sit together.
       **(3) Cards with no visible content get much smaller.** A card that renders
       only its head line (any non-`.md` target — code refs, assets, missing) takes
       the full default card size today, all body wasted. Lean: size decided at
@@ -53,12 +132,62 @@ The AI (or anyone) working on this repo keeps this file current while working:
       external-file editing, which is the planned external-file-mappings item pulled
       forward (id model, grants, drafts/history all implicated). Sequences with the
       "missing"-badge look already on the handoff list — same resolution seam.
+      **Picks 2026-08-17, all recommendations:** build (1), (3), (4) as leaned,
+      plus the confirmed decluttering (follow-up item (3) below) and the grab
+      cursor (follow-up item (1)); (5) resolved as the **read-only text lens**
+      — external-file editing stays the planned mappings item; (2) runs its own
+      candidate pass (recorded above, awaiting a pick).
+      **Implemented 2026-08-17, all gates + tests clean (36), verified live
+      over the devtools protocol; committed as `e21fc8d` (map surface) +
+      `d6944d8` (file lens).** What shipped: - `projectMap.ts`: non-markdown targets get compact cards (110×68,
+      extension decides at compute time); cluster layout became row packing
+      that mixes card sizes (a row is as tall as its tallest item). - `BoardView`: per-node in/out degrees computed from the document's own
+      edges (a snapshot saved as a canvas keeps counting right); file cards
+      wear the balls — green in-count left, orange out-count right, a zero
+      side shows nothing, white digits flip dark with the theme's tints. On
+      the read-only lens a card with more than 3 outgoing edges hides those
+      lines; clicking the card or its orange ball reveals them, each edge
+      cycling the spec's six preset colors; click-away or a second click
+      hides again. Render-only — "Save as canvas…" stays all-edges-shown,
+      uncolored. Cursors: grab at rest, grabbing mid-pan, pointer over
+      cards, grab over group backdrops. File titles wrap to two clamped
+      lines everywhere (link chips keep one line — theirs is a URL). - **The resolution seam fix** (the handoff's "missing"-badge look): a
+      path under a base that the corpus doesn't list reads "missing" only
+      when it is note-shaped; any other extension resolves as a real file,
+      so code references stop rendering dimmed. - **The file lens**: `file:` tabs with every lens etiquette mirrored
+      (grep `isFileTab`), backed by a new `read_file_text` command (2 MB
+      cap, binary refused with the reason, UTF-8 BOM stripped); the header
+      shows the full path, a read-only badge and "Open externally"; the tab
+      wears the file-type icon. Double-click routing: notes in-app as ever,
+      images always the system viewer, markdown always the lens, everything
+      else follows the new setting. File cards' menu gains "Open" beside
+      "Open externally". - **Setting**: `openFilesExternally` in settings.json (absent = in-app),
+      a Settings → Notes segmented row, `set_open_files_externally` command.
+      **Verified live** (second instance over the devtools protocol, scratch
+      project with a 5-out hub note, a back-link and four `.rs` refs; full
+      cleanup, history-store dir included): compact 110×68 ref cards beside
+      220×150 note cards, "file" badge not "missing"; balls exactly in=1/out=5,
+      in=1/out=1, in=1/no-out; 1 of 6 edges drawn at rest; orange-ball click →
+      6 drawn with five distinct preset accents and the card ringed; clicking
+      the card body toggles the same reveal; click-away hides; grab → grabbing
+      mid-pan (the `board-panning` class), pointer over cards; the name
+      line-clamps at 2; double-click `s1.rs` → lens with path, badge, exact
+      text (BOM stripped, after a fix this check caught) and icon tab; `file:`
+      tabs never reach localStorage; the tab closed silently back onto the
+      map; the setting wrote `true` and cleared back to absent in the real
+      settings.json.
+      _Pending hands-on:_ both themes for balls, reveal colors and the lens;
+      whether 9px ball digits read at typical zoom; wrap on real long names;
+      whether hide-past-3 feels right or the threshold wants tuning; the lens
+      on real code-file sizes; and the layout judgment (2) with the noise now
+      gone.
 
 ## Today (2026-08-16)
 
 - [ ] **Project map follow-ups: cursor, card menu, edge decluttering** (2026-08-16) —
       three asks on the shipped map lens, recorded together because they are all
-      map-surface polish; none built yet.
+      map-surface polish. _(1) and (3) landed with the 2026-08-17 slice above;
+      (2) and (4) remain._
       **(1) Grab cursor.** The map's left-drag pans, so the surface should say so: the
       hand/grab cursor always, except while hovering something that opens (a card →
       pointer). Essentially settled — a few CSS rules on the read-only board
