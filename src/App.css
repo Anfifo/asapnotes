@@ -868,6 +868,20 @@ body,
   margin-right: 0.3rem;
 }
 
+/* The map tab wears the chip's own network glyph, so the tab reads as what
+   the chip opened. */
+.tab-map {
+  display: inline-flex;
+  align-items: center;
+  color: var(--tint-amber);
+  margin-right: 0.3rem;
+}
+
+.tab-map svg {
+  width: 11px;
+  height: 11px;
+}
+
 /* No CSS gap here: the 6px between panels is an element — a plain spacer or a
    draggable split. Its own display beats the `hidden` attribute, hence the rule. */
 .explorer-cards {

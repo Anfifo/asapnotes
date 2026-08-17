@@ -66,6 +66,15 @@ const isDiffTab = (id: string) => id.startsWith(DIFF_PREFIX);
 /** The note a lens tab reads. */
 const diffNoteOf = (id: string) => id.slice(DIFF_PREFIX.length);
 
+// The project map: the project's notes and the references between them,
+// computed on open and rendered through the canvas engine with editing
+// disabled. Same lens idiom as the changes tab — never persisted, recomputed
+// each time, one tab at most — and the same prefix rule keeps the id safe.
+const MAP_PREFIX = "map:";
+const isMapTab = (id: string) => id.startsWith(MAP_PREFIX);
+/** The project a map tab shows. */
+const mapProjectOf = (id: string) => id.slice(MAP_PREFIX.length);
+
 const EXPLORER_DEFAULT_W = 224;
 const EXPLORER_MIN_W = 168;
 // Editor space a docked explorer must leave — the drag stops there, and only a
@@ -187,6 +196,18 @@ const FORMAT_GROUPS: { kind: FormatKind; glyph: ReactNode; title: string }[][] =
   ],
 ];
 
+/** The network mark the map surfaces share — the explorer chip and the map
+ * tab wear the same glyph, so the tab reads as what the chip opened. */
+const MAP_GLYPH = icon(
+  <>
+    <rect x="16" y="16" width="6" height="6" rx="1" />
+    <rect x="2" y="16" width="6" height="6" rx="1" />
+    <rect x="9" y="2" width="6" height="6" rx="1" />
+    <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+    <path d="M12 12V8" />
+  </>,
+);
+
 interface NoteEntry extends PaletteItem {
   kind: "note";
   /** false = untitled draft that has no saved note yet */
@@ -257,9 +278,9 @@ function App() {
   const [tabs, setTabs] = useState<OpenNote[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("tabs") ?? "[]") as OpenNote[];
-      // Diff tabs are session-temporary and never restored.
+      // Lens tabs (diff, map) are session-temporary and never restored.
       return Array.isArray(stored)
-        ? stored.filter((t) => t && typeof t.id === "string" && !isDiffTab(t.id))
+        ? stored.filter((t) => t && typeof t.id === "string" && !isDiffTab(t.id) && !isMapTab(t.id))
         : [];
     } catch {
       return [];
@@ -267,6 +288,10 @@ function App() {
   });
   const [docKey, setDocKey] = useState("");
   const [initialDoc, setInitialDoc] = useState("");
+  // The open map tab's computed document; null while the notes are being
+  // read. Its own state, not `initialDoc` — the map is a lens, and the note
+  // plumbing (drafts, saves, baselines) must never see its content.
+  const [mapDoc, setMapDoc] = useState<{ key: string; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [paletteOpen, setPaletteOpen] = useState<"notes" | "commands" | null>(null);
@@ -714,24 +739,6 @@ function App() {
     [flushDraft, trackMtime],
   );
 
-  /** Open a project's board — `board.canvas` at its root. A project with no
-   * board yet gets an unsaved tab: the file is created lazily, on the first
-   * save after something is placed, never by merely looking. */
-  const openBoard = useCallback(
-    async (project: string) => {
-      const id = `${project}/board.canvas`;
-      const draftIds = new Set(draftsRef.current.map((d) => d.name));
-      const isNote = notesRef.current.some((n) => n.name === id);
-      if (isNote || draftIds.has(id)) {
-        await openItem({ id, isNote }, draftIds);
-        return;
-      }
-      await flushDraft();
-      showDoc({ id, name: id }, "", false);
-    },
-    [flushDraft, openItem, showDoc],
-  );
-
   /** Location of a project: its registered folder, else a notes-root subfolder. */
   const projectDirOf = useCallback(
     (project: string | null) =>
@@ -826,6 +833,45 @@ function App() {
     }
     return inRoot;
   }, []);
+
+  /** Open a project's map: its markdown notes read and laid out fresh, so the
+   * view can never be stale. The tab appears at once and the document lands
+   * when the notes have been read; a stale compute (another tab took over
+   * meanwhile) is dropped. The compute module loads on demand, like the
+   * canvas view itself — a summon never pays for it. */
+  const openMapTab = useCallback(
+    async (project: string) => {
+      await flushDraft();
+      const id = `${MAP_PREFIX}${project}`;
+      const tab = { id, name: null };
+      contentRef.current = "";
+      setOpen(tab);
+      setWelcome(false);
+      setTabs((ts) => {
+        const at = ts.findIndex((t) => isMapTab(t.id));
+        if (at < 0) return [...ts, tab];
+        return ts[at].id === id ? ts : ts.map((t, i) => (i === at ? tab : t));
+      });
+      setDirty(false);
+      setMode("edit");
+      setPaletteOpen(null);
+      trackMtime(null);
+      setMapDoc(null);
+      const { computeProjectMap } = await import("./canvas/projectMap");
+      const noteIds = notesRef.current
+        .map((n) => n.name)
+        .filter((name) => projectOf(name) === project && viewOf(name) === "markdown");
+      const text = await computeProjectMap(project, {
+        projectDir: projectDirOf(project),
+        noteIds,
+        readNote: api.readNote,
+        noteDirOf,
+        noteIdOf,
+      });
+      if (openRef.current?.id === id) setMapDoc({ key: `${id}@${Date.now()}`, text });
+    },
+    [flushDraft, trackMtime, projectDirOf, noteDirOf, noteIdOf],
+  );
 
   /** Follow a Ctrl+Clicked editor target: URLs → browser; paths resolving to
    * a note → open in-app; other paths → OS default. Relative ones resolve
@@ -956,7 +1002,7 @@ function App() {
   const changeProject = useCallback(
     async (target: string | null) => {
       const cur = openRef.current;
-      if (!cur || isDiffTab(cur.id) || target === projectOf(cur.id)) return;
+      if (!cur || isDiffTab(cur.id) || isMapTab(cur.id) || target === projectOf(cur.id)) return;
       const newId = (target ? `${target}/` : "") + fileOf(cur.id);
       if (cur.name) {
         try {
@@ -1362,10 +1408,14 @@ function App() {
   // Tabs (and which one is active) survive restarts — diff tabs excepted,
   // they show a window that will have moved on by the next boot.
   useEffect(() => {
-    localStorage.setItem("tabs", JSON.stringify(tabs.filter((t) => !isDiffTab(t.id))));
+    localStorage.setItem(
+      "tabs",
+      JSON.stringify(tabs.filter((t) => !isDiffTab(t.id) && !isMapTab(t.id))),
+    );
   }, [tabs]);
   useEffect(() => {
-    if (open && !isDiffTab(open.id)) localStorage.setItem("activeTab", open.id);
+    if (open && !isDiffTab(open.id) && !isMapTab(open.id))
+      localStorage.setItem("activeTab", open.id);
   }, [open]);
 
   // Tabs shrink to fit rather than scroll; when even minimum widths overflow,
@@ -1762,21 +1812,34 @@ function App() {
   // the pre-startup instant keeps the chrome (something markdown is about to
   // open, and hiding it would flash), the welcome panel drops it.
   const diffOpen = open !== null && isDiffTab(open.id);
+  // The open tab is the computed project map: the board view renders it with
+  // editing disabled.
+  const mapOpen = open !== null && isMapTab(open.id);
+  const lensOpen = diffOpen || mapOpen;
   // The open tab is a canvas: the board view renders instead of the editor.
-  const canvasOpen = open !== null && !diffOpen && viewOf(open.id) === "canvas";
-  const canPreview = open ? !diffOpen && hasFeature(open.id, "preview") : !welcome;
-  const canFormat = open ? !diffOpen && hasFeature(open.id, "format") : !welcome;
+  const canvasOpen = open !== null && !lensOpen && viewOf(open.id) === "canvas";
+  const canPreview = open ? !lensOpen && hasFeature(open.id, "preview") : !welcome;
+  const canFormat = open ? !lensOpen && hasFeature(open.id, "format") : !welcome;
   // The open note's real directory (for resolving relative image links).
-  const currentProject = open && !diffOpen ? projectOf(open.id) : null;
+  // A map tab claims its project: opening a project's map is what "opening a
+  // project" means now, so the pane, title bar and creation targets follow.
+  const currentProject =
+    open && !lensOpen ? projectOf(open.id) : mapOpen && open ? mapProjectOf(open.id) : null;
   // A projectless open note hoists the loose files as the explorer's top pane.
-  const looseCurrent = open !== null && !diffOpen && !currentProject;
-  const noteDir = open && !diffOpen ? noteDirOf(open.id) : rootPath;
+  const looseCurrent = open !== null && !lensOpen && !currentProject;
+  const noteDir = open && !lensOpen ? noteDirOf(open.id) : rootPath;
   noteDirRef.current = noteDir;
 
   // Canvas plumbing: a node's `file` is a path relative to the canvas's own
   // folder (the same rule mention links follow), with the bare note id as the
   // recorded fallback for targets a relative path can't reach (other drive).
-  const boardDir = canvasOpen ? noteDir : null;
+  // The map resolves against the project root — its computed paths are
+  // written relative to it, so a map saved there resolves unchanged.
+  const boardDir = canvasOpen
+    ? noteDir
+    : mapOpen && open
+      ? projectDirOf(mapProjectOf(open.id))
+      : null;
   const boardProject = canvasOpen && open ? projectOf(open.id) : null;
   /** A project's `board.canvas` leads with note cards; every other canvas
    * leads with text and images. Same format, same surface — only the order of
@@ -1828,8 +1891,28 @@ function App() {
         }))
     : [];
 
+  /** "Save as canvas…" on the map: snapshot the computed layout into a real,
+   * editable `.canvas` at the project's root and open it. The live map stays
+   * computed — the snapshot is the fork you arrange, annotate and ink. */
+  const saveMapAsCanvas = async () => {
+    const cur = openRef.current;
+    const text = mapDoc?.text;
+    if (!cur || !isMapTab(cur.id) || text === undefined) return;
+    const project = mapProjectOf(cur.id);
+    const taken = new Set(notesRef.current.map((n) => n.name.toLowerCase()));
+    const name = uniqueName(`${project}/map`, extOfView("canvas") ?? "canvas", taken);
+    try {
+      await api.saveNote(name, text);
+    } catch (err) {
+      toast(`Couldn't save the map — ${errText(err)}`);
+      return;
+    }
+    setNotes(await api.listNotes());
+    await openItem({ id: name, isNote: true }, draftIds);
+  };
+
   const startRename = () => {
-    if (!open || isDiffTab(open.id)) return;
+    if (!open || isDiffTab(open.id) || isMapTab(open.id)) return;
     setRenameValue(open.name ? fileOf(open.name) : "");
     setRenaming(true);
   };
@@ -1951,15 +2034,19 @@ function App() {
           },
         ]
       : []),
-    ...projects
-      .filter((p) => p !== currentProject)
-      .map((p) => ({
-        kind: "command" as const,
-        id: `cmd:move:${p}`,
-        label: `Move to project: ${p}`,
-        run: () => void changeProject(p),
-      })),
-    ...(currentProject
+    // Moving is for the open note — a lens tab has nothing to move, even
+    // though a map tab now names a current project.
+    ...(open && !lensOpen
+      ? projects
+          .filter((p) => p !== currentProject)
+          .map((p) => ({
+            kind: "command" as const,
+            id: `cmd:move:${p}`,
+            label: `Move to project: ${p}`,
+            run: () => void changeProject(p),
+          }))
+      : []),
+    ...(open && !lensOpen && currentProject
       ? [
           {
             kind: "command" as const,
@@ -1967,11 +2054,15 @@ function App() {
             label: "Remove from project",
             run: () => void changeProject(null),
           },
+        ]
+      : []),
+    ...(currentProject
+      ? [
           {
             kind: "command" as const,
-            id: "cmd:board",
-            label: `Open project board: ${currentProject}`,
-            run: () => void openBoard(currentProject),
+            id: "cmd:map",
+            label: `Open project map: ${currentProject}`,
+            run: () => void openMapTab(currentProject),
           },
         ]
       : []),
@@ -2186,7 +2277,11 @@ function App() {
   const openTabItem = (id: string): Promise<boolean> =>
     isDiffTab(id)
       ? openDiffTab(diffNoteOf(id)).then(() => true)
-      : openItem({ id, isNote: noteNames.has(id) }, draftIds);
+      : isMapTab(id)
+        ? // Activating the map recomputes it — "recomputed on open" is what
+          // makes a computed view trustworthy.
+          openMapTab(mapProjectOf(id)).then(() => true)
+        : openItem({ id, isNote: noteNames.has(id) }, draftIds);
 
   /** Enter the zero-tab state: flush any pending draft, drop the editor
    * surface, show the welcome panel. Reached only by closes that empty the
@@ -2260,8 +2355,8 @@ function App() {
    * when the tab is active; a draft means ask when it's in the background.
    * A never-typed untitled tab closes silently and its empty draft goes too. */
   const requestCloseTab = (id: string) => {
-    // A diff tab holds no content of its own — nothing to save or discard.
-    if (isDiffTab(id)) {
+    // A lens tab holds no content of its own — nothing to save or discard.
+    if (isDiffTab(id) || isMapTab(id)) {
       closeTab(id);
       return;
     }
@@ -2639,10 +2734,10 @@ function App() {
     const [project, ...rest] = dir.split("/");
     const mount = mounts.find((m) => m.project === project && m.at === rest.join("/"));
     openContextMenu(e, [
-      // The board is per project (`board.canvas` at its root), so only the
-      // project heading offers it — not subfolders or mounts.
+      // The map is per project, so only the project heading offers it — not
+      // subfolders or mounts.
       ...(dir && rest.length === 0
-        ? [{ label: "Open project board", run: () => void openBoard(dir) }, "sep" as const]
+        ? [{ label: "Open project map", run: () => void openMapTab(dir) }, "sep" as const]
         : []),
       { label: "New note here", run: () => startExplorerCreate(dir) },
       { label: "New canvas here", run: () => startExplorerCreate(dir, "canvas") },
@@ -2784,7 +2879,7 @@ function App() {
             onDirContext={explorerDirMenu}
             onBodyContext={explorerBodyMenu}
             onStartCreate={startExplorerCreate}
-            onOpenBoard={(p) => void openBoard(p)}
+            onOpenMap={(p) => void openMapTab(p)}
             creatingIn={explorerCreate}
             creatingKind={explorerCreateKind}
             onCreate={(dir, name) =>
@@ -2861,6 +2956,7 @@ function App() {
               {tabs.map((t) => {
                 const active = open?.id === t.id;
                 const diffNote = isDiffTab(t.id) ? diffNoteOf(t.id) : null;
+                const mapProject = isMapTab(t.id) ? mapProjectOf(t.id) : null;
                 return (
                   <div
                     key={t.id}
@@ -2868,7 +2964,9 @@ function App() {
                     data-tip={
                       isDiffTab(t.id)
                         ? `Recent changes — ${diffNote}`
-                        : (t.name ?? "Unsaved note — double-click to name")
+                        : mapProject
+                          ? `Project map — ${mapProject}`
+                          : (t.name ?? "Unsaved note — double-click to name")
                     }
                     onClick={() => {
                       if (!active) void openTabItem(t.id);
@@ -2899,6 +2997,11 @@ function App() {
                           <>
                             <span className="tab-diff">±</span>
                             {diffNote && fileOf(diffNote)}
+                          </>
+                        ) : mapProject ? (
+                          <>
+                            <span className="tab-map">{MAP_GLYPH}</span>
+                            {mapProject}
                           </>
                         ) : t.name ? (
                           fileOf(t.name)
@@ -2979,9 +3082,9 @@ function App() {
           <div
             className="content-panel"
             onContextMenu={(e) => {
-              // The Edit menu talks to the editor, which a diff tab or a
+              // The Edit menu talks to the editor, which a lens tab or a
               // board doesn't have (the board raises its own menus).
-              if (mode === "edit" && !diffOpen && !canvasOpen) openContextMenu(e, editEntries);
+              if (mode === "edit" && !lensOpen && !canvasOpen) openContextMenu(e, editEntries);
             }}
           >
             {open && diffOpen && (
@@ -3000,6 +3103,37 @@ function App() {
                 onClose={closeLens}
                 onError={(msg) => toast(`Recent changes — ${msg}`)}
               />
+            )}
+            {mapOpen && open && mapDoc && (
+              <Suspense fallback={null}>
+                <BoardView
+                  key={mapDoc.key}
+                  initialDoc={mapDoc.text}
+                  onChange={() => {}}
+                  role="canvas"
+                  readOnly
+                  onSaveAs={() => void saveMapAsCanvas()}
+                  emptyHint="This project has no notes to map yet."
+                  noteDir={boardDir ?? rootPath}
+                  resolveTarget={resolveBoardTarget}
+                  loadExcerpt={boardExcerpt}
+                  fileFor={(id) => id}
+                  addItems={[]}
+                  onOpenNote={(id) => void openItem({ id, isNote: true }, draftIds)}
+                  onOpenLink={(target) => openLink(target, boardDir ?? undefined)}
+                  importImage={async () => null}
+                  pickImages={async () => []}
+                  block={{
+                    onPasteImage: pasteImage,
+                    resolveImage,
+                    mentionItems,
+                    mentionLink,
+                    features: markdownFeatures(),
+                  }}
+                  onMenu={openContextMenu}
+                  inkTools={false}
+                />
+              </Suspense>
             )}
             {canvasOpen && open && (
               <Suspense fallback={null}>
@@ -3030,7 +3164,7 @@ function App() {
                 />
               </Suspense>
             )}
-            {open && !diffOpen && !canvasOpen && (
+            {open && !lensOpen && !canvasOpen && (
               <Editor
                 ref={editorRef}
                 docKey={docKey}

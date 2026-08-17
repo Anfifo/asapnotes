@@ -106,6 +106,15 @@ interface BoardViewProps {
   /** Whether the type declares the `ink` feature — gates the Draw tools the
    * same way `images` gates drops. Foreign strokes render regardless. */
   inkTools: boolean;
+  /** A computed lens (the project map): everything renders and opens, nothing
+   * edits. Left-drag pans, the add and draw verbs are gone, and menus keep
+   * only their open-things entries. */
+  readOnly?: boolean;
+  /** Offered on a read-only surface: snapshot what is shown into a real,
+   * editable canvas file. */
+  onSaveAs?: () => void;
+  /** What an empty surface says — a computed lens has its own story. */
+  emptyHint?: string;
 }
 
 const MIN_W = 120;
@@ -424,6 +433,9 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     block,
     onMenu,
     inkTools,
+    readOnly = false,
+    onSaveAs,
+    emptyHint,
   },
   ref,
 ) {
@@ -1018,7 +1030,9 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
    * held Space, and the wheel, which was already the main way to pan. With a
    * draw tool up, the left button draws or erases instead. */
   const startSurfaceDrag = (e: React.PointerEvent) => {
-    const panning = e.button === 1 || (e.button === 0 && panReady);
+    // A read-only surface has no marquee to draw, so the left button goes
+    // back to the most natural thing it could do: panning.
+    const panning = e.button === 1 || (e.button === 0 && (panReady || readOnly));
     if (e.button !== 0 && !panning) return;
     stopEditing();
     setAddOpen(false);
@@ -1069,6 +1083,8 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   };
 
   const startNodeDrag = (e: React.PointerEvent, id: string, kind: "move" | "resize") => {
+    // Read-only: the press falls through to the surface and pans instead.
+    if (readOnly) return;
     if (e.button !== 0) return;
     e.stopPropagation();
     if (editing !== null && editing !== id) stopEditing();
@@ -1325,6 +1341,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     // preventing the default, which is exactly how Ctrl+Z past the start of a
     // block's history falls through to the canvas journal.
     if (e.defaultPrevented) return;
+    if (readOnly) return; // nothing to select, delete or undo on a lens
     if ((e.target as Element).closest("input")) return; // the picker owns its keys
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
@@ -1463,11 +1480,11 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   /** What double-clicking a node does: open what it stands for. */
   const openNode = (n: CanvasNode) => {
     if (n.type === "text") {
-      setEditing(n.id);
+      if (!readOnly) setEditing(n.id);
       return;
     }
     if (n.type === "ink") {
-      drawMore(n);
+      if (!readOnly) drawMore(n);
       return;
     }
     if (n.type === "link" && n.url) {
@@ -1486,8 +1503,9 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     const target = n.file !== undefined ? targets.get(n.id) : undefined;
     const entries: BoardMenuEntry[] = [];
     if (ids.length === 1) {
-      if (n.type === "text") entries.push({ label: "Edit text", run: () => setEditing(n.id) });
-      if (n.type === "ink" && inkTools)
+      if (n.type === "text" && !readOnly)
+        entries.push({ label: "Edit text", run: () => setEditing(n.id) });
+      if (n.type === "ink" && inkTools && !readOnly)
         entries.push({ label: "Draw more here", run: () => drawMore(n) });
       if (target?.kind === "note" && target.id)
         entries.push({ label: "Open note", run: () => onOpenNote(target.id!) });
@@ -1496,14 +1514,21 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
       if ((target?.kind === "image" || target?.kind === "file") && n.file)
         entries.push({ label: "Open externally", run: () => onOpenLink(n.file!) });
     }
-    entries.push({
-      label: ids.length > 1 ? `Remove ${ids.length} nodes from canvas` : "Remove from canvas",
-      run: () => removeNodes(ids),
-    });
+    if (!readOnly)
+      entries.push({
+        label: ids.length > 1 ? `Remove ${ids.length} nodes from canvas` : "Remove from canvas",
+        run: () => removeNodes(ids),
+      });
     return entries;
   };
 
   const surfaceEntries = (): BoardMenuEntry[] => {
+    if (readOnly) {
+      return [
+        ...(onSaveAs ? [{ label: "Save as canvas…", run: onSaveAs }] : []),
+        { label: "Fit view", run: fit },
+      ];
+    }
     const note = { label: "Add note…", run: () => setAddOpen(true) };
     const content = [
       { label: "Add text", run: addText },
@@ -1518,7 +1543,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   /** Images pasted onto the surface become nodes. A focused block keeps its own
    * paste — there the picture belongs in the text, as a markdown link. */
   const onPaste = (e: React.ClipboardEvent) => {
-    if (editing !== null || e.defaultPrevented) return;
+    if (readOnly || editing !== null || e.defaultPrevented) return;
     const images = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
     if (images.length === 0) return;
     e.preventDefault();
@@ -1735,12 +1760,15 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
                   className="board-edge-hit"
                   d={d}
                   onPointerDown={(e) => {
+                    // Read-only: the press falls through and pans the surface.
+                    if (readOnly) return;
                     e.stopPropagation();
                     setSelected(new Set());
                     setSelectedEdges(new Set([edge.id]));
                     outerRef.current?.focus();
                   }}
                   onContextMenu={(e) => {
+                    if (readOnly) return;
                     e.stopPropagation();
                     setSelected(new Set());
                     setSelectedEdges(new Set([edge.id]));
@@ -1782,74 +1810,87 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
       )}
       {scene.nodes.length === 0 && (
         <div className="board-hint">
-          {role === "board"
-            ? "This board is empty — “Add note” places the project’s notes on it."
-            : "This canvas is empty — “Text” drops a box you can write in."}
+          {emptyHint ??
+            (role === "board"
+              ? "This board is empty — “Add note” places the project’s notes on it."
+              : "This canvas is empty — “Text” drops a box you can write in.")}
         </div>
       )}
       <div className="board-bar" onPointerDown={(e) => e.stopPropagation()}>
-        <div className="board-add">
-          {(role === "board" ? ["note", "text", "image"] : ["text", "image", "note"]).map((verb) =>
-            verb === "note" ? (
-              <button
-                key={verb}
-                className="board-btn"
-                data-tip={role === "board" ? "Place a note on the board" : "Place a note here"}
-                onClick={() => setAddOpen((o) => !o)}
-              >
-                {role === "board" ? "+ Add note" : "+ Note"}
-              </button>
-            ) : verb === "text" ? (
-              <button
-                key={verb}
-                className="board-btn"
-                data-tip="Drop a text box (paste or drop images anywhere)"
-                onClick={addText}
-              >
-                + Text
-              </button>
-            ) : (
-              <button
-                key={verb}
-                className="board-btn"
-                data-tip="Place an image file"
-                onClick={addPickedImages}
-              >
-                + Image
-              </button>
-            ),
-          )}
-          {addOpen && (
-            <div className="board-picker">
-              <input
-                autoFocus
-                placeholder="Filter notes…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setAddOpen(false);
-                    outerRef.current?.focus();
-                  } else if (e.key === "Enter" && candidates.length > 0) {
-                    addNote(candidates[0].id);
-                  }
-                }}
-              />
-              <ul>
-                {candidates.slice(0, 40).map((c) => (
-                  <li key={c.id}>
-                    <button onClick={() => addNote(c.id)}>{c.label}</button>
-                  </li>
-                ))}
-              </ul>
-              {candidates.length === 0 && (
-                <div className="board-picker-empty">
-                  {addItems.length === 0 ? "No notes in this project yet" : "Nothing left to add"}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        {readOnly && onSaveAs && (
+          <button
+            className="board-btn"
+            data-tip="Snapshot this map into a real, editable canvas file"
+            onClick={onSaveAs}
+          >
+            Save as canvas…
+          </button>
+        )}
+        {!readOnly && (
+          <div className="board-add">
+            {(role === "board" ? ["note", "text", "image"] : ["text", "image", "note"]).map(
+              (verb) =>
+                verb === "note" ? (
+                  <button
+                    key={verb}
+                    className="board-btn"
+                    data-tip={role === "board" ? "Place a note on the board" : "Place a note here"}
+                    onClick={() => setAddOpen((o) => !o)}
+                  >
+                    {role === "board" ? "+ Add note" : "+ Note"}
+                  </button>
+                ) : verb === "text" ? (
+                  <button
+                    key={verb}
+                    className="board-btn"
+                    data-tip="Drop a text box (paste or drop images anywhere)"
+                    onClick={addText}
+                  >
+                    + Text
+                  </button>
+                ) : (
+                  <button
+                    key={verb}
+                    className="board-btn"
+                    data-tip="Place an image file"
+                    onClick={addPickedImages}
+                  >
+                    + Image
+                  </button>
+                ),
+            )}
+            {addOpen && (
+              <div className="board-picker">
+                <input
+                  autoFocus
+                  placeholder="Filter notes…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setAddOpen(false);
+                      outerRef.current?.focus();
+                    } else if (e.key === "Enter" && candidates.length > 0) {
+                      addNote(candidates[0].id);
+                    }
+                  }}
+                />
+                <ul>
+                  {candidates.slice(0, 40).map((c) => (
+                    <li key={c.id}>
+                      <button onClick={() => addNote(c.id)}>{c.label}</button>
+                    </li>
+                  ))}
+                </ul>
+                {candidates.length === 0 && (
+                  <div className="board-picker-empty">
+                    {addItems.length === 0 ? "No notes in this project yet" : "Nothing left to add"}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {inkTools && (
           <div className="board-draw">
             <button
