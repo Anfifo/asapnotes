@@ -63,9 +63,16 @@ const targetPath = (raw: string, fromDir: string): { abs: string; dir: boolean }
   return { abs, dir };
 };
 
-// Grid metrics, in canvas units. Cards take the board's default card size.
+// Grid metrics, in canvas units. Note cards take the board's default card
+// size; a target that renders only its head line (anything non-markdown —
+// code references, assets) gets a compact card instead: half the width, room
+// for the icon row and a wrapped two-line title, nothing else to show. Sized
+// here at compute time because layout needs sizes up front, and the extension
+// is the honest signal it has.
 const W = DEFAULT_NODE_W;
 const H = DEFAULT_NODE_H;
+const REF_W = 110;
+const REF_H = 68;
 const GAP = 40;
 const PAD = 36;
 /** Extra headroom inside a group so its label doesn't sit on the first row. */
@@ -74,13 +81,31 @@ const CLUSTER_GAP = 100;
 /** Clusters pack left to right and wrap past this width. */
 const ROW_MAX = 2200;
 
-const grid = (count: number) => {
-  const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(count))));
-  return {
-    cols,
-    w: cols * W + (cols - 1) * GAP,
-    h: Math.ceil(count / cols) * H + (Math.ceil(count / cols) - 1) * GAP,
-  };
+const sizeOf = (abs: string) => (/\.md$/i.test(abs) ? { w: W, h: H } : { w: REF_W, h: REF_H });
+
+/** Pack items left to right into rows — a row is as tall as its tallest item,
+ * so full-size and compact cards mix — aiming the cluster at a square-ish
+ * shape from its count. */
+const pack = (sizes: { w: number; h: number }[]) => {
+  const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(sizes.length))));
+  const maxW = cols * W + (cols - 1) * GAP;
+  const pos: { x: number; y: number }[] = [];
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  let w = 0;
+  for (const s of sizes) {
+    if (x > 0 && x + s.w > maxW) {
+      x = 0;
+      y += rowH + GAP;
+      rowH = 0;
+    }
+    pos.push({ x, y });
+    x += s.w + GAP;
+    w = Math.max(w, x - GAP);
+    rowH = Math.max(rowH, s.h);
+  }
+  return { pos, w, h: y + rowH };
 };
 
 /** Compute a project's map and return it as JSONCanvas text. */
@@ -205,7 +230,8 @@ export async function computeProjectMap(project: string, src: MapSources): Promi
   let cy = 0;
   let rowH = 0;
   for (const cluster of clusters) {
-    const g = grid(cluster.items.length);
+    const sizes = cluster.items.map((it) => sizeOf(it.abs));
+    const g = pack(sizes);
     const grouped = cluster.folder !== null;
     const w = grouped ? g.w + 2 * PAD : g.w;
     const h = grouped ? g.h + 2 * PAD + LABEL : g.h;
@@ -235,10 +261,10 @@ export async function computeProjectMap(project: string, src: MapSources): Promi
       nodes.push({
         id,
         type: "file",
-        x: ox + (i % g.cols) * (W + GAP),
-        y: oy + Math.floor(i / g.cols) * (H + GAP),
-        width: W,
-        height: H,
+        x: ox + g.pos[i].x,
+        y: oy + g.pos[i].y,
+        width: sizes[i].w,
+        height: sizes[i].h,
         file: fileField(it.abs, it.noteId),
         raw: {},
       });

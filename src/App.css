@@ -2201,6 +2201,28 @@ body,
   cursor: grab;
 }
 
+/* A read-only lens pans with the plain left button, so the surface says so:
+   grab at rest, grabbing mid-pan, and a pointer over anything that opens.
+   Group backdrops open nothing, so they stay grabbable ground. */
+.board-readonly {
+  cursor: grab;
+}
+
+.board-readonly .board-node {
+  cursor: pointer;
+}
+
+.board-readonly .board-node-group,
+.board-readonly.board-panning,
+.board-readonly.board-panning .board-node {
+  cursor: grab;
+}
+
+.board-readonly.board-panning,
+.board-readonly.board-panning .board-node {
+  cursor: grabbing;
+}
+
 .board-surface {
   position: absolute;
   top: 0;
@@ -2222,12 +2244,19 @@ body,
   overflow: hidden;
 }
 
+/* Top-aligned, not centered: the name may wrap to a second line, and the icon
+   belongs beside the first. */
 .board-node-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.4rem;
   flex-shrink: 0;
   min-height: 1.5rem;
+}
+
+.board-node-head .file-icon,
+.board-node-head .board-node-detail {
+  margin-top: 0.15rem;
 }
 
 .board-node.selected {
@@ -2246,10 +2275,65 @@ body,
   text-overflow: ellipsis;
 }
 
+/* File titles wrap — two lines at most, so a long name can't eat a note
+   card's excerpt. Link chips keep the one-line cut: their "name" is a URL. */
+.board-node-head .board-node-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.25;
+}
+
 .board-node-detail {
   flex-shrink: 0;
   font-size: 0.72rem;
   color: #9a9a9a;
+}
+
+/* Degree balls on a file card's edges: green counts what references it,
+   orange what it references. On a read-only lens the orange one doubles as
+   the toggle for a hub's hidden reference lines. White text holds on both
+   themes' green/orange tints. */
+.board-ball {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+.board-ball-in {
+  left: 2px;
+  background: var(--tint-green);
+}
+
+.board-ball-out {
+  right: 2px;
+  background: var(--tint-orange);
+}
+
+.board-readonly .board-ball-btn {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* The card whose hidden lines are on show — orange, matching the ball that
+   toggled it. */
+.board-node.revealed {
+  border-color: var(--tint-orange);
+  box-shadow: 0 0 0 1px var(--tint-orange);
 }
 
 /* The note's opening text, clipped by the card and fading at the cut. */
@@ -2784,6 +2868,11 @@ body,
 
   .board-edge-line {
     stroke: var(--node-accent, rgba(255, 255, 255, 0.42));
+  }
+
+  /* Dark tints are light, so the ball text flips dark. */
+  .board-ball {
+    color: #232323;
   }
 
   .board-edge-label {

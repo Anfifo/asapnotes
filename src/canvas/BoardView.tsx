@@ -95,6 +95,10 @@ interface BoardViewProps {
   onOpenNote: (id: string) => void;
   /** Follow a link node's URL, or a file node the app doesn't own. */
   onOpenLink: (target: string) => void;
+  /** Open a file card that isn't a note — the app decides between its
+   * read-only file view and the system default. Without it, such cards fall
+   * back to opening externally. */
+  onOpenFile?: (file: string) => void;
   /** Copy an image at an absolute path into the canvas's assets folder;
    * resolves to the path a node should store, or null when it failed. */
   importImage: (path: string) => Promise<string | null>;
@@ -140,6 +144,11 @@ const INK_WIDTHS = [2, 5] as const;
 const ERASE_RADIUS = 6;
 /** Reach for pressing a stroke with the pointer, in screen pixels. */
 const PICK_RADIUS = 4;
+/** On a read-only lens, a card with more outgoing references than this hides
+ * those lines — a hub note would otherwise bury the map in curves. Its orange
+ * count says they exist; clicking the card (or the count) reveals them,
+ * each in its own color. Incoming lines always stay. */
+const HIDE_EDGES_PAST = 3;
 
 interface Camera {
   x: number;
@@ -428,6 +437,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     addItems,
     onOpenNote,
     onOpenLink,
+    onOpenFile,
     importImage,
     pickImages,
     block,
@@ -468,6 +478,12 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   /** Bumped when the root element's theme stamp changes — ink bitmaps resolve
    * the theme's ink color at draw time and must redraw on a swap. */
   const [themeTick, setThemeTick] = useState(0);
+  /** Read-only lens only: the card whose hidden outgoing edges are shown.
+   * Clicking a hub card (or its orange count) sets it; a click anywhere else
+   * puts the reveal away. */
+  const [revealed, setRevealed] = useState<string | null>(null);
+  /** A pan in progress — state, not a ref, so the lens cursor can say so. */
+  const [panning, setPanning] = useState(false);
 
   const outerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -566,6 +582,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     futureRef.current = [];
     setSelected(new Set());
     setSelectedEdges(new Set());
+    setRevealed(null);
     setEditing(null);
   }, [initialDoc]);
 
@@ -650,6 +667,26 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     for (const t of targets.values()) if (t.kind === "note" && t.id) ids.add(t.id);
     return ids;
   }, [targets]);
+
+  // How connected each node is: incoming and outgoing counts from the
+  // document's own edges. Computed here, not stamped at compute time, so a map
+  // snapshot saved as a canvas keeps counting right as it is edited. Dangling
+  // edges don't count — there is no card they could point the reader at.
+  const degrees = useMemo(() => {
+    const ids = new Set(scene.nodes.map((n) => n.id));
+    const m = new Map<string, { in: number; out: number }>();
+    const at = (id: string) => {
+      let d = m.get(id);
+      if (!d) m.set(id, (d = { in: 0, out: 0 }));
+      return d;
+    };
+    for (const e of scene.edges) {
+      if (!ids.has(e.fromNode) || !ids.has(e.toNode)) continue;
+      at(e.fromNode).out++;
+      at(e.toNode).in++;
+    }
+    return m;
+  }, [scene.nodes, scene.edges]);
 
   // Card excerpts, keyed by note id + mtime so an external edit re-reads.
   // Loads are async and the surface re-renders on every drag, so in-flight
@@ -1032,14 +1069,15 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   const startSurfaceDrag = (e: React.PointerEvent) => {
     // A read-only surface has no marquee to draw, so the left button goes
     // back to the most natural thing it could do: panning.
-    const panning = e.button === 1 || (e.button === 0 && (panReady || readOnly));
-    if (e.button !== 0 && !panning) return;
+    const pans = e.button === 1 || (e.button === 0 && (panReady || readOnly));
+    if (e.button !== 0 && !pans) return;
     stopEditing();
     setAddOpen(false);
     outerRef.current?.focus();
     outerRef.current?.setPointerCapture(e.pointerId);
-    if (panning) {
+    if (pans) {
       e.preventDefault(); // the middle button otherwise starts an autoscroll
+      setPanning(true);
       dragRef.current = {
         kind: "pan",
         startX: e.clientX,
@@ -1193,11 +1231,22 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     });
   };
 
-  const endDrag = () => {
+  const endDrag = (e: React.PointerEvent) => {
     const d = dragRef.current;
     dragRef.current = null;
     if (!d) return;
-    if (d.kind === "pan") return;
+    if (d.kind === "pan") {
+      setPanning(false);
+      // On a lens a pan that never traveled was a click: on a card with
+      // hidden edges it toggles the reveal, anywhere else puts it away.
+      if (readOnly && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) < DRAG_SLOP) {
+        const n = nodeAt(toCanvas(localPoint(e)));
+        const hub =
+          n && n.type !== "group" && (degrees.get(n.id)?.out ?? 0) > HIDE_EDGES_PAST ? n.id : null;
+        setRevealed(hub === revealed ? null : hub);
+      }
+      return;
+    }
     if (d.kind === "ink") {
       clearOverlay();
       const stroke: InkStroke = { points: d.points, width: penWidth, color: penColor };
@@ -1494,7 +1543,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     const target = n.file !== undefined ? targets.get(n.id) : undefined;
     if (!target || n.file === undefined) return;
     if (target.kind === "note" && target.id) onOpenNote(target.id);
-    else if (target.kind === "image" || target.kind === "file") onOpenLink(n.file);
+    else if (target.kind === "image" || target.kind === "file") (onOpenFile ?? onOpenLink)(n.file);
   };
 
   /** Right-clicking inside a multi-selection acts on all of it; right-clicking
@@ -1511,8 +1560,10 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
         entries.push({ label: "Open note", run: () => onOpenNote(target.id!) });
       if (n.type === "link" && n.url)
         entries.push({ label: "Open link", run: () => onOpenLink(n.url!) });
-      if ((target?.kind === "image" || target?.kind === "file") && n.file)
+      if ((target?.kind === "image" || target?.kind === "file") && n.file) {
+        if (onOpenFile) entries.push({ label: "Open", run: () => onOpenFile(n.file!) });
         entries.push({ label: "Open externally", run: () => onOpenLink(n.file!) });
+      }
     }
     if (!readOnly)
       entries.push({
@@ -1572,10 +1623,15 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     const target = n.file !== undefined ? targets.get(n.id) : undefined;
     const accent = nodeAccent(n.color);
     const only = selected.has(n.id) && selected.size === 1 && editing !== n.id;
+    // Degree balls ride file cards only — the ask is about references between
+    // files; text and link nodes stay clean.
+    const deg = n.file !== undefined ? degrees.get(n.id) : undefined;
+    const hub = readOnly && (deg?.out ?? 0) > HIDE_EDGES_PAST;
     const cls = [
       "board-node",
       `board-node-${n.type === "group" || n.type === "link" || n.type === "ink" ? n.type : "box"}`,
       selected.has(n.id) ? "selected" : "",
+      revealed === n.id ? "revealed" : "",
       editing === n.id ? "editing" : "",
       target?.kind === "missing" ? "missing" : "",
       target?.kind === "image" ? "image" : "",
@@ -1630,6 +1686,40 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
           />
         )}
         {nodeBody(n)}
+        {/* Degree balls: green counts what references this file, orange what
+            it references. On a lens the orange one is also the reveal toggle
+            for a hub's hidden lines. Zero on a side shows nothing. */}
+        {deg !== undefined && deg.in > 0 && (
+          <span className="board-ball board-ball-in" data-tip={`Referenced by ${deg.in}`}>
+            {deg.in}
+          </span>
+        )}
+        {deg !== undefined && deg.out > 0 && (
+          <span
+            className={
+              hub ? "board-ball board-ball-out board-ball-btn" : "board-ball board-ball-out"
+            }
+            data-tip={
+              hub
+                ? revealed === n.id
+                  ? "Hide its reference lines"
+                  : `References ${deg.out} — click to show the lines`
+                : `References ${deg.out}`
+            }
+            // The press must not start the surface pan, or the capture eats
+            // the click this ball exists for.
+            onPointerDown={(e) => {
+              if (hub) e.stopPropagation();
+            }}
+            onClick={(e) => {
+              if (!hub) return;
+              e.stopPropagation();
+              setRevealed(revealed === n.id ? null : n.id);
+            }}
+          >
+            {deg.out}
+          </span>
+        )}
         {/* Connection handles, on the single selected node: drag one onto
             another node to link them. Inside the border, because the card
             clips its own overflow. */}
@@ -1656,17 +1746,26 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
   const groups = scene.nodes.filter((n) => n.type === "group");
   const cards = scene.nodes.filter((n) => n.type !== "group");
   const byId = new Map(scene.nodes.map((n) => [n.id, n]));
+  // A revealed hub's edges each get their own color, so the burst can be told
+  // apart. Render-only — a "Save as canvas…" snapshot keeps every edge shown
+  // and uncolored, and the presets keep a revealed line legal spec color.
+  let revealSeq = 0;
   const drawnEdges = scene.edges.flatMap((e) => {
     const from = byId.get(e.fromNode);
     const to = byId.get(e.toNode);
     // A dangling edge stays in the file (some other tool's business) but there
     // is nothing to draw it between.
     if (!from || !to) return [];
+    let revealAccent: string | undefined;
+    if (readOnly && (degrees.get(e.fromNode)?.out ?? 0) > HIDE_EDGES_PAST) {
+      if (e.fromNode !== revealed) return []; // a hub's lines hide until asked
+      revealAccent = PRESET_COLORS[revealSeq++ % PRESET_COLORS.length];
+    }
     const facing = facingSides(from, to);
     const fromSide = e.fromSide ?? facing[0];
     const toSide = e.toSide ?? facing[1];
     const { d, mid } = curve(anchorAt(from, fromSide), fromSide, anchorAt(to, toSide), toSide);
-    return [{ edge: e, d, mid }];
+    return [{ edge: e, d, mid, revealAccent }];
   });
   const connectPreview = (() => {
     if (!connect) return null;
@@ -1690,6 +1789,8 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
         "board",
         editing !== null ? "board-editing" : "",
         panReady ? "board-pan" : "",
+        readOnly ? "board-readonly" : "",
+        panning ? "board-panning" : "",
         tool !== "select" ? `board-tool-${tool}` : "",
       ]
         .filter(Boolean)
@@ -1748,8 +1849,8 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
               <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
             </marker>
           </defs>
-          {drawnEdges.map(({ edge, d, mid }) => {
-            const accent = nodeAccent(edge.color);
+          {drawnEdges.map(({ edge, d, mid, revealAccent }) => {
+            const accent = revealAccent ?? nodeAccent(edge.color);
             return (
               <g
                 key={edge.id}
