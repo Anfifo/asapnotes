@@ -12,8 +12,112 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-17)
+
+- [ ] **Project map: degree balls, layout density, compact ref cards, wrapping titles,
+      in-editor open** (2026-08-17) — a second feedback batch on the shipped map lens,
+      arriving with confirmation that the edge-decluttering ask (item (3) under the
+      2026-08-16 follow-ups) is going ahead. Five asks, design pass in flight:
+      **(1) Degree balls.** Each file card wears a small ball on its left edge (green,
+      the count of incoming references) and its right edge (orange, the count of files
+      it references). This _supersedes the badge lean_ on follow-up item (3) — the
+      balls are the discoverability hint for hidden edges, and the orange ball is the
+      natural click target for the color-coded reveal. Leans: counts computed in
+      BoardView from the document's edges (true for the map and for any saved canvas
+      alike; stamping counts at compute time would go stale in snapshots); a
+      zero-count side shows no ball; colors ride theme tokens, not literals.
+      **(2) The layout reads messy at real sizes.** Open point — what "messy" means
+      needs pinning before picking a fix: leans, in order — split the one flat
+      referenced-files mega-cluster into per-directory clusters; sort clusters
+      biggest-first before row packing; judge again only after (3)–(5) land, since
+      smaller ref cards + hidden hub edges remove most of the noise. Force-directed
+      layout is the big alternative, deliberately not leaned (nondeterministic, a
+      tuning pit, and the grid answer wasn't given a fair chance yet).
+      **(3) Cards with no visible content get much smaller.** A card that renders
+      only its head line (any non-`.md` target — code refs, assets, missing) takes
+      the full default card size today, all body wasted. Lean: size decided at
+      compute time in `projectMap.ts` by extension (layout needs sizes up front, and
+      extension is the honest signal it has), compact ≈ half width × head height ×
+      room for a two-line wrapped title.
+      **(4) File titles wrap.** `.board-node-name` is nowrap+ellipsis today. Lean:
+      let it wrap on file cards everywhere (map and editable canvases — a wrapped
+      name is strictly more readable and cards clip their own overflow), clamped so
+      a long name can't eat a note card's excerpt.
+      **(5) Double-click opens the file in the editor, even outside scope.** Today a
+      non-note target opens externally, and an out-of-corpus reference resolves
+      "missing" so double-click does _nothing_ — on a map full of code references
+      the dead double-click is the loudest half of the ask. Wanted: open in-app; plus
+      a setting for non-`.md` files to open with the system default instead. Fork
+      needing a pick (recorded with the ask): a read-only text lens tab for any real
+      file (same idiom as the map lens — never drafted, never persisted) versus full
+      external-file editing, which is the planned external-file-mappings item pulled
+      forward (id model, grants, drafts/history all implicated). Sequences with the
+      "missing"-badge look already on the handoff list — same resolution seam.
+
 ## Today (2026-08-16)
 
+- [ ] **Project map follow-ups: cursor, card menu, edge decluttering** (2026-08-16) —
+      three asks on the shipped map lens, recorded together because they are all
+      map-surface polish; none built yet.
+      **(1) Grab cursor.** The map's left-drag pans, so the surface should say so: the
+      hand/grab cursor always, except while hovering something that opens (a card →
+      pointer). Essentially settled — a few CSS rules on the read-only board
+      (`grab` at rest, `grabbing` mid-pan, `pointer` over cards); no design pass
+      needed.
+      **(2) Card context menu grows file verbs.** Right-click on a file card should
+      offer opening the file, deleting it, and revealing it in File Explorer — the
+      explorer rows' own verbs, so the map card and the tree row speak the same menu.
+      Today the read-only menu is "Open note" alone. Open points: Delete on a
+      computed map deletes the _real_ note (recycle bin, same as everywhere) and the
+      map must recompute after, or the dead card lingers; and what the menu offers on
+      a referenced non-note file (lean: Open externally + Reveal, no Delete — the map
+      shouldn't delete files the corpus doesn't own).
+      **(3) Hide a card's edges past 3; click reveals them color-coded.** A card with
+      more than 3 outgoing reference edges hides those lines (a hub note otherwise
+      buries the map in curves); clicking the card shows its arrows, each in a
+      distinct color so they can be told apart in the burst. Design needed before
+      code: clicking doesn't select anything on the read-only surface today (left-
+      drag pans, a click is nothing) — reveal needs a single-select notion on the
+      lens, plus a click-away to hide again; whether the hidden state shows a hint
+      (lean: a small edge-count badge on the card, so hidden edges are discoverable
+      rather than invisible — _superseded 2026-08-17_: the degree-balls ask under
+      that date is the hint, and the orange out-ball is the reveal's click target); whether the threshold counts outgoing only (the ask
+      says "out of the same file" — lean: yes, incoming lines stay); and the colors
+      (lean: cycle the spec's six presets, so a revealed burst reads on both themes
+      and a "Save as canvas…" snapshot keeps legal JSONCanvas colors if the reveal
+      state ever persists — it shouldn't; the snapshot stays all-edges-shown).
+      **(4) An open button on file cards** (added same day) — a visible affordance on
+      the card to open its file; double-click already does it, but nothing on the box
+      says so. Open points: always visible or hover-revealed (the MAP chip precedent
+      says worded-and-visible won over hover once already; lean: hover-revealed here
+      — every card always wearing a button gets loud at map density, and the card
+      count badge from (3) already competes for the corner); map lens only, or every
+      canvas file card (lean: both — the affordance is about file cards, not about
+      the lens, and the board's cards have the same invisible double-click today);
+      and what it does on non-note targets (same answer the double-click gives:
+      notes open in-app, real files open externally).
+- [ ] **Double-click a project heading opens the project** (2026-08-16) — requested:
+      today becoming "current project" takes opening one of the project's files; wanted
+      a double-click on the project itself that moves there. Three shapes went up —
+      open the map (the front door), hoist the explorer pane via override state, or
+      open the most recent note — and **the recommendation was picked same day: open
+      the project's map**, because it needs no second source of truth ("current
+      project" keeps deriving from the open tab) and it lands the 2026-08-14 pick that
+      was waiting on "opening a project" becoming a real event (its "opens onto its
+      board" reading is superseded by the map pivot: the front door is the map).
+      **Implemented 2026-08-16, gates clean, verified live:** double-click on a
+      Notes-panel project heading opens its map (clicks originating on the heading's
+      buttons are ignored; the two clicks toggle the fold twice — net zero); **a map
+      tab now claims its project as the current project**, so the explorer pane, title
+      bar and creation targets move with it (the changes lens still claims none). The
+      palette's "Move to project" / "Remove from project" no longer appear on lens
+      tabs, where they always no-op'd. Verified over the devtools protocol: pane went
+      "No project" → the double-clicked project with its map tab active, a double-click
+      on the heading's + did nothing, single-click expansion unharmed.
+      _Pending hands-on:_ whether the fold's double-toggle flicker on double-click is
+      visible enough to bother; whether double-click wants to work on the
+      current-project pane's own heading too (skipped — that project is already
+      current, and its chip sits right there).
 - [ ] **Convert a folder between virtual and real** (2026-08-16) — requested: right-click
       a folder (or a file in one) offers converting a virtual folder to a real one and a
       real folder to a virtual one. Converting needs a destination pick — a virtual
@@ -88,6 +192,52 @@ The AI (or anyone) working on this repo keeps this file current while working:
       lens — computed, read-only, never persisted) rendering through the existing
       canvas engine with editing disabled; reference extraction reads the project's
       notes on open.
+      **Implemented 2026-08-16, all gates clean, verified live over the webview
+      devtools protocol.** What shipped: `map:` lens tabs in App — same prefix rule
+      and etiquette as `changes:` (never persisted or restored, never drafted, one
+      tab at most, retargeted by the next open, closes without asking, guarded out
+      of rename/move/preview); activating the tab recomputes, which is what keeps a
+      computed view trustworthy. `src/canvas/projectMap.ts` (dynamically imported,
+      its own chunk — startup and summon pay nothing) computes the document: cards
+      for the project's markdown notes, one flat layer of `group` backdrops keyed by
+      full folder path (mounts included — a mount's folder is a group like any
+      other), reference edges from markdown inline links resolved against each
+      note's real directory (mention links are markdown links, so one extractor
+      covers both; external URLs and in-page anchors don't count), referenced real
+      files placed and linked, edges deduped per (source, target), grid-per-cluster
+      layout packed into wrapping rows. The two flagged leans are built as leaned,
+      both reversible inside `projectMap.ts` alone: a folder link routes to the
+      folder's group when one is on the map — an explicitly folder-ish target
+      (trailing slash) with no group is skipped, never invented as a file card —
+      and embedded images get no node and no edge, pointed-at links do. `BoardView`
+      gains `readOnly`: the lens renders through the one engine with left-drag as
+      pan, nothing selectable/movable/deletable, menus reduced to their open-verbs,
+      and the toolbar reduced to zoom plus **Save as canvas…**, which snapshots the
+      computed text into a unique-named `<project>/map.canvas` and opens it as a
+      normal editable canvas.
+      **Verified live** (second instance over the devtools protocol, a scratch
+      project plus the real repo project): cards, flat side-by-side path-keyed
+      groups (`docs` beside `docs/decisions`, the TEST mount its own group); two
+      links to the same note drew one edge; the embedded image and the external URL
+      drew nothing; the trailing-slash folder link with no group was skipped;
+      dragging a card panned the camera and moved nothing; the card menu is
+      "Open note" alone; double-click opened the note with the map tab intact;
+      editing a note on disk and reopening the map recomputed (4 edges → 5); the
+      saved `map.canvas` is plain spec JSONCanvas with relative paths and opened
+      fully editable (add + draw bars back); map tabs stayed out of localStorage
+      and the drafts store; the tab closed silently. **One real bug the live check
+      caught:** the backend hands out backslashed directories, which never matched
+      `resolvePath`'s forward-slash results — every reference fell into the
+      placed-files cluster, cards duplicated; `projectMap` now normalizes
+      separators at its seams.
+      _Pending hands-on:_ the layout at real corpus sizes (row wrap width, cluster
+      gaps, fit-on-open); the "missing" badge on referenced project files —
+      existing target resolution calls any real-but-unlisted file under a project
+      "missing", which reads wrong on a map full of code references and deserves
+      its own look; both themes; whether left-drag-pans feels right on a lens.
+      _Known limit, the walk's own design:_ a root-resident project lists one
+      folder level deep, so its map is shallow; registered projects (every real
+      one today) walk deep.
 - [ ] **Rework the project-board button on project headings** (2026-08-16) — feedback,
       verbatim intent: the current hover-`▦` on project headings reads as trash — it
       only appears on hover, the glyph is weak, and it sits awkwardly mid-row. Wanted:
@@ -109,6 +259,17 @@ The AI (or anyone) working on this repo keeps this file current while working:
       also re-designed what the chip opens (see the project-map item above). Final
       design, ready to build: **a worded MAP chip, network glyph, always visible on
       project headings**, opening the computed read-only project map. No code yet.
+      **Implemented 2026-08-16 with the map slice, gates clean, verified live:**
+      `.map-chip` on both project-heading surfaces (Notes panel and the
+      current-project pane) — worded MAP, the sheet's network glyph at its real
+      11px, always visible, amber riding `--tint-amber` so both themes come free,
+      pushed to the right edge with the hover-`+` beside it. It opens the project
+      map; the hover-`▦` and `openBoard` are gone (`board.canvas` files stay
+      ordinary openable canvases — they just aren't the front door). The map tab
+      wears the same glyph, so the tab reads as what the chip opened; the project
+      context-menu entry and the palette command now say "Open project map".
+      _Pending hands-on:_ the chip beside long project names at the explorer's
+      narrow widths, both themes, and whether MAP at 0.62rem reads at a glance.
 - [ ] **Ink (canvas step 3) — design picked, building** (2026-08-16) — the last slice
       of the canvas item under 2026-08-10. The two decisions that item flagged as
       needing an answer up front, plus two more the code surfaced, all went up as

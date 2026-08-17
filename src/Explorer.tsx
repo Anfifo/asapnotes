@@ -68,8 +68,8 @@ interface ExplorerProps {
   onBodyContext: (e: React.MouseEvent) => void;
   /** Begin inline name-first creation in a folder ("" = notes root). */
   onStartCreate: (dir: string) => void;
-  /** Open a project's board (`board.canvas` at its root). */
-  onOpenBoard: (project: string) => void;
+  /** Open a project's map — the computed view of its notes and references. */
+  onOpenMap: (project: string) => void;
   /** Folder with an active inline create row, null when none. */
   creatingIn: string | null;
   /** What the create row makes: a note file, a real folder here, or a virtual
@@ -129,7 +129,7 @@ export function Explorer({
   onDirContext,
   onBodyContext,
   onStartCreate,
-  onOpenBoard,
+  onOpenMap,
   creatingIn,
   creatingKind,
   onCreate,
@@ -264,21 +264,37 @@ export function Explorer({
     </button>
   );
 
-  /** Hover-revealed "open this project's board" button — project headings
-   * only, since the board is per project. */
-  const boardBtn = (p: string) => (
+  /** The MAP chip — project headings only, since the map is per project.
+   * Always visible, worded, wearing the network glyph: the one heading action
+   * that opens a surface rather than creating something, so it earns a
+   * permanent, named presence where the hover-revealed + does not. */
+  const mapChip = (p: string) => (
     <button
-      className="add-btn"
-      aria-label="Open project board"
-      data-tip="Open project board"
+      className="map-chip"
+      aria-label="Open project map"
+      data-tip="Open project map"
       onClick={(e) => {
         // A summary parent would otherwise toggle its folder on this click.
         e.preventDefault();
         e.stopPropagation();
-        onOpenBoard(p);
+        onOpenMap(p);
       }}
     >
-      ▦
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </svg>
+      MAP
     </button>
   );
 
@@ -384,10 +400,19 @@ export function Explorer({
         });
       }}
     >
-      <summary onContextMenu={(e) => onDirContext(e, p)}>
+      <summary
+        onContextMenu={(e) => onDirContext(e, p)}
+        // Double-click moves into the project: its map opens, which also
+        // makes it the current project. The two clicks toggle the fold twice
+        // — net zero, so the heading ends where it started.
+        onDoubleClick={(e) => {
+          if ((e.target as Element).closest("button")) return;
+          onOpenMap(p);
+        }}
+      >
         <span className="explorer-name">{p}</span>
         {missingProjects.includes(p) && <span className="explorer-detail">folder is missing</span>}
-        {boardBtn(p)}
+        {mapChip(p)}
         {addBtn(p)}
       </summary>
       {expanded.has(p) && renderTree(buildTree(inProject(p), bareDirsIn(p)), p)}
@@ -512,7 +537,7 @@ export function Explorer({
                   {missingProjects.includes(currentProject) && (
                     <span className="explorer-detail">folder is missing</span>
                   )}
-                  {boardBtn(currentProject)}
+                  {mapChip(currentProject)}
                   {addBtn(currentProject)}
                 </h2>
                 {renderTree(

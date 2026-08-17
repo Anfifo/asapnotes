@@ -999,6 +999,45 @@ body,
   color: inherit;
 }
 
+/* The MAP chip on project headings: always visible and worded, unlike the
+   hover-revealed buttons — a project's map stays one visible click from its
+   heading. Amber because that is the canvas family's color. */
+.map-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  color: var(--tint-amber);
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  opacity: 0.65;
+}
+
+.map-chip:hover,
+.map-chip:focus-visible {
+  opacity: 1;
+}
+
+.map-chip svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+
+/* The chip already pushed everything right — the + beside it must not split
+   the slack with a second auto margin. */
+.map-chip + .add-btn {
+  margin-left: 0;
+}
+
 /* Inline name-first creation row — sits where the file will land. */
 .create-row {
   padding-top: 0;
