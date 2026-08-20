@@ -44,6 +44,65 @@ export const searchNotes = (query: string, limit: number = SEARCH_LIMIT) =>
   invoke<SearchHit[]>("search_notes", { query, limit });
 export const notesRootPath = () => invoke<string>("notes_root_path");
 
+/** Tell the MCP sidecar which project the user is on, and which notes root this
+ * process resolved. The project half is only consumed when writes are pinned to
+ * the current project; the root half always is, so the helper never has to
+ * guess where the notes live. */
+export const setMcpCurrentProject = (project: string | null) =>
+  invoke<void>("set_mcp_current_project", { project });
+
+/** One write a sidecar made, newest first in `recentCalls`. Reads are never
+ * logged, so this list is only ever things that changed a file. */
+export interface McpCall {
+  atMs: number;
+  tool: string;
+  note?: string;
+  section?: string;
+  /** One line a human can read — what the call actually changed. */
+  summary: string;
+}
+
+/** What the sidecar can reach and what it last changed — everything the MCP
+ * settings panel shows. `grants` carries every visible project; a project whose
+ * grant is `off` still appears here, because this is the panel that turns it
+ * back on. */
+export interface McpStatus {
+  notesRoot: string;
+  notesRootSource: string;
+  settingsFile: string;
+  settingsFileExists: boolean;
+  settingsError: string | null;
+  defaults: { notesRootProjects: string; linkedProjects: string; settings: string };
+  writeScope: "any" | "current";
+  currentProject: string | null;
+  grants: Record<string, string>;
+  visibleProjects: number;
+  recentCalls: McpCall[];
+  /** The helper binary beside the running app: present in an installed build,
+   * and in a source tree once it has been built. */
+  helperPath: string | null;
+  helperExists: boolean;
+  /** The stdio server's entry point, when the app can find it — a source tree
+   * only, since an installed build doesn't carry the npm package. */
+  serverPath: string | null;
+}
+
+export const mcpStatus = () => invoke<McpStatus>("mcp_status");
+
+/** What a sidecar may do with one project: "off" (the project does not exist to
+ * it), "read", or "write". */
+export const setMcpGrant = (project: string, grant: string) =>
+  invoke<void>("set_mcp_grant", { project, grant });
+
+/** Confine writes to the project the app is on ("current"), or don't ("any"). */
+export const setMcpWriteScope = (scope: "any" | "current") =>
+  invoke<void>("set_mcp_write_scope", { scope });
+
+/** Access to settings.json itself, which names every project location on the
+ * machine — off unless it is deliberately turned on. */
+export const setMcpSettingsAccess = (grant: string) =>
+  invoke<void>("set_mcp_settings_access", { grant });
+
 // --- Recent changes: external edits to markdown notes, from the snapshot store ---
 
 /** How far back the recent-changes view reaches. */

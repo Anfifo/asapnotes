@@ -1684,6 +1684,78 @@ body,
 
 /* Segmented picker — one visible group of mutually exclusive choices, so the
    current setting is readable without opening anything. */
+/* Settings → MCP. The status dot, the config block a client wants pasted into
+   it, and the write log. */
+.mcp-dot {
+  display: inline-block;
+  width: 0.45em;
+  height: 0.45em;
+  border-radius: 50%;
+  margin-right: 0.45em;
+  vertical-align: 0.08em;
+}
+
+.mcp-dot.ok {
+  background: var(--tint-green);
+}
+
+.mcp-dot.bad {
+  background: var(--tint-rose);
+}
+
+.mcp-snippet {
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  margin: 0.3rem 0 0.35rem;
+  padding: 0.45rem 0.6rem;
+  background: #f2f2f2;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 6px;
+  /* A path is long and must not widen the panel; wrapping one would make it
+     unreadable, so it scrolls instead. */
+  overflow-x: auto;
+}
+
+.mcp-btn,
+.mcp-disclose {
+  font: inherit;
+  font-size: 0.75rem;
+  color: inherit;
+  background: none;
+  border: 1px solid #d5d5d5;
+  border-radius: 5px;
+  padding: 0.05rem 0.5rem;
+  cursor: pointer;
+}
+
+.mcp-disclose {
+  border: none;
+  padding: 0;
+  color: #7a7a7a;
+}
+
+.mcp-btn:hover,
+.mcp-disclose:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.mcp-warn {
+  font-size: 0.7rem;
+  border-radius: 999px;
+  padding: 0.02rem 0.45rem;
+  margin-right: 0.3rem;
+  background: rgba(179, 64, 58, 0.12);
+  color: #8c322d;
+}
+
+.mcp-when {
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: #9a9a9a;
+  white-space: nowrap;
+}
+
 .segmented {
   display: inline-flex;
   border: 1px solid #d5d5d5;
@@ -3292,6 +3364,30 @@ body,
   .chord-record.chord-recording {
     color: #dcbf5a;
     background: rgba(220, 191, 90, 0.1);
+  }
+
+  .mcp-snippet {
+    background: #2c2c2c;
+    border-color: rgba(255, 255, 255, 0.07);
+  }
+
+  .mcp-btn {
+    border-color: #4a4a4a;
+  }
+
+  .mcp-btn:hover,
+  .mcp-disclose:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .mcp-disclose,
+  .mcp-when {
+    color: #8f8f8f;
+  }
+
+  .mcp-warn {
+    background: rgba(229, 136, 128, 0.16);
+    color: #e58880;
   }
 
   .segmented,

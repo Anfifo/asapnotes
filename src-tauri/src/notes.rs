@@ -27,163 +27,61 @@
 //! other draft is an unsaved untitled note. `Ctrl+S` on the frontend writes the
 //! note and deletes the draft.
 
+use crate::corpus::log as mcp_log;
+use crate::corpus::search::{self, Query, SearchHit};
+use crate::corpus::walk::{self, collect_md_deep, project_dirs, skip_dir, FileInfo, ProjectInfo};
+use crate::corpus::{grants, ids, tools, Roots};
 use crate::history;
-use crate::project_config::{self, Rules, Verdict};
+use crate::project_config::{self, Rules};
 use crate::settings::{self, Mount, Project, Settings};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager};
 
-const ASSETS_DIR: &str = "assets";
-const IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
-/// Directories never walked when listing or scanning folders.
-const SKIP_DIRS: [&str; 8] = [
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "out",
-    "bin",
-    "obj",
-    "logs",
-];
-const MAX_DEPTH: u32 = 12;
+pub(crate) use crate::corpus::ids::{
+    project_base, valid_segment, ASSETS_DIR, MAX_DEPTH, MAX_SEARCH_BYTES,
+};
 
-#[derive(Serialize)]
-pub struct FileInfo {
-    pub name: String,
-    pub modified_ms: u64,
+const IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+
+/// This process's corpus roots. Every command starts here, and what the roots
+/// then *mean* — which files are notes, where an id lands, what a project's
+/// rules admit — lives in [`crate::corpus`], which the MCP helper binary shares
+/// verbatim. That sharing is the point: those rules decide what a caller may
+/// see, so a second implementation of them would be an access-boundary bug.
+fn roots(app: &AppHandle) -> Result<Roots, String> {
+    crate::app_paths::roots(app)
 }
 
 fn notes_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .document_dir()
-        .map_err(|e| e.to_string())?
-        .join("asapnotes");
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir)
+    Ok(roots(app)?.notes)
 }
 
 fn drafts_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("drafts");
+    let dir = roots(app)?.data.join("drafts");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
 
-pub(crate) fn valid_segment(s: &str) -> bool {
-    !s.is_empty() && !s.contains('\\') && !s.starts_with('.')
+fn now_ms() -> u64 {
+    crate::corpus::now_ms()
 }
 
-/// Note ids come from the frontend as relative paths (`note.md` or
-/// `project/…/note.md`); reject anything that could escape its base, or name a
-/// file that is not a note — registry allowlist, or a project's re-include.
 fn checked_name<'a>(app: &AppHandle, s: &Settings, name: &'a str) -> Result<&'a str, String> {
-    let segments: Vec<&str> = name.split('/').collect();
-    let file = segments.last().copied().unwrap_or("");
-    let ok = (1..=MAX_DEPTH as usize).contains(&segments.len())
-        && segments.iter().all(|s| valid_segment(s))
-        && (segments.len() == 1 || segments[0] != ASSETS_DIR)
-        && (s.is_note(file) || re_included(app, s, name));
-    if ok {
-        Ok(name)
-    } else {
-        Err(format!("invalid note name: {name}"))
-    }
+    ids::checked_name(&roots(app)?, s, name)
 }
 
-/// The floor under re-inclusion: a `!` pattern waives the type allowlist but
-/// never pulls in an executable type or a file over the search size cap — a
-/// pattern arriving in a pulled config must not make the app touch something
-/// it would otherwise refuse to.
-fn floor_ok(name: &str, len: u64) -> bool {
-    let ext = name
-        .rsplit_once('.')
-        .map(|(_, e)| e.to_ascii_lowercase())
-        .unwrap_or_default();
-    !EXEC_EXTS.contains(&ext.as_str()) && len <= MAX_SEARCH_BYTES
-}
-
-/// Whether a project's `files` rules pull this id in past the registry
-/// allowlist — `!src/**/*.rs` making `.rs` files notes. Like the listing walk,
-/// but by id: a re-included file has to be openable, savable and draftable,
-/// not just listed.
-fn re_included(app: &AppHandle, s: &Settings, name: &str) -> bool {
-    // Top-level notes belong to no project, so no project's rules apply.
-    let Some((project, rest)) = name.split_once('/') else {
-        return false;
-    };
-    let Ok(root) = notes_root(app) else {
-        return false;
-    };
-    let rules = project_config::walk_rules(&s.files, &project_base(&root, s, project));
-    if rules.verdict(rest, false) != Verdict::Include {
-        return false;
-    }
-    // A file being created here doesn't exist yet; it enters at size zero.
-    let len = base_of(app, s, name)
-        .ok()
-        .and_then(|(base, sub)| fs::metadata(base.join(sub)).ok())
-        .map(|m| m.len())
-        .unwrap_or(0);
-    floor_ok(name, len)
-}
-
-/// Where a project's own files live: its registered location, else the
-/// notes-root subfolder that carries its name.
-fn project_base(root: &Path, s: &Settings, project: &str) -> PathBuf {
-    match s.projects.get(project).and_then(|p| p.path.as_deref()) {
-        Some(dir) => PathBuf::from(dir),
-        None => root.join(project),
-    }
-}
-
-/// The mount owning a project-relative path, and what is left of that path
-/// below it. Longest mount point first, and a mount whose name a real folder
-/// has taken over is inert: a file that exists on disk must never be invisible
-/// behind a mount, so the real folder wins and the mount reads as conflicted.
-fn mount_of<'a, 'b>(own: &Path, entry: &'a Project, rest: &'b str) -> Option<(&'a Mount, &'b str)> {
-    entry.sorted_mounts().into_iter().find_map(|m| {
-        let sub = rest
-            .strip_prefix(&m.at)
-            .and_then(|s| s.strip_prefix('/'))
-            .filter(|s| !s.is_empty())?;
-        (!own.join(&m.at).is_dir()).then_some((m, sub))
-    })
-}
-
-/// Base directory and remainder for a note id — the forward half of one ordered
-/// resolution rule, whose inverse is `noteIdOf` on the frontend. Both directions
-/// read the same table in the same order.
 fn base_of<'a>(app: &AppHandle, s: &Settings, name: &'a str) -> Result<(PathBuf, &'a str), String> {
-    let root = notes_root(app)?;
-    let Some((project, rest)) = name.split_once('/') else {
-        return Ok((root, name));
-    };
-    let Some(entry) = s.projects.get(project) else {
-        return Ok((root, name));
-    };
-    let own = project_base(&root, s, project);
-    match mount_of(&own, entry, rest) {
-        Some((mount, sub)) => Ok((PathBuf::from(&mount.path), sub)),
-        None => Ok((own, rest)),
-    }
+    Ok(ids::base_of(&roots(app)?, s, name))
 }
 
 /// Absolute path of a note id.
 fn resolve_note(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let s = settings::settings(app)?;
-    let name = checked_name(app, &s, name)?;
-    let (base, rest) = base_of(app, &s, name)?;
-    Ok(base.join(rest))
+    ids::resolve(&roots(app)?, &s, name)
 }
 
 /// Resolve a note id inside `base`, creating the project folder if needed.
@@ -196,399 +94,107 @@ fn note_path(app: &AppHandle, s: &Settings, base: &Path, name: &str) -> Result<P
     Ok(path)
 }
 
-fn modified_ms(entry: &fs::DirEntry) -> u64 {
-    entry
-        .metadata()
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
-/// Whether a walk lists this file. `rel` is its path relative to the project's
-/// location, which is what the `files` rules match against; when they don't
-/// match, the registry allowlist decides. A re-include past the allowlist is
-/// subject to the floor, which needs the file's size.
-fn listed(s: &Settings, rules: &Rules, rel: &str, name: &str, entry: &fs::DirEntry) -> bool {
-    // Dot-files never list: ids can't express them (`valid_segment`), so a
-    // listed row would only error on open. Same rule directories already have.
-    if name.starts_with('.') {
-        return false;
-    }
-    match rules.verdict(rel, false) {
-        Verdict::Exclude => false,
-        Verdict::Include => {
-            s.is_note(name) || floor_ok(name, entry.metadata().map(|m| m.len()).unwrap_or(0))
-        }
-        // Only types that ask to be listed show uninvited (`is_listed`) — the
-        // config/data/log types exist for icons and openability, not for the
-        // walks; an `!` pattern above is the opt-in. Generated lockfiles are
-        // the one machine-written *file* the extension allowlist can't
-        // express; a project's `!` rule can pull one back in.
-        Verdict::Default => s.is_listed(name) && !name.eq_ignore_ascii_case("package-lock.json"),
-    }
-}
-
-fn collect_md(
-    s: &Settings,
-    rules: &Rules,
-    dir: &Path,
-    prefix: &str,
-    out: &mut Vec<FileInfo>,
-) -> Result<(), String> {
-    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
-        if is_file && listed(s, rules, &name, &name, &entry) {
-            out.push(FileInfo {
-                name: format!("{prefix}{name}"),
-                modified_ms: modified_ms(&entry),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn project_dirs(root: &Path) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if is_dir && valid_segment(&name) && name != ASSETS_DIR {
-            out.push(name);
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-/// List all note files in `base`: top level plus one project-folder level.
-fn list_tree(s: &Settings, base: &Path) -> Result<Vec<FileInfo>, String> {
-    let mut out = Vec::new();
-    // Top-level notes belong to no project — only the personal layer applies.
-    let (personal, _) = project_config::personal_rules(&s.files);
-    collect_md(s, &personal, base, "", &mut out)?;
-    for project in project_dirs(base)? {
-        let dir = base.join(&project);
-        let rules = project_config::walk_rules(&s.files, &dir);
-        collect_md(s, &rules, &dir, &format!("{project}/"), &mut out)?;
-    }
-    out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
-    Ok(out)
-}
-
-fn skip_dir(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    // `.egg-info` folders are Python packaging metadata — generated output
-    // whose files (`SOURCES.txt`, `requires.txt`, …) all pass the allowlist.
-    name.starts_with('.') || lower.ends_with(".egg-info") || SKIP_DIRS.contains(&lower.as_str())
-}
-
-/// Recursively collect note files. Tolerant by design: unreadable directories
-/// are skipped, not fatal — one broken linked folder must not take down the
-/// whole note list. `prefix` accumulates the id, `rel` the project-relative
-/// path the `files` rules match against — they differ for a mount, whose ids
-/// start at `project/` but whose rules-space starts at `<at>/`.
-fn collect_md_deep(
-    s: &Settings,
-    rules: &Rules,
-    dir: &Path,
-    prefix: &str,
-    rel: &str,
-    depth: u32,
-    out: &mut Vec<FileInfo>,
-) {
-    if depth > MAX_DEPTH {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_file() {
-            if listed(s, rules, &format!("{rel}{name}"), &name, &entry) {
-                out.push(FileInfo {
-                    name: format!("{prefix}{name}"),
-                    modified_ms: modified_ms(&entry),
-                });
-            }
-        } else if file_type.is_dir() && valid_segment(&name) {
-            // The rules may prune a folder the walk would enter, or force one
-            // the default skip list would not — someone's notes genuinely
-            // living in `build/`. Nothing resurrects below a pruned folder,
-            // as in `.gitignore`; dot-folders stay out either way, because
-            // `valid_segment` keeps ids from ever expressing them.
-            let descend = match rules.verdict(&format!("{rel}{name}"), true) {
-                Verdict::Exclude => false,
-                Verdict::Include => true,
-                Verdict::Default => !skip_dir(&name),
-            };
-            if descend {
-                collect_md_deep(
-                    s,
-                    rules,
-                    &entry.path(),
-                    &format!("{prefix}{name}/"),
-                    &format!("{rel}{name}/"),
-                    depth + 1,
-                    out,
-                );
-            }
-        }
-    }
-}
-
-/// One folder walked besides the notes root: the id prefix its files get, the
-/// project-relative prefix its paths have in rules-space, and the owning
-/// project's `files` rules — which follow the project into its mounts, so a
-/// mount is not a way around the project's exclusions.
-struct WalkRoot {
-    prefix: String,
-    rel: String,
-    dir: PathBuf,
-    rules: Arc<Rules>,
-}
-
-/// Every folder walked besides the notes root: projects living elsewhere, and
-/// every mount. One list, because a walk that knows about one and not the
-/// other lists a note nowhere — and in search that reads as "no results"
-/// rather than as a folder nobody looked in.
-fn outside_roots(app: &AppHandle, s: &Settings) -> Result<Vec<WalkRoot>, String> {
-    let root = notes_root(app)?;
-    let mut out = Vec::new();
-    for (name, entry) in &s.projects {
-        if entry.path.is_none() && entry.mounts.is_empty() {
-            continue;
-        }
-        let own = project_base(&root, s, name);
-        let rules = Arc::new(project_config::walk_rules(&s.files, &own));
-        if entry.path.is_some() {
-            out.push(WalkRoot {
-                prefix: format!("{name}/"),
-                rel: String::new(),
-                dir: own.clone(),
-                rules: rules.clone(),
-            });
-        }
-        for m in &entry.mounts {
-            // Conflicted: the real folder of that name is walked with the
-            // project, and resolution sends its ids there too.
-            if !own.join(&m.at).is_dir() {
-                out.push(WalkRoot {
-                    prefix: format!("{name}/{}/", m.at),
-                    rel: format!("{}/", m.at),
-                    dir: PathBuf::from(&m.path),
-                    rules: rules.clone(),
-                });
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// Depth already spent by an id prefix, so `MAX_DEPTH` bounds the whole id
-/// rather than only the part below the walk's starting point.
-fn prefix_depth(prefix: &str) -> u32 {
-    prefix.matches('/').count() as u32
-}
-
 /// `deep: false` skips the walk of folders outside the notes root (which can be
 /// slow) so the first paint after launch isn't held up by it; a deep call
 /// follows.
 #[tauri::command]
 pub fn list_notes(app: AppHandle, deep: Option<bool>) -> Result<Vec<FileInfo>, String> {
     let s = settings::settings(&app)?;
-    let mut out = list_tree(&s, &notes_root(&app)?)?;
-    if deep.unwrap_or(true) {
-        for r in outside_roots(&app, &s)? {
-            collect_md_deep(
-                &s,
-                &r.rules,
-                &r.dir,
-                &r.prefix,
-                &r.rel,
-                prefix_depth(&r.prefix),
-                &mut out,
-            );
-        }
-        out.sort_by_key(|f| std::cmp::Reverse(f.modified_ms));
-    }
-    Ok(out)
+    walk::list_notes(&roots(&app)?, &s, deep.unwrap_or(true))
 }
 
-/// One matching line. Deliberately no match offsets: the frontend re-finds the
-/// needle in `text` with JS string indices, which is the only indexing that
-/// agrees with how it will slice the string for highlighting.
-#[derive(Serialize)]
-pub struct SearchHit {
-    /// Note id, same shape `list_notes` returns.
-    pub note: String,
-    /// 1-based line number, for the jump-to on click.
-    pub line: u32,
-    pub text: String,
-}
-
-/// Every note id paired with its absolute path — the same corpus `list_notes`
+/// Every note id paired with its absolute path — the same corpus [`list_notes`]
 /// enumerates, but resolved once instead of per note.
 pub(crate) fn note_paths(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
     let s = settings::settings(app)?;
-    let root = notes_root(app)?;
-    let mut out: Vec<(String, PathBuf)> = list_tree(&s, &root)?
-        .into_iter()
-        .map(|f| {
-            let path = root.join(&f.name);
-            (f.name, path)
-        })
-        .collect();
-    for r in outside_roots(app, &s)? {
-        let mut found = Vec::new();
-        collect_md_deep(
-            &s,
-            &r.rules,
-            &r.dir,
-            "",
-            &r.rel,
-            prefix_depth(&r.prefix),
-            &mut found,
-        );
-        out.extend(
-            found
-                .into_iter()
-                .map(|f| (format!("{}{}", r.prefix, f.name), r.dir.join(&f.name))),
-        );
-    }
-    Ok(out)
+    walk::note_paths(&roots(app)?, &s)
 }
 
-/// Longest line kept whole; past this a window around the match is returned so
-/// one minified file can't push megabytes through the IPC boundary.
-const MAX_HIT_CHARS: usize = 300;
-/// Files above this are assumed not to be prose and skipped.
-pub(crate) const MAX_SEARCH_BYTES: u64 = 2 * 1024 * 1024;
-
 /// Case-insensitive literal search over every note's contents.
-///
-/// A plain scan, no index: the corpus is a few hundred small markdown files,
-/// so reading them costs less than keeping a derived index honest against the
-/// other tools that edit these files.
 #[tauri::command]
 pub fn search_notes(
     app: AppHandle,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<SearchHit>, String> {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
-        return Ok(Vec::new());
+    let s = settings::settings(&app)?;
+    let mut q = Query::new(query);
+    if let Some(limit) = limit {
+        q.limit = limit;
     }
-    let limit = limit.unwrap_or(500);
-    let mut out = Vec::new();
-    for (note, path) in note_paths(&app)? {
-        if out.len() >= limit {
-            break;
-        }
-        if fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > MAX_SEARCH_BYTES {
-            continue;
-        }
-        // Unreadable file: skip, same tolerance as the listing walk.
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
-        };
-        for (i, line) in content.lines().enumerate() {
-            if out.len() >= limit {
-                break;
-            }
-            let Some(at) = line.to_lowercase().find(&needle) else {
-                continue;
-            };
-            out.push(SearchHit {
-                note: note.clone(),
-                line: i as u32 + 1,
-                text: excerpt(line, at),
-            });
-        }
-    }
-    Ok(out)
-}
-
-/// Trim a long line down to a window around `at` (a byte offset into `line`),
-/// always cutting on a char boundary.
-fn excerpt(line: &str, at: usize) -> String {
-    let line = line.trim_end();
-    if line.chars().count() <= MAX_HIT_CHARS {
-        return line.to_string();
-    }
-    // Keep a little context before the match so it doesn't hug the left edge.
-    let start = line[..at]
-        .char_indices()
-        .rev()
-        .nth(40)
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    let tail = &line[start..];
-    let end = tail
-        .char_indices()
-        .nth(MAX_HIT_CHARS)
-        .map(|(i, _)| i)
-        .unwrap_or(tail.len());
-    let mut s = String::new();
-    if start > 0 {
-        s.push('…');
-    }
-    s.push_str(&tail[..end]);
-    if end < tail.len() {
-        s.push('…');
-    }
-    s
-}
-
-/// A project heading as the explorer sees it. `missing` means its registered
-/// folder is gone from disk (removed outside the app, unplugged drive) — the
-/// walks list nothing there, so without the flag it would read as an empty
-/// project. A notes-root project can't be missing: it exists because its
-/// folder was just listed.
-#[derive(Serialize)]
-pub struct ProjectInfo {
-    pub name: String,
-    pub missing: bool,
+    // The app shows the user their own corpus — no visibility boundary here.
+    search::search(&roots(&app)?, &s, &q, None)
 }
 
 /// Notes-root subfolders plus the registered projects that live elsewhere.
-/// Registered entries without a location need no mention: their folder is under
-/// the notes root, so the walk above already found them.
 #[tauri::command]
 pub fn list_projects(app: AppHandle) -> Result<Vec<ProjectInfo>, String> {
-    let mut out: Vec<ProjectInfo> = project_dirs(&notes_root(&app)?)?
-        .into_iter()
-        .map(|name| ProjectInfo {
-            name,
-            missing: false,
-        })
-        .collect();
-    for (name, dir) in settings::settings(&app)?.located_projects() {
-        if !out.iter().any(|p| &p.name == name) {
-            out.push(ProjectInfo {
-                name: name.clone(),
-                missing: !Path::new(dir).is_dir(),
-            });
-        }
-    }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
+    let s = settings::settings(&app)?;
+    walk::list_projects(&roots(&app)?, &s)
+}
+
+/// Tell the sidecar where the app is: the project of the active note, and the
+/// notes root this process resolved.
+///
+/// The project half only matters under `mcp.writeScope: "current"`, where it is
+/// what confines an agent's writes to whatever the user is actually working on.
+/// The root half always matters — it is what stops the helper from having to
+/// guess, and a helper that guesses a different notes root serves a different
+/// corpus while looking perfectly healthy.
+#[tauri::command]
+pub fn set_mcp_current_project(app: AppHandle, project: Option<String>) -> Result<(), String> {
+    grants::publish(&roots(&app)?, project)
+}
+
+/// What the sidecar can see, and what it last changed — the read behind
+/// Settings' MCP section.
+///
+/// "Status" for a stdio server the app does not spawn can't honestly mean
+/// "connected": nothing here knows whether a client is attached. What it can
+/// mean is the last thing that actually happened, which is a fact we have.
+#[tauri::command]
+pub fn mcp_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let roots = roots(&app)?;
+    let mut status = tools::dispatch(&roots, "doctor", &serde_json::json!({}))?;
+    status["recentCalls"] =
+        serde_json::to_value(mcp_log::tail(&roots, 20)).map_err(|e| e.to_string())?;
+    let helper = helper_path();
+    status["helperExists"] = serde_json::json!(helper.as_ref().is_some_and(|p| p.exists()));
+    status["helperPath"] = serde_json::json!(helper.map(|p| p.to_string_lossy().into_owned()));
+    status["serverPath"] =
+        serde_json::json!(server_path().map(|p| p.to_string_lossy().into_owned()));
+    Ok(status)
+}
+
+/// Where the helper binary is, so Settings can print a path a client config can
+/// paste verbatim rather than a build command.
+///
+/// It sits beside the app executable because it is a second `[[bin]]` of this
+/// same crate, and the bundler ships every binary the crate builds — which is
+/// also why shipping it needs no bundle configuration of its own.
+///
+/// In a dev tree nothing is beside the executable, so the path won't exist and
+/// `helperExists` is false. The panel has to tell the two apart: offering a
+/// path that isn't there is worse than offering none.
+fn helper_path() -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "asapnotes-mcp.exe"
+    } else {
+        "asapnotes-mcp"
+    };
+    Some(std::env::current_exe().ok()?.parent()?.join(name))
+}
+
+/// The stdio server's entry point, when it is findable. In a source tree the
+/// app's executable sits three folders below the repository root, so the `mcp`
+/// package is a known hop away; an installed build does not carry that package,
+/// and returning `None` there is what lets the panel print a placeholder rather
+/// than a path that does not exist.
+fn server_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let repo = exe.parent()?.parent()?.parent()?.parent()?;
+    let entry = repo.join("mcp").join("dist").join("src").join("index.js");
+    entry.exists().then_some(entry)
 }
 
 #[tauri::command]

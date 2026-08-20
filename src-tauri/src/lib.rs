@@ -1,7 +1,31 @@
+pub mod corpus;
 mod history;
 mod notes;
 mod project_config;
 mod settings;
+
+/// Where this process's two corpus roots are, as `AppHandle` resolves them.
+///
+/// The one place the app answers that question, so that the helper binary —
+/// which answers it without an `AppHandle` — has exactly one thing to agree
+/// with. `asapnotes-mcp doctor` prints both sides for the same reason: a
+/// mismatch here serves a different corpus and *nothing looks wrong*.
+pub(crate) mod app_paths {
+    use crate::corpus::Roots;
+    use tauri::{AppHandle, Manager};
+
+    pub fn roots(app: &AppHandle) -> Result<Roots, String> {
+        let notes = app
+            .path()
+            .document_dir()
+            .map_err(|e| e.to_string())?
+            .join("asapnotes");
+        let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let roots = Roots::new(notes, data);
+        roots.ensure()?;
+        Ok(roots)
+    }
+}
 
 #[cfg(desktop)]
 mod desktop {
@@ -58,6 +82,14 @@ mod desktop {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))?;
+
+        // Publish the notes root this process resolved, so the MCP helper never
+        // has to guess it — a helper guessing a different root serves a
+        // different corpus and looks perfectly healthy doing it. Nothing is
+        // open yet, so no current project.
+        if let Ok(roots) = crate::app_paths::roots(app.handle()) {
+            let _ = crate::corpus::grants::publish(&roots, None);
+        }
 
         // Every folder outside the notes root that notes can live in — project
         // locations and mounts — so the asset protocol can serve their images
@@ -222,8 +254,13 @@ pub fn run() {
             settings::set_default_note_type,
             settings::set_open_at_launch,
             settings::set_open_files_externally,
+            settings::set_mcp_grant,
+            settings::set_mcp_write_scope,
+            settings::set_mcp_settings_access,
             notes::list_notes,
             notes::list_projects,
+            notes::set_mcp_current_project,
+            notes::mcp_status,
             notes::project_config_errors,
             notes::search_notes,
             notes::notes_root_path,

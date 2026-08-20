@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  mcpStatus,
+  setMcpGrant,
+  setMcpSettingsAccess,
+  setMcpWriteScope,
+  type McpStatus,
+} from "./notes";
 import { creatableTypes } from "./noteTypes";
 import type { Theme } from "./theme";
 import {
@@ -130,6 +137,257 @@ function ChordRow({
         {recording && error && <span className="chord-error">{error}</span>}
       </td>
     </tr>
+  );
+}
+
+/** The three grants, in the order the control offers them. "Hidden" rather than
+ * "off" because that is what it does: a hidden project answers a sidecar
+ * exactly what a note that was never there answers. */
+const MCP_GRANTS: [string, string][] = [
+  ["off", "Hidden"],
+  ["read", "Read"],
+  ["write", "Write"],
+];
+
+/** Windows paths go into the config with forward slashes — accepted there, and
+ * it keeps the pasted line free of escaped backslashes. */
+const fwd = (path: string) => path.replace(/\\/g, "/");
+
+/** A log line's time: the clock alone for today, the date as well before that,
+ * since the log reaches back further than a session. */
+function logTime(atMs: number): string {
+  const at = new Date(atMs);
+  const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const today = new Date().toDateString() === at.toDateString();
+  return today ? time : `${at.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+/**
+ * Settings → MCP: whether a sidecar can reach these notes, and what it has
+ * changed.
+ *
+ * Ordered by what someone actually comes here to do. Connecting a client is
+ * first because it is the step with nothing else to guide it — and the helper's
+ * path is something only the running app knows. Access is second, and it is
+ * editable: a grant that can only be set by hand-editing JSON is a grant nobody
+ * sets. The log is last, and it exists for the same reason the whole feature
+ * does — an app an agent can write to should show what was written.
+ *
+ * This section fetches its own state rather than taking it as props: nothing
+ * else in the app needs it, and it has to be re-read after every change here.
+ */
+function McpSection() {
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+
+  const load = useCallback(() => {
+    mcpStatus()
+      .then((s) => {
+        setStatus(s);
+        setError(null);
+      })
+      .catch((e: unknown) => setError(String(e)));
+  }, []);
+
+  useEffect(load, [load]);
+
+  /** Every change here writes settings.json, so the panel re-reads rather than
+   * assuming its own optimistic state took. */
+  const apply = (change: Promise<void>) => {
+    change.then(load).catch((e: unknown) => setError(String(e)));
+  };
+
+  if (error && !status) {
+    return (
+      <>
+        <h2>MCP</h2>
+        <p className="settings-note">{error}</p>
+      </>
+    );
+  }
+  if (!status) {
+    return (
+      <>
+        <h2>MCP</h2>
+        <p className="settings-note">Reading…</p>
+      </>
+    );
+  }
+
+  const projects = Object.entries(status.grants);
+  const writable = projects.filter(([, g]) => g === "write").length;
+  const readable = projects.filter(([, g]) => g === "read").length;
+  const hidden = projects.filter(([, g]) => g === "off").length;
+
+  // A complete, valid entry for a client's server list. Every path goes through
+  // JSON.stringify so quoting and escaping are the serializer's problem, but the
+  // lines are laid out by hand — a fully pretty-printed object puts each path on
+  // a line of its own and doubles the height of the block.
+  const server = status.serverPath ?? "<this repo>/mcp/dist/src/index.js";
+  const snippet = [
+    `"asapnotes": {`,
+    `  "command": "node",`,
+    `  "args": [${JSON.stringify(fwd(server))}]${status.helperPath ? "," : ""}`,
+    ...(status.helperPath
+      ? [`  "env": { "ASAPNOTES_MCP_HELPER": ${JSON.stringify(fwd(status.helperPath))} }`]
+      : []),
+    `}`,
+  ].join("\n");
+
+  const copy = () => {
+    navigator.clipboard.writeText(snippet).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      },
+      (e: unknown) => setError(String(e)),
+    );
+  };
+
+  return (
+    <>
+      <h2>Connect a client</h2>
+      <table>
+        <tbody>
+          <tr>
+            <td>Status</td>
+            <td>
+              <span className={status.helperExists ? "mcp-dot ok" : "mcp-dot bad"} />
+              {status.helperExists
+                ? `Ready — ${status.visibleProjects} project${status.visibleProjects === 1 ? "" : "s"} visible`
+                : "The helper hasn't been built"}
+            </td>
+          </tr>
+          <tr>
+            <td>Serving</td>
+            <td className="settings-path">{status.notesRoot}</td>
+          </tr>
+        </tbody>
+      </table>
+      {status.helperExists ? (
+        <>
+          <pre className="mcp-snippet">{snippet}</pre>
+          <p className="settings-note">
+            <button className="mcp-btn" onClick={copy}>
+              {copied ? "Copied" : "Copy"}
+            </button>{" "}
+            Paste it into your client&rsquo;s MCP server list.
+            {!status.serverPath &&
+              " Fill in where this repo's mcp folder is — an installed app doesn't carry it."}
+          </p>
+        </>
+      ) : (
+        <p className="settings-note">
+          Build it with <code>cargo build --bin asapnotes-mcp</code> in <code>src-tauri</code>, then
+          reopen this panel. An installed app ships the helper already.
+        </p>
+      )}
+      {status.settingsError && <p className="settings-note">{status.settingsError}</p>}
+
+      <h2>Project access</h2>
+      <table>
+        <tbody>
+          {projects.map(([project, grant]) => (
+            <tr key={project}>
+              <td>{project}</td>
+              <td>
+                <div className="segmented" role="group" aria-label={`MCP access to ${project}`}>
+                  {MCP_GRANTS.map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={value === grant ? "active" : undefined}
+                      aria-pressed={value === grant}
+                      onClick={() => apply(setMcpGrant(project, value))}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td>Writes</td>
+            <td>
+              <div className="segmented" role="group" aria-label="Where writes may land">
+                {(
+                  [
+                    ["current", "Current project"],
+                    ["any", "Any project"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={value === status.writeScope ? "active" : undefined}
+                    aria-pressed={value === status.writeScope}
+                    onClick={() => apply(setMcpWriteScope(value))}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td>settings.json</td>
+            <td>
+              <div className="segmented" role="group" aria-label="Access to settings.json">
+                {MCP_GRANTS.map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={value === status.defaults.settings ? "active" : undefined}
+                    aria-pressed={value === status.defaults.settings}
+                    onClick={() => apply(setMcpSettingsAccess(value))}
+                  >
+                    {value === "off" ? "Off" : label}
+                  </button>
+                ))}
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="settings-note">
+        {writable} writable · {readable} read-only · {hidden} hidden
+        {status.writeScope === "current" &&
+          ` · writes go to ${status.currentProject ?? "nothing — no note is open in a project"}`}
+      </p>
+      {status.defaults.settings !== "off" && (
+        <p className="settings-note">
+          <span className="mcp-warn">Reading settings.json</span> A sidecar can see every project
+          location on this machine. The grants themselves stay out of its reach.
+        </p>
+      )}
+      {error && <p className="settings-note">{error}</p>}
+
+      <h2>Recent activity</h2>
+      {status.recentCalls.length === 0 ? (
+        <p className="settings-note">No writes yet. Reads are never logged.</p>
+      ) : (
+        <>
+          <button className="mcp-disclose" onClick={() => setShowLog(!showLog)}>
+            {showLog ? "▾" : "▸"} {status.recentCalls.length} write
+            {status.recentCalls.length === 1 ? "" : "s"}, newest first
+          </button>
+          {showLog && (
+            <table>
+              <tbody>
+                {status.recentCalls.map((call, at) => (
+                  <tr key={`${call.atMs}-${at}`}>
+                    <td className="mcp-when">{logTime(call.atMs)}</td>
+                    <td className="settings-path">
+                      <code>{call.tool}</code> {call.summary}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
@@ -380,6 +638,7 @@ export function Settings({
             </table>
           </>
         )}
+        <McpSection />
         <h2 ref={shortcutsRef}>Keyboard shortcuts</h2>
         <p className="settings-note">Click a shortcut to change it; ↺ puts the default back.</p>
         <table>

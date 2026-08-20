@@ -1903,6 +1903,15 @@ function App() {
   // project" means now, so the pane, title bar and creation targets follow.
   const currentProject =
     open && !lensOpen ? projectOf(open.id) : mapOpen && open ? mapProjectOf(open.id) : null;
+  // Publish where we are for the MCP sidecar. Only the write pin consumes the
+  // project (`mcp.writeScope: "current"`), where it is what keeps an agent's
+  // edits inside whatever the user is actually working on — but it is sent on
+  // every change regardless, so turning the pin on doesn't need a tab switch
+  // before it means anything.
+  useEffect(() => {
+    void api.setMcpCurrentProject(currentProject).catch(() => {});
+  }, [currentProject]);
+
   // A projectless open note hoists the loose files as the explorer's top pane.
   const looseCurrent = open !== null && !lensOpen && !currentProject;
   const noteDir = open && !lensOpen ? noteDirOf(open.id) : rootPath;

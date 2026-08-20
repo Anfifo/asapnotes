@@ -27,6 +27,11 @@ trash = "5"
 # user is ".gitignore pattern syntax", and the anchoring/negation corner cases
 # are exactly where a hand-rolled matcher would quietly diverge from it.
 ignore = "0.4"
+# Known-folder resolution for the MCP helper binary, which has no AppHandle to
+# ask. Pinned to the same version Tauri itself resolves paths through, because
+# a helper that finds a *different* notes root than the app serves a different
+# corpus and nothing looks wrong.
+dirs = "6"
 # Diffs for the recent-changes view. A user-facing diff lives or dies on hunk
 # readability, which is exactly where a hand-rolled Myers would spend its
 # budget — same reasoning as `ignore` above.

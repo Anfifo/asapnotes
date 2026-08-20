@@ -12,10 +12,9 @@
 //! file again, so hand-editing while the app runs works; the frontend asks for
 //! one when the window regains focus.
 
+use crate::corpus::store;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 
@@ -70,6 +69,42 @@ pub struct Settings {
     /// Absent means the in-app view.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_files_externally: Option<bool>,
+    /// What the MCP sidecar may reach. Defaults live in [`Mcp`]'s accessors, so
+    /// an absent block behaves exactly like a written-out block of defaults.
+    #[serde(skip_serializing_if = "Mcp::is_default")]
+    pub mcp: Mcp,
+}
+
+/// Sidecar access, the whole of it. Every field here is a thing an agent must
+/// not be able to change about itself, which is why the settings write tool
+/// refuses this block outright rather than validating field by field.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Mcp {
+    /// Grant for projects that live in the notes root, and for top-level notes.
+    /// Absent means `read`: the notes root is the app's own folder, so reading
+    /// it is what a sidecar is for, while writing still has to be asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes_root: Option<String>,
+    /// Grant for projects linked from elsewhere on disk. Absent means `off` —
+    /// a linked project is somebody's repository, and the project model already
+    /// treats it as the untrusted side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked: Option<String>,
+    /// `any` (absent) or `current`: whether writes are confined to the project
+    /// the app is currently on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_scope: Option<String>,
+    /// Access to `settings.json` itself. Absent means `off`, because this file
+    /// names every machine path on the box — turning it on is a deliberate act.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<String>,
+}
+
+impl Mcp {
+    fn is_default(&self) -> bool {
+        self == &Mcp::default()
+    }
 }
 
 impl Default for Settings {
@@ -86,6 +121,7 @@ impl Default for Settings {
             default_note_type: None,
             open_at_launch: None,
             open_files_externally: None,
+            mcp: Mcp::default(),
         }
     }
 }
@@ -489,10 +525,26 @@ impl Settings {
     }
 }
 
-/// Loaded state. A parse failure keeps the app running on shipped defaults and
-/// carries the message to the frontend, rather than letting one typo in a
-/// hand-editable file take the app down; writes are refused while it is set, so
-/// the file the user has to fix is never overwritten.
+/// A shipped registry, verbatim, upgraded to the current one; any hand-edit
+/// means the whole list belongs to the user and nothing is touched. `true` when
+/// something changed, which is the caller's cue to write the file back.
+pub(crate) fn upgrade_registry(settings: &mut Settings) -> bool {
+    let shipped = settings.note_types == v1_note_types()
+        || settings.note_types == v2_note_types()
+        || settings.note_types == v3_note_types()
+        || settings.note_types == v4_note_types()
+        || settings.note_types == v5_note_types();
+    if shipped {
+        settings.note_types = default_note_types();
+    }
+    shipped
+}
+
+/// Loaded state, as this process holds it. A parse failure keeps the app
+/// running on shipped defaults and carries the message to the frontend, rather
+/// than letting one typo in a hand-editable file take the app down; writes are
+/// refused while it is set, so the file the user has to fix is never
+/// overwritten.
 struct Loaded {
     settings: Arc<Settings>,
     error: Option<String>,
@@ -502,82 +554,15 @@ struct Loaded {
 #[derive(Default)]
 pub struct Cache(Mutex<Option<Loaded>>);
 
-fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("settings.json"))
-}
-
-/// The store this file absorbed: a name → absolute path map of linked projects.
-fn legacy_store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("external_projects.json"))
-}
-
-/// Write through a temporary file: this one file now holds every project
-/// mapping, so a half-written one must never be what survives.
-fn write(path: &Path, settings: &Settings) -> Result<(), String> {
-    let data = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, data).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
-}
-
-/// Read the file, creating it — and migrating `external_projects.json` into it
-/// — on first launch. The old file is removed only once the new one is safely
-/// written.
+/// Reading and writing the file is [`crate::corpus::store`]'s job — the helper
+/// binary has to do exactly the same thing without an `AppHandle`, and two
+/// implementations of "which settings.json" is the one bug in this area that
+/// fails silently.
 fn load(app: &AppHandle) -> Result<Loaded, String> {
-    let path = store_path(app)?;
-    if path.exists() {
-        let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        return Ok(match serde_json::from_str::<Settings>(&data) {
-            Ok(mut settings) => {
-                // A file still carrying a shipped registry verbatim (either
-                // generation) is upgraded to the current one; any hand-edit
-                // means the whole list belongs to the user. A failed write
-                // only postpones this — the in-memory upgrade already
-                // happened and will be retried.
-                if settings.note_types == v1_note_types()
-                    || settings.note_types == v2_note_types()
-                    || settings.note_types == v3_note_types()
-                    || settings.note_types == v4_note_types()
-                    || settings.note_types == v5_note_types()
-                {
-                    settings.note_types = default_note_types();
-                    let _ = write(&path, &settings);
-                }
-                Loaded {
-                    settings: Arc::new(settings),
-                    error: None,
-                }
-            }
-            Err(e) => Loaded {
-                settings: Arc::new(Settings::default()),
-                error: Some(format!("settings.json: {e}")),
-            },
-        });
-    }
-    let mut settings = Settings::default();
-    let legacy = legacy_store_path(app)?;
-    if legacy.exists() {
-        let data = fs::read_to_string(&legacy).map_err(|e| e.to_string())?;
-        let map: BTreeMap<String, String> =
-            serde_json::from_str(&data).map_err(|e| format!("external_projects.json: {e}"))?;
-        for (name, path) in map {
-            settings.projects.insert(
-                name,
-                Project {
-                    path: Some(path),
-                    ..Project::default()
-                },
-            );
-        }
-    }
-    write(&path, &settings)?;
-    let _ = fs::remove_file(&legacy);
+    let loaded = store::load(&crate::app_paths::roots(app)?)?;
     Ok(Loaded {
-        settings: Arc::new(settings),
-        error: None,
+        settings: Arc::new(loaded.settings),
+        error: loaded.error,
     })
 }
 
@@ -613,7 +598,7 @@ where
     }
     let mut next = (*loaded.settings).clone();
     edit(&mut next)?;
-    write(&store_path(app)?, &next)?;
+    store::write(&crate::app_paths::roots(app)?.settings_file(), &next)?;
     *slot = Some(Loaded {
         settings: Arc::new(next),
         error: None,
@@ -695,6 +680,56 @@ pub fn set_open_at_launch(app: AppHandle, note: Option<String>) -> Result<(), St
 pub fn set_open_files_externally(app: AppHandle, on: bool) -> Result<(), String> {
     update(&app, |s| {
         s.open_files_externally = on.then_some(true);
+        Ok(())
+    })
+}
+
+/// The three grant words. Refused here rather than stored, because everything
+/// downstream reads an unknown value as `off` — so a typo arriving from the UI
+/// would silently hide a project instead of reporting a bug.
+fn checked_grant(grant: &str) -> Result<Option<String>, String> {
+    match grant {
+        "off" | "read" | "write" => Ok(Some(grant.to_string())),
+        other => Err(format!("not an MCP grant: {other}")),
+    }
+}
+
+/// What a sidecar may do with one project. Stored explicitly even when it
+/// matches the default for where the project lives: a grant someone set is
+/// worth reading back in the file, and an explicit value can't move under a
+/// changed default.
+#[tauri::command]
+pub fn set_mcp_grant(app: AppHandle, project: String, grant: String) -> Result<(), String> {
+    let value = checked_grant(&grant)?;
+    update(&app, |s| {
+        s.projects.entry(project).or_default().mcp = value;
+        Ok(())
+    })
+}
+
+/// Whether writes are confined to the project the app is currently on.
+/// `any` is shipped behavior, so it is stored as absent.
+#[tauri::command]
+pub fn set_mcp_write_scope(app: AppHandle, scope: String) -> Result<(), String> {
+    let value = match scope.as_str() {
+        "any" => None,
+        "current" => Some("current".to_string()),
+        other => return Err(format!("not a write scope: {other}")),
+    };
+    update(&app, |s| {
+        s.mcp.write_scope = value;
+        Ok(())
+    })
+}
+
+/// Access to `settings.json` itself. Separate from the per-project grants
+/// because it is a different kind of decision: this file names every project
+/// location on the machine.
+#[tauri::command]
+pub fn set_mcp_settings_access(app: AppHandle, grant: String) -> Result<(), String> {
+    let value = checked_grant(&grant)?;
+    update(&app, |s| {
+        s.mcp.settings = value;
         Ok(())
     })
 }
