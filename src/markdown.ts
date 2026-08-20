@@ -6,6 +6,7 @@
 
 import MarkdownIt from "markdown-it";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { bustAsset } from "./assetVersions";
 import { resolvePath } from "./paths";
 
 // html:false (the default) keeps raw HTML in notes escaped, so no sanitizer
@@ -18,12 +19,17 @@ const defaultImage =
 
 // Relative image links (assets/…, ../assets/…) resolve against the note's own
 // directory and go through Tauri's asset protocol so the webview can load them.
+// The raw link rides along as a data attribute, so a rendered image can be
+// traced back to its file — the annotation entry points need the path, and
+// the resolved URL no longer carries it readably.
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const token = tokens[idx];
   const src = String(token.attrGet("src") ?? "");
   const noteDir = (env as { noteDir?: string }).noteDir;
   if (noteDir && src && !/^[a-z][a-z0-9+.-]*:/i.test(src)) {
-    token.attrSet("src", convertFileSrc(resolvePath(noteDir, src)));
+    const abs = resolvePath(noteDir, src);
+    token.attrSet("src", bustAsset(abs, convertFileSrc(abs)));
+    token.attrSet("data-raw-src", src);
   }
   return defaultImage(tokens, idx, options, env, self);
 };

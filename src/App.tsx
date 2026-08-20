@@ -6,6 +6,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm as confirmDialog, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ChangesView } from "./Changes";
+import { bumpAssetVersion, bustAsset } from "./assetVersions";
 import { changedNotes, SeenTarget } from "./changesLedger";
 import { DiffLens } from "./DiffLens";
 import { CloseConfirm } from "./CloseConfirm";
@@ -86,6 +87,20 @@ const FILE_PREFIX = "file:";
 const isFileTab = (id: string) => id.startsWith(FILE_PREFIX);
 /** The absolute path (forward slashes) a file tab shows. */
 const filePathOf = (id: string) => id.slice(FILE_PREFIX.length);
+
+// The image-annotation lens: one image opened to be drawn on, rendered
+// through the canvas engine with layout locked and the ink tools live. Same
+// lens idiom as the file tab — never persisted or drafted, one tab at most,
+// retargeted by the next open — except closing asks when unsaved strokes
+// would be lost: unlike the computed lenses, there is real user work here.
+const ANNOTATE_PREFIX = "annotate:";
+const isAnnotateTab = (id: string) => id.startsWith(ANNOTATE_PREFIX);
+/** The absolute image path (forward slashes) an annotate tab draws on. */
+const annotatePathOf = (id: string) => id.slice(ANNOTATE_PREFIX.length);
+/** Image formats the flatten can write back — the webview both decodes and
+ * encodes these. Gif would silently lose animation, svg its vectors, bmp has
+ * no encoder; all three refuse with the reason instead. */
+const ANNOTATABLE = /\.(png|jpe?g|webp)$/i;
 
 const EXPLORER_DEFAULT_W = 224;
 const EXPLORER_MIN_W = 168;
@@ -290,7 +305,8 @@ function App() {
   const [tabs, setTabs] = useState<OpenNote[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("tabs") ?? "[]") as OpenNote[];
-      // Lens tabs (diff, map) are session-temporary and never restored.
+      // Lens tabs (diff, map, file, annotate) are session-temporary and never
+      // restored.
       return Array.isArray(stored)
         ? stored.filter(
             (t) =>
@@ -298,7 +314,8 @@ function App() {
               typeof t.id === "string" &&
               !isDiffTab(t.id) &&
               !isMapTab(t.id) &&
-              !isFileTab(t.id),
+              !isFileTab(t.id) &&
+              !isAnnotateTab(t.id),
           )
         : [];
     } catch {
@@ -318,6 +335,21 @@ function App() {
     text: string | null;
     error: string | null;
   } | null>(null);
+  // The annotation lens's document: computed at open (one image node at the
+  // image's natural pixels) and then owned by the surface — the note plumbing
+  // never sees it. `key` remounts the surface (fresh open, and after a save
+  // clears the flattened strokes).
+  const [annoDoc, setAnnoDoc] = useState<{ id: string; key: string; text: string } | null>(null);
+  // The session's latest serialized state, written on every stroke commit —
+  // a ref, so drawing never re-renders the app. `base` is what a save would
+  // make redundant; the close guard compares the two.
+  const annoRef = useRef<{ id: string; text: string; base: string } | null>(null);
+  // Mirror of "the session holds unflattened strokes", as state so the tab
+  // can wear the unsaved dot (updated per stroke commit, not per frame).
+  const [annoDirty, setAnnoDirty] = useState(false);
+  // Where the drawing started: the tab that was open when the image was
+  // double-clicked, so closing the lens lands back on it.
+  const annoOriginRef = useRef<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [paletteOpen, setPaletteOpen] = useState<"notes" | "commands" | null>(null);
@@ -934,6 +966,124 @@ function App() {
     [flushDraft, trackMtime],
   );
 
+  /** Open an image to be drawn on. The document is computed before the tab
+   * appears (the size read is a local decode — there is nothing slow to show
+   * a placeholder for), and re-activating the tab keeps the session's
+   * strokes: unlike the computed lenses there is real user work here, so
+   * nothing recomputes. */
+  const openAnnotateTab = useCallback(
+    async (abs: string) => {
+      const id = `${ANNOTATE_PREFIX}${abs}`;
+      // Retargeting the one annotate tab closes the previous session — which
+      // must ask first when it holds strokes a save hasn't flattened yet.
+      const prev = annoRef.current;
+      if (prev && prev.id !== id && prev.text !== prev.base) {
+        const ok = await confirmDialog(
+          `Close without saving the drawing on ${fileOf(annotatePathOf(prev.id))}?`,
+          { title: "Unsaved drawing", kind: "warning" },
+        );
+        if (!ok) return;
+        annoRef.current = null;
+      }
+      let text = annoRef.current?.id === id ? annoRef.current.text : null;
+      if (text === null) {
+        const { annotateDocFor, imageNaturalSize } = await import("./canvas/annotate");
+        const size = await imageNaturalSize(bustAsset(abs, convertFileSrc(abs)));
+        if (!size) {
+          toast(`Couldn't read ${fileOf(abs)} — is the file still there?`);
+          return;
+        }
+        text = annotateDocFor(fileOf(abs), size.width, size.height);
+        annoRef.current = { id, text, base: text };
+      }
+      await flushDraft();
+      // Remember where the drawing started, so closing the lens lands back
+      // there. Opening from the lens itself (a retarget) keeps the original.
+      const from = openRef.current?.id;
+      if (from && !isAnnotateTab(from)) annoOriginRef.current = from;
+      const tab = { id, name: null };
+      contentRef.current = "";
+      setOpen(tab);
+      setWelcome(false);
+      setTabs((ts) => {
+        const at = ts.findIndex((t) => isAnnotateTab(t.id));
+        if (at < 0) return [...ts, tab];
+        return ts[at].id === id ? ts : ts.map((t, i) => (i === at ? tab : t));
+      });
+      setDirty(false);
+      setMode("edit");
+      setPaletteOpen(null);
+      trackMtime(null);
+      setAnnoDirty(annoRef.current !== null && annoRef.current.text !== annoRef.current.base);
+      setAnnoDoc({ id, key: `${id}@${Date.now()}`, text });
+    },
+    [flushDraft, trackMtime, toast],
+  );
+
+  /** An image link in the open note, asked to be drawn on: resolve it to a
+   * real local image and open the annotation lens. */
+  const openImageAnnotate = useCallback(
+    (src: string) => {
+      const winAbs = /^[a-z]:[\\/]/i.test(src);
+      if (!winAbs && /^[a-z][a-z0-9+.-]*:/i.test(src)) {
+        toast("Only images on this machine can be drawn on.");
+        return;
+      }
+      const abs = winAbs ? src.replace(/\\/g, "/") : resolvePath(noteDirRef.current, src);
+      if (!ANNOTATABLE.test(abs)) {
+        toast("Drawing needs a png, jpg or webp image — this file would lose data.");
+        return;
+      }
+      void openAnnotateTab(abs);
+    },
+    [openAnnotateTab, toast],
+  );
+
+  /** "Save into image" on the annotation lens (the bar verb, Ctrl+S, and the
+   * close prompt's Save all land here): rasterize the strokes into the image
+   * at its natural resolution and overwrite the file — the recycle bin keeps
+   * the previous bytes. The flattened strokes then leave the document (they
+   * are pixels now; an eraser could no longer take them back), which
+   * remounts the surface with a fresh journal. Resolves true when the tab's
+   * drawing is safe in the file — saved now, or nothing to save. */
+  const saveAnnotation = useCallback(
+    async (id: string): Promise<boolean> => {
+      const a = annoRef.current;
+      if (!a || a.id !== id) return true; // no session — nothing at risk
+      if (a.text === a.base) return true; // nothing drawn since the last save
+      const abs = annotatePathOf(id);
+      const ext = (/\.([a-z0-9]+)$/i.exec(abs)?.[1] ?? "png").toLowerCase();
+      const mime =
+        ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/png";
+      const mod = await import("./canvas/annotate");
+      try {
+        const bytes = await mod.flattenAnnotation({
+          doc: a.text,
+          imageUrl: bustAsset(abs, convertFileSrc(abs)),
+          mime,
+          ink: getComputedStyle(document.documentElement).color,
+        });
+        await api.overwriteAsset(winPath(abs), bytes);
+      } catch (err) {
+        toast(`Couldn't save into the image — ${errText(err)}`);
+        return false;
+      }
+      bumpAssetVersion(abs);
+      const cleared = mod.withoutInk(a.text);
+      a.text = cleared;
+      a.base = cleared;
+      setAnnoDirty(false);
+      setAnnoDoc((d) => (d && d.id === id ? { id, key: `${id}@${Date.now()}`, text: cleared } : d));
+      toast(`Saved into ${fileOf(abs)} — the old version is in the recycle bin`);
+      return true;
+    },
+    [toast],
+  );
+
   /** Follow a Ctrl+Clicked editor target: URLs → browser; paths resolving to
    * a note → open in-app; other paths → OS default. Relative ones resolve
    * against `from` — the open note's directory, except in the changes lens,
@@ -987,6 +1137,12 @@ function App() {
     async (asName?: string, silent = false) => {
       const cur = openRef.current;
       if (!cur || isDiffTab(cur.id)) return null;
+      // Ctrl+S on the annotation lens means the one thing it can mean there:
+      // flatten the drawing into the image.
+      if (isAnnotateTab(cur.id)) {
+        if (!silent) await saveAnnotation(cur.id);
+        return null;
+      }
       cancelAutosave();
       const doc = contentRef.current;
       if (!cur.name && !asName && doc.trim() === "") return null;
@@ -1047,7 +1203,7 @@ function App() {
       // need it, since an untitled tab changed identity on the way.
       return name;
     },
-    [retagOpen, toast],
+    [retagOpen, saveAnnotation, toast],
   );
 
   autoSaveRef.current = async () => {
@@ -1063,7 +1219,14 @@ function App() {
   const changeProject = useCallback(
     async (target: string | null) => {
       const cur = openRef.current;
-      if (!cur || isDiffTab(cur.id) || isMapTab(cur.id) || isFileTab(cur.id)) return;
+      if (
+        !cur ||
+        isDiffTab(cur.id) ||
+        isMapTab(cur.id) ||
+        isFileTab(cur.id) ||
+        isAnnotateTab(cur.id)
+      )
+        return;
       if (target === projectOf(cur.id)) return;
       const newId = (target ? `${target}/` : "") + fileOf(cur.id);
       if (cur.name) {
@@ -1102,11 +1265,11 @@ function App() {
   }, []);
 
   /** Resolve a relative image src against a note directory (for live preview). */
-  const imageIn = useCallback(
-    (dir: string, src: string) =>
-      /^[a-z][a-z0-9+.-]*:/i.test(src) ? src : convertFileSrc(resolvePath(dir, src)),
-    [],
-  );
+  const imageIn = useCallback((dir: string, src: string) => {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return src;
+    const abs = resolvePath(dir, src);
+    return bustAsset(abs, convertFileSrc(abs));
+  }, []);
 
   /** The open note's own images — what the editor and the preview render. */
   const resolveImage = useCallback((src: string) => imageIn(noteDirRef.current, src), [imageIn]);
@@ -1486,11 +1649,21 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       "tabs",
-      JSON.stringify(tabs.filter((t) => !isDiffTab(t.id) && !isMapTab(t.id) && !isFileTab(t.id))),
+      JSON.stringify(
+        tabs.filter(
+          (t) => !isDiffTab(t.id) && !isMapTab(t.id) && !isFileTab(t.id) && !isAnnotateTab(t.id),
+        ),
+      ),
     );
   }, [tabs]);
   useEffect(() => {
-    if (open && !isDiffTab(open.id) && !isMapTab(open.id) && !isFileTab(open.id))
+    if (
+      open &&
+      !isDiffTab(open.id) &&
+      !isMapTab(open.id) &&
+      !isFileTab(open.id) &&
+      !isAnnotateTab(open.id)
+    )
       localStorage.setItem("activeTab", open.id);
   }, [open]);
 
@@ -1893,7 +2066,8 @@ function App() {
   const mapOpen = open !== null && isMapTab(open.id);
   // The open tab is the read-only file view of a referenced file.
   const fileOpen = open !== null && isFileTab(open.id);
-  const lensOpen = diffOpen || mapOpen || fileOpen;
+  const annotateOpen = open !== null && isAnnotateTab(open.id);
+  const lensOpen = diffOpen || mapOpen || fileOpen || annotateOpen;
   // The open tab is a canvas: the board view renders instead of the editor.
   const canvasOpen = open !== null && !lensOpen && viewOf(open.id) === "canvas";
   const canPreview = open ? !lensOpen && hasFeature(open.id, "preview") : !welcome;
@@ -1941,7 +2115,7 @@ function App() {
     // Extension first: an image is never a note, but it does resolve to an id
     // when it sits under the notes root, which would read as a missing note.
     if (IMAGE_FILE.test(file))
-      return { kind: "image", id: null, url: convertFileSrc(abs), modifiedMs: 0 };
+      return { kind: "image", id: null, url: bustAsset(abs, convertFileSrc(abs)), modifiedMs: 0 };
     let id = noteIdOf(abs);
     if (!id && noteNames.has(file)) id = file;
     if (id === null) return { kind: "file", id: null, url: null, modifiedMs: 0 };
@@ -2021,7 +2195,14 @@ function App() {
   };
 
   const startRename = () => {
-    if (!open || isDiffTab(open.id) || isMapTab(open.id) || isFileTab(open.id)) return;
+    if (
+      !open ||
+      isDiffTab(open.id) ||
+      isMapTab(open.id) ||
+      isFileTab(open.id) ||
+      isAnnotateTab(open.id)
+    )
+      return;
     setRenameValue(open.name ? fileOf(open.name) : "");
     setRenaming(true);
   };
@@ -2394,7 +2575,11 @@ function App() {
           ? // Re-read on activation; a file that vanished shows the reason,
             // with "Open externally" still on the header.
             openFileTab(filePathOf(id)).then(() => true)
-          : openItem({ id, isNote: noteNames.has(id) }, draftIds);
+          : isAnnotateTab(id)
+            ? // Re-activating keeps the drawing session — real user work,
+              // nothing recomputes.
+              openAnnotateTab(annotatePathOf(id)).then(() => true)
+            : openItem({ id, isNote: noteNames.has(id) }, draftIds);
 
   /** Enter the zero-tab state: flush any pending draft, drop the editor
    * surface, show the welcome panel. Reached only by closes that empty the
@@ -2463,12 +2648,44 @@ function App() {
     void openItem({ id: note, isNote: true }, draftIds).then(closeLens);
   };
 
+  /** Close the annotate tab and land back where the drawing started — the
+   * tab the image was double-clicked from, when it is still in the strip. */
+  const closeAnnotateTab = (id: string) => {
+    annoRef.current = null;
+    setAnnoDirty(false);
+    const origin = annoOriginRef.current;
+    annoOriginRef.current = null;
+    const cur = tabsRef.current;
+    const idx = cur.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const rest = cur.filter((t) => t.id !== id);
+    setTabs(rest);
+    if (openRef.current?.id !== id) return;
+    if (origin && rest.some((t) => t.id === origin)) {
+      void openTabItem(origin);
+      return;
+    }
+    void handOff(rest, idx);
+  };
+
   /** Close a tab, stopping to ask when its content would otherwise live on
    * only as a shadow draft: Save / Discard / Cancel. Dirty buffer means ask
    * when the tab is active; a draft means ask when it's in the background.
    * A never-typed untitled tab closes silently and its empty draft goes too. */
   const requestCloseTab = (id: string) => {
     // A lens tab holds no content of its own — nothing to save or discard.
+    // The annotation lens is the exception: its strokes are real user work,
+    // so an unflattened drawing gets the same Save / Discard / Cancel stop
+    // a dirty note gets (Save flattens into the image).
+    if (isAnnotateTab(id)) {
+      const a = annoRef.current;
+      if (a && a.id === id && a.text !== a.base) {
+        setCloseAsk(id);
+        return;
+      }
+      closeAnnotateTab(id);
+      return;
+    }
     if (isDiffTab(id) || isMapTab(id) || isFileTab(id)) {
       closeTab(id);
       return;
@@ -2528,6 +2745,12 @@ function App() {
    * save that didn't happen (guard declined, error) keeps the tab open. */
   const closeAskSave = async (id: string) => {
     setCloseAsk(null);
+    // The annotation lens: Save means flatten into the image; the tab only
+    // closes when the write really happened.
+    if (isAnnotateTab(id)) {
+      if (await saveAnnotation(id)) closeAnnotateTab(id);
+      return;
+    }
     try {
       // A background tab that failed to activate (file and draft gone) was
       // dropped by openTabItem — saving now would save the wrong note.
@@ -2543,6 +2766,12 @@ function App() {
    * the recycle bin holds exactly what was discarded, then trash it. */
   const closeAskDiscard = async (id: string) => {
     setCloseAsk(null);
+    // The annotation lens holds no draft — discarding is just letting the
+    // strokes go (the image file was never touched).
+    if (isAnnotateTab(id)) {
+      closeAnnotateTab(id);
+      return;
+    }
     try {
       if (openRef.current?.id === id) {
         cancelAutosave();
@@ -3071,6 +3300,7 @@ function App() {
                 const diffNote = isDiffTab(t.id) ? diffNoteOf(t.id) : null;
                 const mapProject = isMapTab(t.id) ? mapProjectOf(t.id) : null;
                 const lensFile = isFileTab(t.id) ? filePathOf(t.id) : null;
+                const annoFile = isAnnotateTab(t.id) ? annotatePathOf(t.id) : null;
                 return (
                   <div
                     key={t.id}
@@ -3082,7 +3312,9 @@ function App() {
                           ? `Project map — ${mapProject}`
                           : lensFile
                             ? `Read-only — ${lensFile}`
-                            : (t.name ?? "Unsaved note — double-click to name")
+                            : annoFile
+                              ? `Draw on image — ${annoFile}`
+                              : (t.name ?? "Unsaved note — double-click to name")
                     }
                     onClick={() => {
                       if (!active) void openTabItem(t.id);
@@ -3126,6 +3358,11 @@ function App() {
                             </span>
                             {fileOf(lensFile)}
                           </>
+                        ) : annoFile ? (
+                          <>
+                            <span className="tab-anno">✎</span>
+                            {fileOf(annoFile)}
+                          </>
                         ) : t.name ? (
                           fileOf(t.name)
                         ) : (
@@ -3133,10 +3370,14 @@ function App() {
                         )}
                       </span>
                     )}
-                    {(active ? dirty : draftIds.has(t.id)) && (
+                    {(annoFile ? annoDirty : active ? dirty : draftIds.has(t.id)) && (
                       <span
                         className="dirty"
-                        data-tip={`Unsaved — autosaved as draft. ${kb("save")} to save.`}
+                        data-tip={
+                          annoFile
+                            ? `Drawing not saved into the image yet. ${kb("save")} to save.`
+                            : `Unsaved — autosaved as draft. ${kb("save")} to save.`
+                        }
                       >
                         ●
                       </span>
@@ -3205,9 +3446,21 @@ function App() {
           <div
             className="content-panel"
             onContextMenu={(e) => {
+              if (lensOpen || canvasOpen) return;
+              // A rendered image (live preview or the preview pane) leads
+              // with its own verb — the right-click half of the annotation
+              // entry point.
+              const raw = (e.target as HTMLElement).closest("img")?.dataset.rawSrc;
+              if (raw) {
+                openContextMenu(e, [
+                  { label: "Draw on image", run: () => openImageAnnotate(raw) },
+                  ...(mode === "edit" ? ["sep" as const, ...editEntries] : []),
+                ]);
+                return;
+              }
               // The Edit menu talks to the editor, which a lens tab or a
               // board doesn't have (the board raises its own menus).
-              if (mode === "edit" && !lensOpen && !canvasOpen) openContextMenu(e, editEntries);
+              if (mode === "edit") openContextMenu(e, editEntries);
             }}
           >
             {open && diffOpen && (
@@ -3286,6 +3539,57 @@ function App() {
                 )}
               </div>
             )}
+            {annotateOpen && open && annoDoc && annoDoc.id === open.id && (
+              <Suspense fallback={null}>
+                <BoardView
+                  key={annoDoc.key}
+                  initialDoc={annoDoc.text}
+                  onChange={(text) => {
+                    const a = annoRef.current;
+                    if (a?.id !== annoDoc.id) return;
+                    a.text = text;
+                    setAnnoDirty(text !== a.base);
+                  }}
+                  role="canvas"
+                  readOnly
+                  annotate
+                  inkTools
+                  onSaveAs={() => void saveAnnotation(annoDoc.id)}
+                  noteDir={annotatePathOf(open.id).replace(/\/[^/]*$/, "")}
+                  resolveTarget={() => {
+                    const abs = annotatePathOf(open.id);
+                    return {
+                      kind: "image",
+                      id: null,
+                      url: bustAsset(abs, convertFileSrc(abs)),
+                      modifiedMs: 0,
+                    };
+                  }}
+                  loadExcerpt={async () => null}
+                  fileFor={(id) => id}
+                  addItems={[]}
+                  onOpenNote={() => {}}
+                  onOpenLink={(target) =>
+                    openLink(target, annotatePathOf(open.id).replace(/\/[^/]*$/, ""))
+                  }
+                  onOpenFile={() =>
+                    void api
+                      .openExternal(winPath(annotatePathOf(open.id)))
+                      .catch((err: unknown) => toast(`Couldn't open that file — ${errText(err)}`))
+                  }
+                  importImage={async () => null}
+                  pickImages={async () => []}
+                  block={{
+                    onPasteImage: pasteImage,
+                    resolveImage,
+                    mentionItems,
+                    mentionLink,
+                    features: markdownFeatures(),
+                  }}
+                  onMenu={openContextMenu}
+                />
+              </Suspense>
+            )}
             {canvasOpen && open && (
               <Suspense fallback={null}>
                 <BoardView
@@ -3324,6 +3628,7 @@ function App() {
                 onChange={handleChange}
                 onPasteImage={pasteImage}
                 resolveImage={resolveImage}
+                onImageOpen={openImageAnnotate}
                 mentionItems={mentionItems}
                 mentionLink={mentionLink}
                 onOpenLink={openLink}
@@ -3333,7 +3638,9 @@ function App() {
                 features={featuresOf(open.id)}
               />
             )}
-            {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
+            {open && mode === "preview" && (
+              <Preview doc={initialDoc} noteDir={noteDir} onImageOpen={openImageAnnotate} />
+            )}
             {!open && welcome && (
               <WelcomePanel
                 actions={welcomeActions}
@@ -3436,8 +3743,14 @@ function App() {
       )}
       {closeAskTab && (
         <CloseConfirm
-          label={closeAskTab.name ? fileOf(closeAskTab.name) : "Untitled note"}
-          untitled={closeAskTab.name === null}
+          label={
+            isAnnotateTab(closeAskTab.id)
+              ? fileOf(annotatePathOf(closeAskTab.id))
+              : closeAskTab.name
+                ? fileOf(closeAskTab.name)
+                : "Untitled note"
+          }
+          untitled={!isAnnotateTab(closeAskTab.id) && closeAskTab.name === null}
           onSave={() => void closeAskSave(closeAskTab.id)}
           onDiscard={() => void closeAskDiscard(closeAskTab.id)}
           onCancel={() => {

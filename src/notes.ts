@@ -183,6 +183,11 @@ export const saveAsset = (bytes: Uint8Array, ext: string, note?: string | null) 
   });
 export const importAsset = (src: string, note?: string | null) =>
   invoke<string>("import_asset", { src, note: note ?? null });
+/** Overwrite an image file with the flattened annotation bytes; the previous
+ * bytes go to the recycle bin first. The path rides in a header, so it must
+ * survive the ASCII-only rule. */
+export const overwriteAsset = (path: string, bytes: Uint8Array) =>
+  invoke<void>("overwrite_asset", bytes, { headers: { path: encodeURIComponent(path) } });
 export const readNote = (name: string) => invoke<string>("read_note", { name });
 /** A referenced file's text for the read-only file view — any absolute path,
  * inside the corpus or out. Rejects binary or oversized files with the reason. */

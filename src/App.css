@@ -894,6 +894,12 @@ body,
   height: 11px;
 }
 
+/* The annotation tab wears the draw tool's own pen glyph. */
+.tab-anno {
+  color: var(--tint-amber);
+  margin-right: 0.3rem;
+}
+
 /* No CSS gap here: the 6px between panels is an element — a plain spacer or a
    draggable split. Its own display beats the `hidden` attribute, hence the rule. */
 .explorer-cards {

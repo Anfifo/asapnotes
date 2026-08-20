@@ -71,16 +71,30 @@ class BulletWidget extends WidgetType {
 }
 
 class ImageWidget extends WidgetType {
-  constructor(readonly src: string) {
+  constructor(
+    readonly src: string,
+    /** The link as written in the note — what the annotation flow resolves. */
+    readonly raw: string,
+    readonly onOpen?: (raw: string) => void,
+  ) {
     super();
   }
   eq(other: ImageWidget) {
-    return other.src === this.src;
+    return other.src === this.src && other.raw === this.raw;
   }
   toDOM() {
     const img = document.createElement("img");
     img.className = "cm-live-image";
     img.src = this.src;
+    img.dataset.rawSrc = this.raw;
+    if (this.onOpen) {
+      const onOpen = this.onOpen;
+      const raw = this.raw;
+      img.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        onOpen(raw);
+      });
+    }
     return img;
   }
   // Let clicks through so CodeMirror places the cursor (which reveals the syntax).
@@ -93,7 +107,11 @@ const dim = Decoration.mark({ class: "cm-syntax" });
 const quoteLine = Decoration.line({ class: "cm-blockquote" });
 const codeLine = Decoration.line({ class: "cm-codeline" });
 
-function buildDecorations(view: EditorView, resolveImage: (src: string) => string): DecorationSet {
+function buildDecorations(
+  view: EditorView,
+  resolveImage: (src: string) => string,
+  onImageOpen?: (raw: string) => void,
+): DecorationSet {
   const decos: Range<Decoration>[] = [];
   const { doc, selection } = view.state;
 
@@ -148,9 +166,10 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
             if (onCursorLine(node.from, node.to)) break;
             const url = node.node.getChild("URL");
             if (url) {
+              const raw = doc.sliceString(url.from, url.to);
               decos.push(
                 Decoration.replace({
-                  widget: new ImageWidget(resolveImage(doc.sliceString(url.from, url.to))),
+                  widget: new ImageWidget(resolveImage(raw), raw, onImageOpen),
                 }).range(node.from, node.to),
               );
               return false;
@@ -171,16 +190,19 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
   return Decoration.set(decos, true);
 }
 
-export function livePreview(resolveImage: (src: string) => string) {
+export function livePreview(
+  resolveImage: (src: string) => string,
+  onImageOpen?: (raw: string) => void,
+) {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       constructor(view: EditorView) {
-        this.decorations = buildDecorations(view, resolveImage);
+        this.decorations = buildDecorations(view, resolveImage, onImageOpen);
       }
       update(update: ViewUpdate) {
         if (update.docChanged || update.selectionSet || update.viewportChanged) {
-          this.decorations = buildDecorations(update.view, resolveImage);
+          this.decorations = buildDecorations(update.view, resolveImage, onImageOpen);
         }
       }
     },

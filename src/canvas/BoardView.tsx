@@ -19,6 +19,7 @@ import {
   serializeCanvas,
   type Side,
 } from "./jsoncanvas";
+import { nodeAccent, PRESET_COLORS, strokePath } from "./ink";
 
 /**
  * A canvas file as a surface: its nodes are cards laid out freely under a
@@ -114,17 +115,33 @@ interface BoardViewProps {
    * edits. Left-drag pans, the add and draw verbs are gone, and menus keep
    * only their open-things entries. */
   readOnly?: boolean;
+  /** The image-annotation lens: rides the read-only gates (nothing selects,
+   * moves or deletes) but keeps the ink tools live — the pen comes up raised
+   * with a preset color, and the save verb flattens instead of snapshotting.
+   * Only meaningful together with `readOnly` and `inkTools`. */
+  annotate?: boolean;
   /** Offered on a read-only surface: snapshot what is shown into a real,
-   * editable canvas file. */
+   * editable canvas file (or, on the annotation lens, flatten the drawing
+   * into the image). The lens raises it from its own menu; the annotation lens
+   * also wears it as a button, because flattening is what that tab is for. */
   onSaveAs?: () => void;
+  /** Where to open the camera, read once at mount. A tab that remounts every
+   * time it is activated can't hold its own pan and zoom, so the app keeps
+   * them and hands them back here. Absent (or null): fit the content, which
+   * is what a surface seen for the first time wants. */
+  camera?: Camera | null;
+  /** Every camera move, for the app to remember. */
+  onCamera?: (cam: Camera) => void;
   /** What an empty surface says — a computed lens has its own story. */
   emptyHint?: string;
 }
 
 const MIN_W = 120;
 const MIN_H = 40;
-const Z_MIN = 0.25;
-const Z_MAX = 2;
+/** Zoom bounds, a factor of ten either side of 1 — so the slider's middle is
+ * 100%, its ends are 10% and 1000%, and its position is just log10(z). */
+const Z_MIN = 0.1;
+const Z_MAX = 10;
 /** Pointer travel below this is a click, not a drag — keeps selection clicks
  * from committing micro-moves into the file. */
 const DRAG_SLOP = 3;
@@ -285,49 +302,10 @@ const curve = (a: Point, aSide: Side, b: Point, bSide: Side) => {
   };
 };
 
-/** Spec colors are a preset "1".."6" or a hex value; both become one CSS
- * custom property the node's own rules pick up. Presets are named rather than
- * numbered so the stylesheet reads. */
-const PRESET_COLORS = ["#c8402f", "#c8762f", "#c8a72f", "#4f9e4f", "#3f8fbf", "#8f5fbf"];
-const nodeAccent = (color: string | undefined): string | undefined => {
-  if (!color) return undefined;
-  if (color.startsWith("#")) return color;
-  const n = Number(color);
-  return Number.isInteger(n) && n >= 1 && n <= 6 ? PRESET_COLORS[n - 1] : undefined;
-};
-
 /** Pointer pressure for a stroke point: 0.5 is the neutral "no pen data"
  * value, which is also what a mouse reports — a zero (some pens on hover
  * transitions) would draw nothing. */
 const penPressure = (e: { pressure: number }) => (e.pressure > 0 ? e.pressure : 0.5);
-
-/** How pressure modulates the nominal width: neutral 0.5 is 1×, a light pen
- * touch thins toward 0.4×, full pressure doubles. */
-const pressureScale = (p: number) => Math.min(2, Math.max(0.4, p * 2));
-
-/** Draw one stroke: each segment carries its own width so pressure reads as a
- * taper, and round caps make the per-segment joints invisible. A single point
- * is a dot. Coordinates are whatever space `ctx` is transformed into. */
-const strokePath = (ctx: CanvasRenderingContext2D, s: InkStroke, color: string) => {
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  const pts = s.points;
-  if (pts.length === 1) {
-    ctx.beginPath();
-    ctx.arc(pts[0][0], pts[0][1], (s.width * pressureScale(pts[0][2])) / 2, 0, Math.PI * 2);
-    ctx.fill();
-    return;
-  }
-  for (let i = 1; i < pts.length; i++) {
-    ctx.beginPath();
-    ctx.moveTo(pts[i - 1][0], pts[i - 1][1]);
-    ctx.lineTo(pts[i][0], pts[i][1]);
-    ctx.lineWidth = (s.width * (pressureScale(pts[i - 1][2]) + pressureScale(pts[i][2]))) / 2;
-    ctx.stroke();
-  }
-};
 
 /** Bounding box of stroke points, padded so the line's own width (up to its
  * 2× pressure ceiling) never clips at the node border. */
@@ -444,6 +422,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     onMenu,
     inkTools,
     readOnly = false,
+    annotate = false,
     onSaveAs,
     emptyHint,
   },
@@ -1068,8 +1047,10 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
    * draw tool up, the left button draws or erases instead. */
   const startSurfaceDrag = (e: React.PointerEvent) => {
     // A read-only surface has no marquee to draw, so the left button goes
-    // back to the most natural thing it could do: panning.
-    const pans = e.button === 1 || (e.button === 0 && (panReady || readOnly));
+    // back to the most natural thing it could do: panning — unless a draw
+    // tool is up (the annotation lens), which owns the left button as ever.
+    const pans =
+      e.button === 1 || (e.button === 0 && (panReady || (readOnly && tool === "select")));
     if (e.button !== 0 && !pans) return;
     stopEditing();
     setAddOpen(false);
@@ -1390,10 +1371,30 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     // preventing the default, which is exactly how Ctrl+Z past the start of a
     // block's history falls through to the canvas journal.
     if (e.defaultPrevented) return;
-    if (readOnly) return; // nothing to select, delete or undo on a lens
+    // A lens has nothing to select or delete; the annotation lens still owns
+    // the ink keys — Esc puts the pen down, Ctrl+Z takes a stroke back.
+    if (readOnly && !annotate) return;
     if ((e.target as Element).closest("input")) return; // the picker owns its keys
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
+    if (readOnly) {
+      if (e.key === "Escape" && tool !== "select") {
+        pickTool("select");
+        e.preventDefault();
+        e.stopPropagation();
+      } else if (mod && key === "z" && !e.shiftKey) {
+        if (undo()) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      } else if ((mod && key === "y") || (mod && e.shiftKey && key === "z")) {
+        if (redo()) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+      return;
+    }
     if (e.key === "Escape" && tool !== "select") {
       // The window's Esc means "hide"; an active draw tool owns the key the
       // way an open block does, and puts the pen down instead.
@@ -1533,7 +1534,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
       return;
     }
     if (n.type === "ink") {
-      if (!readOnly) drawMore(n);
+      if (!readOnly || annotate) drawMore(n);
       return;
     }
     if (n.type === "link" && n.url) {
@@ -1554,7 +1555,7 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     if (ids.length === 1) {
       if (n.type === "text" && !readOnly)
         entries.push({ label: "Edit text", run: () => setEditing(n.id) });
-      if (n.type === "ink" && inkTools && !readOnly)
+      if (n.type === "ink" && inkTools && (!readOnly || annotate))
         entries.push({ label: "Draw more here", run: () => drawMore(n) });
       if (target?.kind === "note" && target.id)
         entries.push({ label: "Open note", run: () => onOpenNote(target.id!) });
@@ -1918,13 +1919,16 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
         </div>
       )}
       <div className="board-bar" onPointerDown={(e) => e.stopPropagation()}>
-        {readOnly && onSaveAs && (
+        {/* Flattening is what the annotation lens is for, so it wears the verb.
+            The map's snapshot lives in the app's File menu instead — it writes
+            a file, which is not something a view's own toolbar should imply. */}
+        {annotate && onSaveAs && (
           <button
             className="board-btn"
-            data-tip="Snapshot this map into a real, editable canvas file"
+            data-tip="Flatten the drawing into the image file — the recycle bin keeps the old version"
             onClick={onSaveAs}
           >
-            Save as canvas…
+            Save into image
           </button>
         )}
         {!readOnly && (

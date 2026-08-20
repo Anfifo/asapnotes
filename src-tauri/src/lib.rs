@@ -280,6 +280,7 @@ pub fn run() {
             notes::delete_draft,
             notes::discard_draft,
             notes::save_asset,
+            notes::overwrite_asset,
             notes::import_asset,
             notes::scan_projects,
             notes::folder_info,
