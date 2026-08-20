@@ -348,6 +348,21 @@ pub fn reveal_note(app: AppHandle, name: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Show any real file in File Explorer — referenced files on the project map
+/// live outside the corpus, so this takes a path where `reveal_note` takes a
+/// note id.
+#[tauri::command]
+pub fn reveal_path(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let p = PathBuf::from(&path);
+    if !p.is_absolute() || !p.exists() {
+        return Err(format!("not an existing absolute path: {path}"));
+    }
+    app.opener()
+        .reveal_item_in_dir(p)
+        .map_err(|e| e.to_string())
+}
+
 /// Extensions never launched from note text — revealed in Explorer instead,
 /// so a Ctrl+Click can't start a program.
 const EXEC_EXTS: [&str; 17] = [

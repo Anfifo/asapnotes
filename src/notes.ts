@@ -169,6 +169,8 @@ export const deleteFolder = (dir: string) => invoke<void>("delete_folder", { dir
 /** Recycle bin, not hard delete; the note's draft goes with it. */
 export const deleteNote = (name: string) => invoke<void>("delete_note", { name });
 export const revealNote = (name: string) => invoke<void>("reveal_note", { name });
+/** Reveal any real file by absolute path — for referenced files outside the corpus. */
+export const revealPath = (path: string) => invoke<void>("reveal_path", { path });
 /** URL → default handler; existing absolute path → default app, which for a
  * folder means opening it in File Explorer (executables are revealed there
  * instead, never run). Backs Ctrl+Clicked link targets and the explorer's

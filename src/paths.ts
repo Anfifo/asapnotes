@@ -4,6 +4,11 @@ export const fileOf = (path: string) => path.split("/").pop() ?? path;
 /** Project (first path segment) of a note path, or null for loose notes. */
 export const projectOf = (path: string) => (path.includes("/") ? path.split("/")[0] : null);
 
+/** Extensions the webview renders as a picture — such a target shows its own
+ * content, so it is sized and treated differently from a file that can only
+ * offer its name. */
+export const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
 /**
  * Relative path from an absolute directory to an absolute file, with forward
  * slashes (markdown link form). Null when no relative path exists — different

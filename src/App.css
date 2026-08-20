@@ -71,6 +71,22 @@
   --tint-gray: #6e6e6e;
   --tint-teal: #10736b;
 
+  /* Folder-tab palette for the project map: six hand-tuned pairs (the dark
+     block re-tunes them), assigned to a folder by a stable hash of its path
+     so it keeps its color across recomputes. Lens-only chrome, never
+     persisted, so these owe nothing to the canvas format's node colors.
+     --tab-mix is how much folder color a tab's fill borrows over the card
+     surface; parent breadcrumb segments sit one step stronger. */
+  --folder-0: #2f7f93;
+  --folder-1: #5c7d2a;
+  --folder-2: #a04f6a;
+  --folder-3: #7a4fa0;
+  --folder-4: #9c6f1d;
+  --folder-5: #3f6fa5;
+  --tab-card: #ffffff;
+  --tab-mix: 10%;
+  --tab-mix-parent: 14%;
+
   /* One text size for the popup surfaces (menu dropdowns, context menus,
      palette rows, mention dropdown); their paddings are em so the geometry
      tracks it. Settings → Appearance scales this token (85/100/115%). */
@@ -2501,7 +2517,7 @@ body,
 
 /* A read-only lens pans with the plain left button, so the surface says so:
    grab at rest, grabbing mid-pan, and a pointer over anything that opens.
-   Group backdrops open nothing, so they stay grabbable ground. */
+   (Group backdrops never paint on a lens — cards wear folder tabs instead.) */
 .board-readonly {
   cursor: grab;
 }
@@ -2510,14 +2526,9 @@ body,
   cursor: pointer;
 }
 
-.board-readonly .board-node-group,
 .board-readonly.board-panning,
-.board-readonly.board-panning .board-node {
-  cursor: grab;
-}
-
-.board-readonly.board-panning,
-.board-readonly.board-panning .board-node {
+.board-readonly.board-panning .board-node,
+.board-readonly.board-panning .board-tab {
   cursor: grabbing;
 }
 
@@ -2592,9 +2603,8 @@ body,
 }
 
 /* Degree balls on a file card's edges: green counts what references it,
-   orange what it references. On a read-only lens the orange one doubles as
-   the toggle for a hub's hidden reference lines. White text holds on both
-   themes' green/orange tints. */
+   orange what it references. White text holds on both themes' green/orange
+   tints. */
 .board-ball {
   position: absolute;
   top: 50%;
@@ -2622,16 +2632,50 @@ body,
   background: var(--tint-orange);
 }
 
-.board-readonly .board-ball-btn {
-  pointer-events: auto;
+/* The open the double-click already provides, made visible: a button in a
+   file card's free top-right corner, hidden until the card is hovered so a
+   map of many cards stays quiet at rest. */
+.board-open-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 6px;
+  color: #6f6f6f;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
 }
 
-/* The card whose hidden lines are on show — orange, matching the ball that
-   toggled it. */
-.board-node.revealed {
-  border-color: var(--tint-orange);
-  box-shadow: 0 0 0 1px var(--tint-orange);
+.board-node:hover .board-open-btn,
+.board-open-btn:focus-visible {
+  opacity: 1;
+}
+
+.board-open-btn:hover {
+  color: var(--tint-amber);
+  border-color: var(--tint-amber);
+}
+
+.board-open-btn svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+/* A card whose reference lines are pinned on show, in the same color its
+   lines wear. */
+.board-node.traced {
+  border-color: var(--node-accent);
+  box-shadow: 0 0 0 1px var(--node-accent);
 }
 
 /* The note's opening text, clipped by the card and fading at the cut. */
@@ -2744,6 +2788,63 @@ body,
   color: #6f6f6f;
 }
 
+/* Folder tabs — how the map lens shows folders instead of painting group
+   boxes: each note card wears its folder as a small tab rising from its top
+   edge, in the folder's color. A subfolder's tab reads as a breadcrumb — the
+   parent segment named in its own material, middle folders collapsing to a
+   key square past depth 2. The tab behaves as part of its card: a press
+   falls through and pans, double-click opens the note. */
+.board-tab {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  height: 20px;
+  line-height: 19px;
+  font-size: 10.5px;
+  font-weight: 650;
+  border: 1px solid color-mix(in srgb, var(--tab-color) 55%, transparent);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.board-tab-seg {
+  min-width: 0;
+  padding: 0 9px;
+  color: var(--seg-color);
+  background: color-mix(in srgb, var(--seg-color) var(--tab-mix), var(--tab-card));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* When the tab runs out of room, the parent gives way first — the leaf is
+   the folder the card actually lives in. */
+.board-tab-parent {
+  flex-shrink: 4;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--seg-color) var(--tab-mix-parent), var(--tab-card));
+  border-right: 1px solid color-mix(in srgb, var(--seg-color) 40%, transparent);
+}
+
+.board-tab-parent ~ .board-tab-seg {
+  padding: 0 8px;
+}
+
+.board-tab-key {
+  flex-shrink: 0;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  margin: 0 6px 0 8px;
+  border-radius: 2px;
+}
+
+.board-tab-key + .board-tab-seg {
+  padding-left: 0;
+}
+
 /* Link nodes: the URL, never an embed — loading the page would be a request
    the user never made. */
 .board-link-body {
@@ -2799,6 +2900,12 @@ body,
   fill: none;
   stroke: var(--node-accent, rgba(0, 0, 0, 0.38));
   stroke-width: 2;
+}
+
+/* Every line a lens draws that no lit card owns: faint enough to leave the
+   cards legible, present enough to show where the references run. */
+.board-edge.ghost {
+  opacity: 0.11;
 }
 
 /* A fat invisible twin: a 2px curve is far too thin to click. */
@@ -2931,7 +3038,22 @@ body,
 
 .board-zoom {
   display: flex;
+  align-items: center;
   gap: 0.25rem;
+}
+
+/* On the map the bar holds nothing else, and a lone child of a
+   space-between row would sit at the left edge. */
+.board-zoom:only-child {
+  margin-left: auto;
+}
+
+.board-zoom-slider {
+  width: 8rem;
+  height: 1.5rem;
+  margin: 0 0.1rem;
+  accent-color: var(--tint-amber);
+  cursor: pointer;
 }
 
 .board-zoom-pct {
@@ -3206,6 +3328,16 @@ body,
   --tint-gray: #a0a0a0;
   --tint-teal: #5cc7bb;
 
+  --folder-0: #7cc3d6;
+  --folder-1: #b3cf7e;
+  --folder-2: #e0a0b8;
+  --folder-3: #c4a3e2;
+  --folder-4: #dcc07a;
+  --folder-5: #9dc0e8;
+  --tab-card: #3a3a3a;
+  --tab-mix: 22%;
+  --tab-mix-parent: 26%;
+
   .explorer-bar,
   .explorer-card,
   .search-view,
@@ -3245,9 +3377,25 @@ body,
     stroke: var(--node-accent, rgba(255, 255, 255, 0.42));
   }
 
+  /* Faint strokes on a dark ground need a little more to survive. */
+  .board-edge.ghost {
+    opacity: 0.16;
+  }
+
   /* Dark tints are light, so the ball text flips dark. */
   .board-ball {
     color: #232323;
+  }
+
+  .board-open-btn {
+    background: #3a3a3a;
+    border-color: rgba(255, 255, 255, 0.14);
+    color: #a8a8a8;
+  }
+
+  .board-open-btn:hover {
+    color: var(--tint-amber);
+    border-color: var(--tint-amber);
   }
 
   .board-edge-label {

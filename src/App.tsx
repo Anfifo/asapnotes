@@ -15,10 +15,18 @@ import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
 import { NewProject } from "./NewProject";
-import { fileOf, projectOf, relativePath, resolvePath, validFileName, winPath } from "./paths";
+import {
+  fileOf,
+  IMAGE_FILE,
+  projectOf,
+  relativePath,
+  resolvePath,
+  validFileName,
+  winPath,
+} from "./paths";
 import { AppActionId, bindingTable, chordFor, chordOfEvent, DEFAULT_SUMMON } from "./keybinds";
 import { About } from "./About";
-import type { CanvasHandle, NodeTarget } from "./canvas/BoardView";
+import type { Camera, CanvasHandle, NodeTarget } from "./canvas/BoardView";
 import { FileIcon } from "./fileIcons";
 import {
   colorOf,
@@ -60,7 +68,6 @@ interface OpenNote {
 const BoardView = lazy(() => import("./canvas/BoardView"));
 
 const AUTOSAVE_MS = 500;
-const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 
 // The changes lens: one note read with its external edits marked, opened as a
 // read-only tab. The prefix can't collide with a note id — ':' is not a legal
@@ -474,6 +481,15 @@ function App() {
   const [welcome, setWelcome] = useState(false);
 
   const editorRef = useRef<EditorHandle>(null);
+  /** Where each project's map was last left, keyed by its tab id. The lens
+   * recomputes on every activation and so remounts, which would otherwise
+   * throw you back to the fitted view every time you glance at a note. */
+  const mapCamRef = useRef(new Map<string, Camera>());
+  const rememberMapCam = useCallback((cam: Camera) => {
+    const cur = openRef.current;
+    if (cur && isMapTab(cur.id)) mapCamRef.current.set(cur.id, cam);
+  }, []);
+
   // The canvas surface, for the one thing it can't listen for itself: files
   // dropped on the window arrive as paths at the app level.
   const canvasRef = useRef<CanvasHandle>(null);
@@ -919,7 +935,10 @@ function App() {
       trackMtime(null);
       setMapDoc(null);
       const { computeProjectMap } = await import("./canvas/projectMap");
-      const noteIds = notesRef.current
+      // Listed fresh from disk, not from state: a recompute can follow a
+      // deletion by less than a render, and a computed view must trust the
+      // disk over a ref that hasn't caught up.
+      const noteIds = (await api.listNotes())
         .map((n) => n.name)
         .filter((name) => projectOf(name) === project && viewOf(name) === "markdown");
       const text = await computeProjectMap(project, {
@@ -2174,10 +2193,10 @@ function App() {
         }))
     : [];
 
-  /** "Save as canvas…" on the map: snapshot the computed layout into a real,
+  /** "Export as canvas…" on the map: snapshot the computed layout into a real,
    * editable `.canvas` at the project's root and open it. The live map stays
    * computed — the snapshot is the fork you arrange, annotate and ink. */
-  const saveMapAsCanvas = async () => {
+  const exportMapAsCanvas = async () => {
     const cur = openRef.current;
     const text = mapDoc?.text;
     if (!cur || !isMapTab(cur.id) || text === undefined) return;
@@ -2431,6 +2450,9 @@ function App() {
       items: [
         { label: "New note", detail: kb("new-note"), run: () => void newNote() },
         { label: "New canvas", run: () => void newCanvas() },
+        // The map's snapshot writes a new canvas file, so it belongs with the
+        // other file-creating verbs — and only while the map is what's open.
+        ...(mapOpen ? [{ label: "Export as canvas…", run: () => void exportMapAsCanvas() }] : []),
         { label: "Save note", detail: kb("save"), run: () => void save() },
         { label: "Rename note", run: startRename },
         ...(openName ? [{ label: "Delete note", run: () => void deleteNote(openName) }] : []),
@@ -2815,22 +2837,25 @@ function App() {
 
   /** Recycle-bin delete (after a native confirm); the note's draft and open
    * tab go with it. Never a hard delete — notes are user-owned files. */
-  const deleteNote = async (id: string) => {
+  /** Resolves true only when the note was actually deleted — a caller with
+   * follow-up work (the map recomputes) must not run it on a cancel. */
+  const deleteNote = async (id: string): Promise<boolean> => {
     const ok = await confirmDialog(`Move "${fileOf(id)}" to the Recycle Bin?`, {
       title: "Delete note",
       kind: "warning",
     });
-    if (!ok) return;
+    if (!ok) return false;
     if (openRef.current?.id === id) cancelAutosave();
     try {
       await api.deleteNote(id);
     } catch (err) {
       toast(`Couldn't delete that note — ${errText(err)}`);
-      return;
+      return false;
     }
     closeTab(id);
     setNotes(await api.listNotes());
     setDrafts(await api.listDrafts());
+    return true;
   };
 
   /** Throw away an unsaved untitled draft — unlike deleteNote, this content
@@ -2887,8 +2912,10 @@ function App() {
     setCtxMenu({ x: e.clientX, y: e.clientY, entries });
   };
 
-  /** File operations shared by the tab-strip and explorer context menus. */
-  const noteOps = (id: string): MenuEntry[] => [
+  /** File operations shared by the tab-strip, explorer and map-card context
+   * menus. `afterDelete` runs only when the note really went — the map uses
+   * it to recompute, or the dead card would linger. */
+  const noteOps = (id: string, afterDelete?: () => void): MenuEntry[] => [
     { label: "Copy path", run: () => void writeText(absPathOf(id)) },
     {
       label: "Reveal in File Explorer",
@@ -2898,8 +2925,41 @@ function App() {
           .catch((err: unknown) => toast(`Couldn't reveal that file — ${errText(err)}`)),
     },
     "sep",
-    { label: "Delete note", run: () => void deleteNote(id) },
+    {
+      label: "Delete note",
+      run: () =>
+        void deleteNote(id).then((deleted) => {
+          if (deleted) afterDelete?.();
+        }),
+    },
   ];
+
+  /** The map lens's card file verbs: a note card speaks the explorer row's
+   * own menu; a referenced file the corpus doesn't own only reveals — the
+   * map must not delete files it merely points at. A missing target offers
+   * nothing (there is no file to reveal or delete). */
+  const mapFileVerbs = (target: NodeTarget, file: string): MenuEntry[] => {
+    if (target.kind === "note" && target.id)
+      return noteOps(target.id, () => {
+        const cur = openRef.current;
+        if (cur && isMapTab(cur.id)) void openMapTab(mapProjectOf(cur.id));
+      });
+    if (target.kind === "image" || target.kind === "file") {
+      const abs = /^[a-z]:[\\/]/i.test(file)
+        ? file.replace(/\\/g, "/")
+        : resolvePath(boardDir ?? noteDirRef.current, file);
+      return [
+        {
+          label: "Reveal in File Explorer",
+          run: () =>
+            void api
+              .revealPath(winPath(abs))
+              .catch((err: unknown) => toast(`Couldn't reveal that file — ${errText(err)}`)),
+        },
+      ];
+    }
+    return [];
+  };
 
   const tabContextMenu = (e: React.MouseEvent, t: OpenNote) =>
     openContextMenu(e, [
@@ -3485,10 +3545,12 @@ function App() {
                 <BoardView
                   key={mapDoc.key}
                   initialDoc={mapDoc.text}
+                  camera={mapCamRef.current.get(open.id) ?? null}
+                  onCamera={rememberMapCam}
                   onChange={() => {}}
                   role="canvas"
                   readOnly
-                  onSaveAs={() => void saveMapAsCanvas()}
+                  onSaveAs={() => void exportMapAsCanvas()}
                   emptyHint="This project has no notes to map yet."
                   noteDir={boardDir ?? rootPath}
                   resolveTarget={resolveBoardTarget}
@@ -3508,6 +3570,7 @@ function App() {
                     features: markdownFeatures(),
                   }}
                   onMenu={openContextMenu}
+                  fileVerbs={mapFileVerbs}
                   inkTools={false}
                 />
               </Suspense>

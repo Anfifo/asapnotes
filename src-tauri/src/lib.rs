@@ -273,6 +273,7 @@ pub fn run() {
             notes::delete_folder,
             notes::delete_note,
             notes::reveal_note,
+            notes::reveal_path,
             notes::open_external,
             notes::list_drafts,
             notes::read_draft,
