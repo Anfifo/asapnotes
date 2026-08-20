@@ -24,6 +24,40 @@
   --syn-variable: #2f6099;
   --syn-punct: #767676;
 
+  /* Markdown syntax markers, by what the marker means rather than one flat gray:
+     structure (heading marks), emphasis (bold, italic, strikethrough) and
+     literals (code, quote). Saturation stays low enough that no marker reads
+     louder than the text it formats. */
+  --mk-structure: #8e8e8e;
+  --mk-emphasis: #78848f;
+  --mk-literal: #8a8378;
+  --mk-quote-rule: #c9c9c9;
+  --mk-quote-glyph: #8e8e8e;
+
+  /* One markdown type scale for every surface that renders a note: the
+     live-preview family (note editor, diff lens, file lens) and the rendered
+     family (preview pane). Heading steps and block spacing are relative, so a
+     surface with its own base size — canvas cards, which are thumbnails rather
+     than reading surfaces — keeps the same proportions at a smaller scale. */
+  --md-body-font: "Sitka Text", Constantia, Georgia, serif;
+  --md-base: 1rem;
+  --md-line: 1.65;
+  --md-h1: 1.6em;
+  --md-h2: 1.32em;
+  --md-h3: 1.14em;
+  --md-h-weight: 650;
+  --md-block-gap: 0.55em;
+  --md-measure: 72ch;
+  /* Room to the left of the text column for heading marks to hang in, so every
+     line starts on one edge whatever its depth. */
+  --md-gutter: 18px;
+  --md-quote-pad: 0.75rem;
+  /* One list level, on both surfaces — the editor indents by nesting depth
+     rather than by the spaces the note happens to hold, so the two step alike.
+     `gap` is the space between a marker and the text it opens. */
+  --md-list-step: 2.5em;
+  --md-list-gap: 0.5em;
+
   /* File-type tints the note-type registry's `color` ids name. Two values per
      tint (here and in the dark block) because one literal can't be readable on
      both panel grounds; drawn from the syntax palette where an association
@@ -748,9 +782,9 @@ body,
 /* Same proportional live-preview surface as the editor, in a readable column
    (the editor's own width comes from the panel, which the lens shares). */
 .lens-doc .cm-scroller {
-  font-family: inherit;
-  font-size: 0.95rem;
-  line-height: 1.6;
+  font-family: var(--md-body-font);
+  font-size: var(--md-base);
+  line-height: var(--md-line);
   /* Room at the foot for the jump control, so it never sits on the last line. */
   padding: 0.5rem 1.2rem 2.6rem;
 }
@@ -1471,11 +1505,37 @@ body,
   padding: 0.5rem 0.25rem;
 }
 
+/* A markdown note is a reading surface, so it takes the reading face and the
+   shared scale; a plain-text note keeps the interface face, since it is as
+   likely to hold config or code as prose. */
+.editor:not(.editor-plain) .cm-scroller {
+  font-family: var(--md-body-font);
+  font-size: var(--md-base);
+  line-height: var(--md-line);
+}
+
+/* The gutter holds hanging heading marks; the measure keeps a wide window from
+   running notes the full width of the pane. */
+.editor:not(.editor-plain) .cm-content {
+  padding-left: var(--md-gutter);
+  max-width: var(--md-measure);
+}
+
 /* Live-preview decorations */
 
 .editor .cm-blockquote {
-  border-left: 3px solid #c9c9c9;
-  padding-left: 0.75rem;
+  border-left: 3px solid var(--mk-quote-rule);
+  padding-left: var(--md-quote-pad);
+}
+
+/* Air before a heading, so blocks read as blocks. Padding rather than margin:
+   the editor measures line boxes, and a margin sits outside the one it measures. */
+.editor .cm-md-gap {
+  padding-top: var(--md-block-gap);
+}
+
+.editor .cm-content > .cm-line:first-child.cm-md-gap {
+  padding-top: 0;
 }
 
 .editor .cm-codeline {
@@ -1484,10 +1544,83 @@ body,
   font-size: 0.9em;
 }
 
-/* Markdown syntax markers: always visible, but receding while they format. */
+/* Markdown syntax markers. Always visible, and typeset in their own right
+   rather than inheriting the size, weight and slant of the text they format —
+   an inherited marker is the loudest thing on the line it describes. */
 .editor .cm-syntax {
-  color: #9a9a9a;
-  opacity: 0.6;
+  font-size: 0.7em;
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: -0.03em;
+  color: var(--mk-structure);
+}
+
+.editor .cm-mk-emphasis {
+  color: var(--mk-emphasis);
+}
+
+.editor .cm-mk-literal {
+  color: var(--mk-literal);
+}
+
+/* A heading's marks hang in the gutter, stacked into a single cell, so heading
+   text starts on the same edge as body text instead of one indent further right
+   per level. The host is a zero-width inline box, so it takes its vertical place
+   from the text rather than from the line box — which keeps the mark centred on
+   the words even when the line carries the block gap above. */
+.editor .cm-head-mark {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: -0.12em;
+}
+
+/* An inline marker pair, stacked in the flow: the pair costs one glyph of width
+   instead of two. Centred on the text's midline rather than sitting on its
+   baseline, so it reads as riding alongside the word it wraps. */
+.editor .cm-mark-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 0.55;
+  letter-spacing: 0;
+  vertical-align: middle;
+  font-weight: 400;
+  font-style: normal;
+  color: var(--mk-emphasis);
+}
+
+.editor .cm-head-stack {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 0.55;
+  letter-spacing: 0;
+  color: var(--mk-structure);
+}
+
+/* The quote's `>` is drawn once per block, on the opening line, centred on the
+   rule's own axis and a tone apart from it so both stay readable. */
+.editor .cm-quote-mark {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: -0.12em;
+}
+
+.editor .cm-quote-glyph {
+  position: absolute;
+  right: calc(var(--md-quote-pad) + 1.5px);
+  top: 50%;
+  transform: translate(50%, -50%);
+  font-size: 0.7em;
+  color: var(--mk-quote-glyph);
 }
 
 .editor .cm-live-image {
@@ -1497,8 +1630,20 @@ body,
   vertical-align: text-bottom;
 }
 
-.editor .cm-bullet {
-  color: #7a7a7a;
+/* A list marker keeps the note's own character and takes the cell the rendered
+   pane hangs its bullet in: the cell ends one gap short of the text, so `-`,
+   `*` and `10.` all finish on the same edge and the item's words start on it.
+   Unscoped, unlike the markers above: the line's own indent rides on the
+   decoration, so the cell has to follow live preview wherever it is mounted. */
+.cm-list-mark {
+  display: inline-block;
+  width: calc(var(--md-list-step) - var(--md-list-gap));
+  margin-right: var(--md-list-gap);
+  text-align: right;
+}
+
+.cm-list-bullet {
+  color: var(--mk-structure);
 }
 
 /* Ctrl+Click link targets (links.ts): pointer + underline only while Ctrl is
@@ -1541,6 +1686,63 @@ body,
   flex: 1;
   overflow-y: auto;
   padding: 0.75rem 1rem;
+  font-family: var(--md-body-font);
+  font-size: var(--md-base);
+  line-height: var(--md-line);
+}
+
+/* The shared scale, replacing the browser's defaults — which ran a level-1
+   heading 40% larger here than in the editor, over margins the editor had none
+   of. Both surfaces now read one set of numbers. */
+.preview > * {
+  max-width: var(--md-measure);
+}
+
+.preview h1,
+.preview h2,
+.preview h3,
+.preview h4,
+.preview h5,
+.preview h6 {
+  font-weight: var(--md-h-weight);
+  line-height: 1.25;
+  margin: var(--md-block-gap) 0;
+}
+
+.preview h1 {
+  font-size: var(--md-h1);
+}
+
+.preview h2 {
+  font-size: var(--md-h2);
+}
+
+.preview h3 {
+  font-size: var(--md-h3);
+}
+
+.preview h4,
+.preview h5,
+.preview h6 {
+  font-size: 1em;
+}
+
+.preview p,
+.preview ul,
+.preview ol,
+.preview pre {
+  margin: var(--md-block-gap) 0;
+}
+
+/* Spelled out rather than left to the browser, so the editor has one number to
+   match instead of a default it can only be measured against. */
+.preview ul,
+.preview ol {
+  padding-left: var(--md-list-step);
+}
+
+.preview > :first-child {
+  margin-top: 0;
 }
 
 .preview img {
@@ -1561,10 +1763,10 @@ body,
 }
 
 .preview blockquote {
-  margin: 0.5rem 0;
-  padding-left: 0.75rem;
-  border-left: 3px solid #c9c9c9;
-  color: #5a5a5a;
+  margin: var(--md-block-gap) 0;
+  padding-left: var(--md-quote-pad);
+  border-left: 3px solid var(--mk-quote-rule);
+  color: var(--syn-quote);
 }
 
 /* Titlebar controls */
@@ -2026,6 +2228,12 @@ body,
      text or a full path. `anywhere` because a path has no spaces to break at. */
   max-width: min(22rem, 90vw);
   overflow-wrap: anywhere;
+  /* An explicit width instead of shrink-to-fit: `left` alone leaves a box near
+     the window's right edge only the few pixels between it and the edge, and
+     `anywhere` then breaks the text at every character into a vertical column.
+     The measured re-fit below can't recover from that — it measures the box
+     after the collapse. */
+  width: max-content;
   background: #2f2f2f;
   color: #f2f2f2;
   font-size: 0.72rem;
@@ -2983,6 +3191,12 @@ body,
   --syn-variable: #8fb8e8;
   --syn-punct: #969696;
 
+  --mk-structure: #939393;
+  --mk-emphasis: #94a2b1;
+  --mk-literal: #a2988a;
+  --mk-quote-rule: #5a5a5a;
+  --mk-quote-glyph: #a5a5a5;
+
   --tint-blue: #8fb8e8;
   --tint-amber: #dcbf5a;
   --tint-rose: #e58880;
@@ -3307,10 +3521,6 @@ body,
     background: rgba(255, 255, 255, 0.08);
   }
 
-  .editor .cm-blockquote {
-    border-left-color: #5a5a5a;
-  }
-
   .editor .cm-codeline {
     background: rgba(255, 255, 255, 0.08);
   }
@@ -3323,11 +3533,6 @@ body,
   .editor .cm-panel.cm-search .cm-textfield,
   .editor .cm-panel.cm-search .cm-button {
     border-color: #4a4a4a;
-  }
-
-  .preview blockquote {
-    border-left-color: #5a5a5a;
-    color: #b0b0b0;
   }
 
   .title-input {
