@@ -376,6 +376,43 @@ fn a_real_folder_shadows_a_mount_of_the_same_name() {
     );
 }
 
+/// What the virtual/real conversion rests on: a folder converted **in place**
+/// keeps its name, and a name is what an id is made of — so the same id is
+/// valid and resolves to the files in both shapes. That is why
+/// `folder_to_real`/`folder_to_virtual` move no drafts, no history and no tabs.
+/// Convert to a *different* name and this stops being true.
+#[test]
+fn converting_a_folder_in_place_keeps_every_id() {
+    let f = Fixture::new("convert");
+    let mounted = f.outside("mounted");
+    let id = "work/docs/note.md";
+
+    // Virtual: `work/docs` is a mount, so the id lands in the backing folder.
+    let virtual_s = with_projects(vec![(
+        "work",
+        Project {
+            mounts: vec![Mount {
+                at: "docs".into(),
+                path: mounted.to_string_lossy().into_owned(),
+            }],
+            ..Project::default()
+        },
+    )]);
+    assert_eq!(
+        ids::resolve(&f.roots, &virtual_s, id),
+        Ok(mounted.join("note.md"))
+    );
+
+    // Real: the conversion moved the files into the project and dropped the
+    // mount. Same id string, still admitted, now landing on the moved file.
+    std::fs::create_dir_all(f.roots.notes.join("work/docs")).expect("real docs");
+    let real_s = with_projects(vec![("work", Project::default())]);
+    assert_eq!(
+        ids::resolve(&f.roots, &real_s, id),
+        Ok(f.roots.notes.join("work/docs/note.md"))
+    );
+}
+
 #[test]
 fn project_of_reads_the_first_segment() {
     assert_eq!(ids::project_of("loose.md"), None);

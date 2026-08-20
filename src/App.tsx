@@ -16,6 +16,7 @@ import { Explorer } from "./Explorer";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
 import { NewProject } from "./NewProject";
 import {
+  dirOf,
   fileOf,
   IMAGE_FILE,
   projectOf,
@@ -2233,10 +2234,13 @@ function App() {
     const cur = openRef.current;
     const base = renameValue.trim();
     if (!cur || !validFileName(base)) return;
-    const project = projectOf(cur.id);
+    // The whole containing folder, not just the project: a rename leaves the
+    // note where it is, and a note inside a folder — real or virtual — has
+    // segments in between that dropping would move the file to the project.
+    const dir = dirOf(cur.id);
     // A typed extension the registry claims is kept (renaming todo.txt keeps
     // .txt); anything else gets the default .md.
-    const newId = (project ? `${project}/` : "") + (isNoteFile(base) ? base : `${base}.md`);
+    const newId = (dir ? `${dir}/` : "") + (isNoteFile(base) ? base : `${base}.md`);
     if (newId === cur.name) return;
     if (notesRef.current.some((n) => n.name.toLowerCase() === newId.toLowerCase())) {
       toast(`A note named "${fileOf(newId)}" already exists here`);
@@ -2274,8 +2278,7 @@ function App() {
   // folder verbs act on. Null when there's no folder to act on: nothing open,
   // a diff tab, or a loose note (the notes root can't hold folders — a
   // top-level folder is a project).
-  const openDir =
-    open && !diffOpen && open.id.includes("/") ? open.id.slice(0, open.id.lastIndexOf("/")) : null;
+  const openDir = open && !diffOpen ? dirOf(open.id) || null : null;
 
   // Menu and tooltip chord readouts follow the effective bindings, so a
   // rebound shortcut is what the chrome advertises.
@@ -3067,13 +3070,13 @@ function App() {
   const explorerContextMenu = (e: React.MouseEvent, id: string, isNote: boolean) =>
     openContextMenu(e, [
       { label: "Open", run: () => openFromExplorer(id, isNote) },
-      {
-        label: "New note here",
-        run: () => startExplorerCreate(id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : ""),
-      },
+      { label: "New note here", run: () => startExplorerCreate(dirOf(id)) },
       ...(isNote
         ? [
             { label: "Rename", run: () => void renameFromExplorer(id) },
+            // Reachable from a file too, not only the folder's own row — the
+            // label names the folder, since the target is implicit here.
+            ...convertFolderEntries(dirOf(id), true),
             "sep" as const,
             ...noteOps(id),
           ]
@@ -3130,6 +3133,70 @@ function App() {
     await refreshProjects();
   };
 
+  /** Convert a virtual folder into a real one: its files move into the project
+   * under the same name. The name is what every contained note's id is built
+   * from, so nothing here has to touch tabs, drafts or history — the tree just
+   * redraws. When the backing folder is one the user owns elsewhere, the
+   * confirm names it, because that folder is what moves. */
+  const makeFolderReal = async (mount: api.MountInfo) => {
+    const name = fileOf(mount.at);
+    if (mount.external) {
+      const ok = await confirmDialog(
+        `Make "${name}" a real folder inside ${mount.project}?\n\nIts files live in ${mount.path} — that folder is what gets moved.`,
+        { title: "Convert to a real folder", kind: "warning" },
+      );
+      if (!ok) return;
+    }
+    try {
+      await api.folderToReal(mount.project, mount.at);
+    } catch (err) {
+      toast(`Couldn't convert that folder — ${errText(err)}`);
+      return;
+    }
+    await refreshProjects();
+  };
+
+  /** The inverse: the folder's files move to the virtual-folders home and a
+   * mount takes over its name. The destination isn't one the user picked, so
+   * the command answers with it and the toast says where the files went. */
+  const makeFolderVirtual = async (dir: string) => {
+    const [project, ...rest] = dir.split("/");
+    let path: string;
+    try {
+      path = await api.folderToVirtual(project, rest.join("/"));
+    } catch (err) {
+      toast(`Couldn't convert that folder — ${errText(err)}`);
+      return;
+    }
+    await refreshProjects();
+    toast(`"${fileOf(dir)}" is virtual now — its files live in ${path}`);
+  };
+
+  /** The conversion entry for a folder id, for both menus that offer it: the
+   * folder's own row and a note's row inside it. Nothing to offer for the
+   * notes root or a project heading (a top-level folder is a project), for a
+   * mount whose name a real folder has taken over, or for one whose files are
+   * gone. `named` puts the folder in the label, for a menu whose target is
+   * implicit. */
+  const convertFolderEntries = (dir: string, named: boolean) => {
+    const [project, ...rest] = dir.split("/");
+    if (!project || rest.length === 0) return [];
+    const rel = rest.join("/");
+    const mount = mounts.find((m) => m.project === project && m.at === rel);
+    // A folder *inside* a virtual folder has no directory of its own in the
+    // project, so neither conversion means anything there.
+    if (!mount && mounts.some((m) => m.project === project && rel.startsWith(`${m.at}/`)))
+      return [];
+    const what = named ? ` "${fileOf(dir)}"` : "";
+    if (!mount)
+      return [
+        { label: `Convert${what} to a virtual folder`, run: () => void makeFolderVirtual(dir) },
+      ];
+    return mount.conflicted || mount.missing
+      ? []
+      : [{ label: `Convert${what} to a real folder`, run: () => void makeFolderReal(mount) }];
+  };
+
   /** Right-click on a project or folder heading. Folders open in File Explorer
    * rather than being selected in their parent — their contents are the point. */
   const explorerDirMenu = (e: React.MouseEvent, dir: string) => {
@@ -3155,6 +3222,9 @@ function App() {
             { label: "Associate virtual folder…", run: () => void associateVirtualFolder(dir) },
           ]
         : []),
+      // Either direction of the virtual/real conversion, whichever this folder
+      // is. It keeps the folder's name, so no note in it changes id.
+      ...convertFolderEntries(dir, false),
       // Detach keeps the files where they are; Delete recycle-bins them. On a
       // conflicted mount the real folder is what's visible, so plain folder
       // deletion is what its Delete does.

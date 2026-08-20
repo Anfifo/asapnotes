@@ -298,6 +298,8 @@ pub fn run() {
             notes::create_virtual_folder,
             notes::remove_mount,
             notes::delete_mount,
+            notes::folder_to_real,
+            notes::folder_to_virtual,
         ])
         .setup(|app| {
             #[cfg(desktop)]

@@ -272,6 +272,17 @@ export const removeMount = (project: string, at: string) =>
  * mount is detached. */
 export const deleteMount = (project: string, at: string) =>
   invoke<void>("delete_mount", { project, at });
+/** Turn a virtual folder into a real one: its files move into the project
+ * under the same name and the mount goes away. The name is kept, so every
+ * contained note keeps its id — nothing to retarget here. */
+export const folderToReal = (project: string, at: string) =>
+  invoke<void>("folder_to_real", { project, at });
+/** The inverse: a real folder's files move to the virtual-folders home and a
+ * mount takes over its name. Ids are unchanged for the same reason. Returns
+ * where the files went — the destination is the app's, not one that was
+ * picked. */
+export const folderToVirtual = (project: string, at: string) =>
+  invoke<string>("folder_to_virtual", { project, at });
 
 // --- Personal settings (app-data settings.json) ---
 

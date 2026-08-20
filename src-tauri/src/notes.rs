@@ -1110,10 +1110,16 @@ fn nested_at(a: &str, b: &str) -> bool {
     a == b || a.strip_prefix(b).is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// Shared validation for attaching a mount at `at`, however its backing folder
-/// comes to exist: the project is real, the name is usable, no real folder
-/// sits at it, and no other mount overlaps it. Returns the normalized `at`.
-fn checked_mount_at(root: &Path, s: &Settings, project: &str, at: &str) -> Result<String, String> {
+/// Shared validation for the *name* a mount is attached at: the project is
+/// real, the name is usable, and no other mount overlaps it. Returns the
+/// normalized `at`. Says nothing about a real folder of that name — only
+/// [`folder_to_virtual`] wants that, because there the folder is the point.
+fn checked_mount_name(
+    root: &Path,
+    s: &Settings,
+    project: &str,
+    at: &str,
+) -> Result<String, String> {
     if !root.join(project).is_dir() && !s.projects.contains_key(project) {
         return Err(format!("no project named {project}"));
     }
@@ -1126,9 +1132,6 @@ fn checked_mount_at(root: &Path, s: &Settings, project: &str, at: &str) -> Resul
     {
         return Err(format!("{at} isn't a usable folder name inside {project}"));
     }
-    if project_base(root, s, project).join(&at).is_dir() {
-        return Err(format!("{project} already has a folder of its own at {at}"));
-    }
     if let Some(entry) = s.projects.get(project) {
         if let Some(m) = entry
             .mounts
@@ -1140,6 +1143,17 @@ fn checked_mount_at(root: &Path, s: &Settings, project: &str, at: &str) -> Resul
                 m.at
             ));
         }
+    }
+    Ok(at)
+}
+
+/// [`checked_mount_name`] plus the rule every *attach* path needs: no real
+/// folder may already sit at `at`. A real folder wins over a mount of its
+/// name, so attaching one there would attach something invisible.
+fn checked_mount_at(root: &Path, s: &Settings, project: &str, at: &str) -> Result<String, String> {
+    let at = checked_mount_name(root, s, project, at)?;
+    if project_base(root, s, project).join(&at).is_dir() {
+        return Err(format!("{project} already has a folder of its own at {at}"));
     }
     Ok(at)
 }
@@ -1256,4 +1270,115 @@ pub fn delete_mount(app: AppHandle, project: String, at: String) -> Result<(), S
         let _ = fs::remove_dir_all(store.join(&project).join(&at));
     }
     remove_mount(app, project, at)
+}
+
+/// Copy a folder and everything in it; `fs` has no directory copy. Nothing is
+/// removed here, so a failure part-way leaves the source whole.
+fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    fs::create_dir_all(to).map_err(|e| e.to_string())?;
+    for entry in fs::read_dir(from).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let target = to.join(entry.file_name());
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Move a folder and everything in it. `rename` fails across volumes, which a
+/// project on one drive and the virtual-folders home in app data make an
+/// ordinary case rather than an exotic one — so fall back to copy-then-remove,
+/// the same trade [`move_note`] makes for a single file.
+fn move_dir(from: &Path, to: &Path) -> Result<(), String> {
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    copy_dir(from, to)?;
+    fs::remove_dir_all(from).map_err(|e| e.to_string())
+}
+
+/// Convert a virtual folder into a real one, in place: its files move into the
+/// project's own folder under the same name, and the mount goes away.
+///
+/// Keeping the name is what makes this cheap. An id is `project/<at>/…` either
+/// way — resolved through the mount before, through the real folder after — so
+/// no note changes id, and drafts, history, open tabs and the change ledger
+/// need no migration at all. Moving the files somewhere *else* in the project
+/// would re-root every id under it; that is a different feature, and this one
+/// deliberately isn't it.
+#[tauri::command]
+pub fn folder_to_real(app: AppHandle, project: String, at: String) -> Result<(), String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    let from = s
+        .projects
+        .get(&project)
+        .and_then(|e| e.mounts.iter().find(|m| m.at == at))
+        .map(|m| PathBuf::from(&m.path))
+        .ok_or_else(|| format!("no folder attached at {at} in {project}"))?;
+    if !from.is_dir() {
+        return Err(format!(
+            "its files are gone from {} — detach it instead",
+            from.display()
+        ));
+    }
+    let to = project_base(&root, &s, &project).join(&at);
+    // Also the conflicted case: a real folder of that name already took over,
+    // and merging two sets of files is not something to do quietly.
+    if to.exists() {
+        return Err(format!("{project} already has a real folder at {at}"));
+    }
+    // Move first, detach after: a real folder wins over a mount of its name, so
+    // ids resolve through the mount until the files land and through the folder
+    // from the moment they do. A failure in between leaves the mount standing.
+    move_dir(&from, &to)?;
+    remove_mount(app, project, at)
+}
+
+/// Convert a real folder into a virtual one, in place: its files move to the
+/// virtual-folders home at `<project>/<at>` — where `create_virtual_folder`
+/// puts a new one — and a mount takes over its name. The inverse of
+/// [`folder_to_real`], and cheap for the same reason: the name stays, so no id
+/// moves. Answers with where the files now live — the destination is the app's
+/// choice rather than a picked folder, so the caller has something to say.
+#[tauri::command]
+pub fn folder_to_virtual(app: AppHandle, project: String, at: String) -> Result<String, String> {
+    let root = notes_root(&app)?;
+    let s = settings::settings(&app)?;
+    // Not `checked_mount_at`: the real folder at `at` is the one being
+    // converted, not a clash with it.
+    let at = checked_mount_name(&root, &s, &project, &at)?;
+    let from = project_base(&root, &s, &project).join(&at);
+    if !from.is_dir() {
+        return Err(format!("no folder at {at} in {project}"));
+    }
+    let to = virtual_folders_root(&app, &s)?.join(&project).join(&at);
+    // Files already there are a virtual folder of this name that was detached
+    // (detaching leaves them in place); merging the two sets would mix them
+    // with no way back.
+    if to.exists() {
+        return Err(format!(
+            "{} already holds the files of a detached virtual folder of that name",
+            to.display()
+        ));
+    }
+    // Checked like any picked folder: a hand-edited home could sit anywhere.
+    check_location(&root, &s, &to, None)?;
+    // Register first: while the real folder is still there the mount is inert,
+    // so a move that fails leaves the folder exactly as it was — real, whole
+    // and visible.
+    let path = to.to_string_lossy().into_owned();
+    register_mount(&app, project.clone(), at.clone(), path.clone())?;
+    move_dir(&from, &to).inspect_err(|_| {
+        // Without its files the entry is a mount pointing at nothing, which the
+        // user would have to detach by hand.
+        let _ = remove_mount(app, project, at);
+    })?;
+    Ok(path)
 }

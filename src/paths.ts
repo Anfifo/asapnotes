@@ -4,6 +4,14 @@ export const fileOf = (path: string) => path.split("/").pop() ?? path;
 /** Project (first path segment) of a note path, or null for loose notes. */
 export const projectOf = (path: string) => (path.includes("/") ? path.split("/")[0] : null);
 
+/** The folder a note path sits in — everything above its last segment, `""`
+ * for a top-level note. The counterpart of [`fileOf`], and what folder verbs
+ * and a rename take as their target: a note in a folder (real or virtual) has
+ * segments between its project and its name, and dropping them moves the file.
+ */
+export const dirOf = (path: string) =>
+  path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+
 /** Extensions the webview renders as a picture — such a target shows its own
  * content, so it is sized and treated differently from a file that can only
  * offer its name. */
