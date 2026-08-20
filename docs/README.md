@@ -14,4 +14,11 @@ Plus one file that describes only the present moment:
   when you hand off.
 
 Deep design docs (architecture write-ups, investigations) also live here as they appear,
-linked from the decision entries that reference them.
+linked from the decision entries that reference them:
+
+- [project-model.md](project-model.md) — a project is a location plus mounts, and where
+  config lives (split by trust).
+- [mcp-tool-surface.md](mcp-tool-surface.md) — the MCP sidecar's tools, section
+  addressing, grant enforcement and attribution. Built 2026-08-19; its
+  "What changed in the building" section supersedes the design text above it, and
+  [mcp/README.md](../mcp/README.md) is the setup and grant reference.

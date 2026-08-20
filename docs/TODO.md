@@ -12,6 +12,712 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-20)
+
+- [x] **MCP — the TypeScript half is tested now, and it found three bugs**
+      (2026-08-20) — the Rust core had 110 tests and `mcp/` had 23 happy-path ones, so
+      the untrusted half was also the untested half. **23 → 73**, in five files split by
+      what they are about: `test/harness.ts` (build a corpus with its own files,
+      grants, `mcp` block and `mcp-state.json` — the piece that unblocked the rest),
+      `server.test.ts` (corpus behavior), `protocol.test.ts` (what a client sees),
+      `convention.test.ts` (the only non-pass-through logic on this side),
+      `helper.test.ts` (the process seam), `settings.test.ts` (settings granted, and
+      the write pin — neither reachable before, because both are off in the one
+      fixture every test shared). Suite is 2.6s. Gates clean; the only lint warning is
+      still `BoardView.tsx:667` from the uncommitted map work.
+      _The seam tests use a fake helper_ — a node script run by the same node, since
+      `Helper` puts the command first on the argv — so a missing binary, a crash, a
+      non-envelope answer, a 400 KB reply arriving in chunks and a hang are all
+      exercised without touching Rust. `HelperOptions` gained `timeoutMs` for the last
+      of those (the 60s default was untestable, and a shorter leash is a fair knob for
+      an embedder).
+      **Three bugs, all found by writing the test rather than by running the app:**
+      (1) `append_todo` rewrote the section holding the dated headings and put the new
+      one on top of whatever was already in it — so a TODO with prose above its dates
+      had that prose **moved into today's items**. It now splits at the first dated
+      heading and keeps what sits above it. (2) An explicitly older `date` was inserted
+      at the top anyway, breaking the newest-first ordering the tool exists to
+      maintain; a backfill now lands under the oldest heading still newer than it.
+      (3) Every tool schema says `additionalProperties: false` and **nothing enforced
+      it** — the SDK's low-level server does not validate and the helper reads
+      arguments by name, so `limmit: 50` was silently dropped and the caller believed
+      its limit was honored. `index.ts` now refuses an undeclared argument and names
+      what the tool does take. Names only: types and required arguments stay the
+      helper's business, since re-checking those here would be a second implementation
+      of the rules that matter.
+      _Verified the tests bite:_ swapping the old insertion logic back in fails exactly
+      the four new ordering/prose tests and nothing else.
+
+- [x] **The notes root walks deep now — a project's subfolders are part of it**
+      (2026-08-20) — found by the tests above: `append_to_note` with
+      `work/meetings/2026-08-19.md` returned `created: true`, read back fine, and
+      appeared in **no** listing, search or note count. The app's explorer uses the same
+      walk, so it was invisible there too, and the previous e2e suite enshrined that id
+      shape as a pass.
+      _Why deep rather than refusing the id_ — which was the first plan, and wrong.
+      Everything else in the app already assumes a project can have folders: the working
+      convention keeps dated entries in `decisions/`, "New folder" makes real ones
+      (`create_folder` allows depth 2–12 in any project), a project's `files` rules
+      re-include paths like `!src/**/*.rs`, and the frontend's id math handles depth.
+      Only `list_tree` stopped one level in. The refusal was built first and killed by
+      its own test suite: it broke `new_decision`, because `project/decisions/…` is
+      exactly the subfolder it forbade.
+      _What changed:_ `list_tree` takes `deep` and recurses into each notes-root project
+      when it is set. **The first paint is untouched** — the app's launch call is
+      `listNotes(false)`, which still walks one level in, and the deep call it already
+      made afterwards now lists everything. `note_paths` (search, `find_notes`, the id
+      map) always walks deep. Tests: a shallow-vs-deep pair that pins what the flag
+      costs and buys, a create-then-find-it test in the corpus core, and the e2e test
+      that used to enshrine the hole now asserts the note is findable.
+      Uncommitted map-lens note: the map will now see notes-root subfolders as folder
+      nodes, which it was built for but had never been given.
+
+- [ ] **Settings → MCP panel** (2026-08-20) — the last piece of the sidecar slice, built
+      from the candidate sheet's option C with editable access controls. Three
+      sub-sections in the order someone actually needs them: **Connect a client** (status
+      dot, the notes root being served, and a ready-to-paste config entry built by
+      `JSON.stringify` from `helperPath` and the new `serverPath`, with Copy), **Project
+      access** (Hidden / Read / Write per project, the write pin, and access to
+      `settings.json` itself, with a one-line summary and a warning when settings access
+      is on), and **Recent activity** (the write log, collapsed, newest first).
+      New Rust: `set_mcp_grant`, `set_mcp_write_scope`, `set_mcp_settings_access` — three
+      narrow setters rather than one that takes the whole `mcp` block, so none of them
+      can clobber a neighbour, plus `checked_grant` refusing a word that isn't a grant
+      (everything downstream reads an unknown value as `off`, so a typo from the UI would
+      silently hide a project). `mcp_status` gained `serverPath`.
+      `McpSection` fetches its own status and re-reads after every change rather than
+      trusting optimistic state — the precedent for a component doing its own IPC is
+      `DiffLens`. Typed `McpStatus` in `notes.ts` replaces the `Record<string, unknown>`.
+      **Still to do:** seen on screen. Gates are clean and the data path is exercised, but
+      the panel has not been looked at, and the grant buttons write the real
+      `settings.json`, so verifying those needs a corpus that isn't the user's.
+
+- [ ] **Decide: a settings key the app does not model is dropped on write**
+      (2026-08-20) — `store::patch_settings` merges the patch into the file's JSON,
+      then writes back the **parsed** `Settings` struct, which has no catch-all. So any
+      key nobody models disappears: a stray hand-edit, a key from a newer build, a
+      comment-ish line someone left. `settings.json` is explicitly a file the user
+      hand-edits, which is what makes this worth a decision — and it is how the app
+      writes settings too, not something the sidecar introduced. Fix, if it is one, is
+      a `#[serde(flatten)]` catch-all on `Settings` so unknown keys round-trip.
+      Pinned meanwhile by the `KNOWN GAP` test in `settings.test.ts`.
+
+- [x] **Renaming a note in a folder pulled it out of the folder** (2026-08-20) — found
+      while reading for the conversion item below. `submitRename` built the new id from
+      `projectOf(cur.id)` — the **first segment only** — so renaming
+      `work/meetings/2026-08-19.md` to "standup" wrote `work/standup.md`: the file left
+      its folder, and the duplicate-name check looked in the wrong place too. Reachable
+      for any note in a virtual folder since mounts existed, and newly reachable
+      everywhere now that the walk goes deep. Fixed by taking the whole containing
+      folder, which is also what the same-name conversion needs: new `dirOf` in
+      `paths.ts` (the counterpart of `fileOf`), and the two other copies of that path
+      math — `openDir` and the explorer's "New note here" — now read it instead.
+      _Verified live_ (see below): renamed inside a real folder and inside a virtual
+      one; both stayed put, the tab retagged, and the note read back through the mount.
+
+- [x] **Convert a folder between virtual and real** (2026-08-20; asked 2026-08-16, item
+      under that date) — shipped as an **in-place** conversion, which is the decision
+      the whole slice rests on. See that item for the record.
+
+- [x] **Six piled-up slices went in as six commits** (2026-08-20) — the tree had been
+      carrying the MCP sidecar, image annotation, live-preview typography, the map
+      surface, and the conversion all at once, across shared files: App.tsx (43 hunks),
+      App.css (24), BoardView.tsx (31), livePreview.ts, notes.rs, lib.rs, notes.ts. Split
+      by hunk rather than by file, so each commit is one slice. Four places were mixed
+      inside a single hunk and needed an intermediate version written by hand: the
+      `paths.ts` additions (`IMAGE_FILE` vs `dirOf`), App.tsx's `paths` import,
+      BoardView's props destructuring (`annotate` vs `fileVerbs`/`camera`), and
+      BoardView's `nodeAccent` removal sharing its closing brace with `folderColor`'s
+      arrival. `livePreview.ts` could not be split by hunk at all — the annotation
+      threading and the marker rework interleave — so its intermediate file was built
+      from `HEAD`'s copy and put in the index with `hash-object` + `update-index`, which
+      never touches the working tree.
+      _What made it verifiable:_ each commit's staged state was checked out in a scratch
+      worktree **before** committing (`write-tree` → `commit-tree` → `checkout --detach`
+      in a worktree with a junction to `node_modules`, `CARGO_TARGET_DIR` shared so
+      clippy is seconds not minutes), then `tsc`, `eslint`, `prettier --check` and
+      `clippy --all-targets`. It caught two real breaks: zero-context hunks misplacing
+      lines in `livePreview.ts` (the `+` line numbers assume the hunks that were left
+      out), and `folderColor` landing a commit before the code that uses it.
+      _Also:_ `docs/TODO.md` had been failing `prettier --check` since before this
+      session; the docs commit fixes it.
+
+- [ ] **BoardView's wheel effect is missing `zoomAt`** (2026-08-20) — the repo's only
+      lint warning (`BoardView.tsx:667`), in with the map-surface commit's zoom
+      refactor. `zoomAt` is rebuilt every render, so naming it in the dependency array
+      would re-register the wheel listener on every render; the honest fix is a
+      `useCallback` or a ref, and either changes when that listener is attached. Wants
+      the app in front of a human, not a blind edit.
+
+- [ ] **Move a note into another folder** (2026-08-20) — the half of the conversion ask
+      that is still open: moving files between a virtual folder and the real one it
+      becomes, so a conversion needn't be all-at-once. The backend is already there —
+      `move_note` takes a whole id and carries the note's draft and history with it, and
+      the tab retagging is the same call `submitRename` makes. What is missing is a way
+      to aim it: a "Move to…" entry listing the corpus's folders, or drag-and-drop in the
+      explorer (there is none anywhere in the app yet, so it would be the first). Open
+      question is which — a picker is small and keyboard-reachable, dragging is what the
+      hand expects from a tree. Unlike a conversion, this **does** change the moved
+      note's id, so mention links pointing at the old one are a real question here.
+
+## Today (2026-08-19)
+
+- [ ] **MCP sidecar — built, all six build-order steps plus canvas and settings**
+      (2026-08-19) — the design doc written earlier the same day
+      ([mcp-tool-surface.md](mcp-tool-surface.md)) taken all the way through code.
+      Goal as stated: any agent can read notes from any project, add notes where
+      allowed, create and review canvases, reach settings; **quick searching and
+      finding things is the most important part**; well tested; and a toggle that
+      confines writes to the current project. All of it is in, gates clean, and
+      what the building changed about the design is recorded in that doc's
+      **"What changed in the building"** section — read that before trusting the
+      design text above it. Setup and the grant table: [mcp/README.md](../mcp/README.md).
+      **Step 1, the core extraction — the gate on everything else.** 460 lines out of
+      `notes.rs` into `src-tauri/src/corpus/` (`ids`, `walk`, `search`, `sections`,
+      `grants`, `edits`, `canvas`, `store`, `log`, `tools`), taking explicit
+      `Roots { notes, data }` instead of `AppHandle`. `notes.rs` and `settings.rs` are
+      now the thin Tauri layer over it; `lib.rs::app_paths` is the one place the app
+      answers "where are the roots". Behavior unchanged.
+      _What it bought:_ `notes.rs` had **zero** tests, because everything took
+      `AppHandle`. The suite went **36 → 110**. The new ones cover what had only ever
+      been checked by running the app and looking — id resolution through mounts, a real
+      folder shadowing a mount, `files` rules as an access boundary — plus the ones that
+      matter most: an `off` project's refusal is byte-identical to a missing note's, a
+      write pin never widens a grant, and reads are never logged. One test greps the
+      module for `tauri`, so the no-Tauri boundary is checked rather than trusted.
+      _One latent panic found while moving code, not introduced by it:_ `excerpt` sliced
+      a line at a byte offset found in a **lowercased** copy of it, and case folding can
+      change a character's byte length — a long line with certain non-ASCII characters
+      could have panicked on a non-boundary slice. It walks back to a boundary now.
+      **Steps 2–3, the helper and the read server.** `src-tauri/src/bin/asapnotes-mcp.rs`
+      takes a command in argv and its arguments as JSON on **stdin** (note content is
+      arbitrary text; argv would give every shell on the way a vote), and always emits an
+      envelope so a refusal is distinguishable from a crash. `mcp/` is the stdio server
+      on the official SDK — **its own package**, so the app's dependency footprint and
+      summon latency are untouched.
+      **Steps 4–5, writes and the convention layer.** `write_section` (which keeps the
+      heading line — see the doc), `append_to_note` (creation rides it, so adding a note
+      is one call), `expect_unchanged`, the write log, plus the `asapnotes://convention`
+      resource, three prompts, and `append_todo` / `new_decision` — which grant nothing
+      extra, they compose the same calls an agent could make itself.
+      **Step 6 partly:** `mcp_status` and `set_mcp_current_project` commands exist and
+      `src/notes.ts` exposes them; the Settings **UI** is still that item's own work.
+      **Searching, since it was named as the most important part.** Two tools, because
+      they cost different amounts: `find_notes` matches note **ids** and opens nothing,
+      `search_notes` reads contents. Still a plain scan with no index — an index would
+      have to be kept honest against every other tool that edits these files — but it
+      narrows before reading (a `project` filter drops files unopened, a whole-file check
+      skips the per-line pass, a `per_note` cap stops one long file eating the result),
+      and **every hit names the heading path it fell under**, so the next call is a
+      section read rather than a whole-note read. The listing carries heading trees on
+      request and never content.
+      **The write pin, which the design did not have.** `mcp.writeScope: "current"`
+      confines writes to the project the app is on; everything stays readable. The app
+      publishes the current project (and its own resolved notes root) into
+      `mcp-state.json` — a file, not `settings.json`, because it changes on every tab
+      switch and configuration should not churn under a hand-edited file. **The agent
+      cannot lift it:** `write_settings` refuses the whole `mcp` block rather than
+      validating field by field, so adding a key there can never leave a writable hole.
+      **Verified live**, helper driven directly against a scratch corpus: doctor,
+      outline listing, section read, search, the read-only refusal naming the settings
+      key, the candidate-listing error on a missed section, the pin refusing with nothing
+      current and then allowing the pinned project, canvas create → validate → the
+      blind-overwrite refusal → read, and settings refused while off. Plus 23 end-to-end
+      tests driving a **real MCP client over a real server over the real Rust binary** —
+      nothing mocked, because the seams are what break.
+      _2026-08-20, driven by a real client over real stdio against a 361-note corpus._
+      The descriptions do teach the cheap path (find/search → outline → section read,
+      and `expectUnchanged` on the way back), and search feel is a non-issue at that
+      size: every call landed in 27–86 ms, whole-corpus search in 42 ms, cold connect
+      plus `tools/list` in 207 ms. It also found the bug the fixtures could not, because
+      no limit binds under ten notes: **`search_notes` and `find_notes` spent their
+      `limit` on notes the caller could not see, then filtered** — `"the" limit 50`
+      returned 3 hits instead of 50. Fixed by pushing visibility into the walk; recorded
+      in [mcp-tool-surface.md](mcp-tool-surface.md). Two smaller things went with it:
+      outlining a whole corpus returned ~57k tokens in one call (now capped by count and
+      by bytes), and a clipped result now says `truncated` instead of looking like a
+      complete one.
+      _Still unmeasured:_ the summon-latency claim — the sidecar touches nothing on the
+      app's startup path except one `mcp-state.json` write, but that has not been timed.
+      _Distribution: settled 2026-08-20._ The helper ships with the app, and needs no
+      bundle config to do it — it is a second `[[bin]]` of the app's crate, so the
+      release build compiles it and the bundler ships it. Confirmed by extracting the
+      MSI from a plain `npm run tauri build`.
+      _Still deliberately absent:_ deletes and renames over MCP, and a whole-file note
+      write.
+
+- [ ] **Review the in-editor markdown rendering — marker weight, type scale, font**
+      (2026-08-19) — feedback, verbatim intent: the mixed markdown view "looks strange
+      and hard to read", and it "should match closer to the real .md render so it
+      doesn't look 2 different". Five asks, none settled; the whole item is typography,
+      so it is candidate-sheet material. Mechanics scouted first:
+      **What's there now.** `livePreview.ts` never hides a syntax marker — by design
+      (its header comment): `HeaderMark`/`EmphasisMark`/`CodeMark`/`StrikethroughMark`/
+      `QuoteMark` all take one flat `.cm-syntax` (a single literal `#9a9a9a` at 0.6
+      opacity, with no dark-theme value, while the `--syn-marker` token that _does_
+      have one is spent only on thematic breaks). Crucially the marker **inherits the
+      size and weight of the text it formats** — so `##` on a level-2 heading paints at
+      1.3em bold and `**` around bold words paints bold. The markers are the loudest
+      part of the formatting they describe, and they push the text right by their own
+      width. Two families have to converge for "not look 2 different": the live-preview
+      family (note editor, diff lens, read-only file lens — all three call
+      `livePreview()`; heading scale 1.5/1.3/1.15em, no block margins) and the
+      `renderMarkdown` family (preview pane on Ctrl+E, canvas static text blocks —
+      browser-default h1 at 2em with browser-default margins). That gap _is_ what the
+      feedback is measuring.
+      **(1) The bold pair should read more compact once the bold applies.** Leans,
+      cheapest first: (a) markers get their own type instead of inheriting — a fixed
+      small size (~0.7em of their context) at normal weight, so a marker never inherits
+      bold or a heading's scale; (b) tighten the pair's advance width (letter-spacing /
+      negative margin) so it costs about one character cell; (c) replace the pair with a
+      widget while the caret is off the line — the `BulletWidget`/`ImageWidget` pattern
+      is already in the file with the `onCursorLine` guard, so the literal characters
+      return the moment the caret enters the line. (c) is the strongest visual answer
+      and the only one that can reach zero width; the trade is caret arithmetic — the
+      caret steps over a replaced range as one unit.
+      **(2) Same for `##`.** One lean specific to headings, on top of (1): the marker
+      leaves the text flow and hangs in the left gutter (zero advance, negative
+      margin), so heading text starts on the same left edge as body text instead of
+      being pushed right by one indent per level. Best guess at the largest single
+      contributor to "hard to read" — today the left rag zig-zags with heading depth.
+      **(3) "Maybe stack them on top of each other so it fills less space
+      horizontally."** Read literally: `##` becomes two `#` in one character cell (two
+      rows at half line-height), the bold pair likewise — widget territory, i.e. lean
+      (1c). _Open question worth answering before any of it is drawn:_ does "stack" mean
+      literally stacked glyphs, or just "the marker must not cost horizontal space"? —
+      because (2)'s gutter-hang and a small level badge both satisfy the second reading
+      at much lower risk. The sheet should show all three at real size, side by side.
+      **(4) The font.** Open — no direction given beyond "not the greatest". What's
+      there: the editor inherits the UI face (Inter / "Segoe UI") at 0.95rem/1.6 and
+      has no measure cap, so on a wide window body text runs the full pane width.
+      Leans: split the _note body_ face from the UI chrome face and give the body a
+      reading face; and cap the reading measure. Hard constraint: any face must be
+      bundled with the app or already on the system — a webfont fetched at runtime is
+      out (no unrequested network connections). Ladder for the sheet: today's UI face /
+      a humanist sans / a text serif / a system UI face one step larger, each crossed
+      with line-height and measure.
+      **(5) The italic `_` should look better.** Takes (1)'s compact-marker treatment,
+      plus its own problem: an underscore sits on the baseline, where it competes with
+      descenders and with underscores inside identifiers. Extra lean: marker color
+      moves from one flat gray to per-kind tokens, so heading / bold / italic markers
+      are distinguishable without getting louder — and `.cm-syntax` finally gets a dark
+      value (or moves onto `--syn-marker`, which already has one).
+      **The lean that ties it together:** one shared markdown type scale — heading
+      sizes and weights, block spacing, blockquote, code, list indent — as CSS tokens
+      read by _both_ families, rather than tuning the editor alone and drifting again.
+      `HighlightStyle` already reads `var()` for its colors, so sizes can ride tokens
+      the same way. The cheap alternative (nudge the editor's numbers toward the
+      browser's defaults by hand) is deliberately not leaned: it is the same drift, one
+      round later.
+      **The one question that changes everything downstream:** may markers _disappear_
+      off the cursor line? Today they never do, on purpose — the visible marker is what
+      makes it obvious where formatting starts and ends. If that invariant is
+      negotiable, most of (1)–(3) stops being a typography problem and becomes a
+      four-line change. If it holds, the compact-marker design is the work. Not assumed
+      either way.
+      _2026-08-19, both answered:_ **markers must stay visible** — the invariant holds, no
+      treatment may hide a marker off the cursor line, so the compact-marker design _is_ the
+      work; and on the stacking question the user asked to see all three readings drawn
+      before choosing. **Candidate sheet published same day, awaiting picks.** Two more
+      findings the scouting turned up, both recorded on the sheet: `.cm-bullet` (`#7a7a7a`)
+      has no dark value either — the same bug as `.cm-syntax`, twice; and **`Inter` is named
+      in `App.css` but never bundled** (no `@font-face`, no font assets, and it is not
+      installed on this machine), so every note has in fact been rendering in Segoe UI while
+      the CSS asked for Inter. The sheet quantifies the "2 different" complaint too: a
+      level-1 heading is 22.8px in the editor and 32px in the preview pane (+40%), and the
+      editor has no space between blocks at all against the preview's 16–21px.
+      _Four decisions on the sheet, each drawn at the editor's real metrics (15.2px/1.6, the
+      app's own stack) on both real grounds:_
+      **(D1) Marker geometry, six treatments** (color held constant so only geometry varies):
+      **A** today (reference) — the marker inherits size, weight and slant; **B** compact
+      inline — the marker takes its own type (0.7em, weight 400, never slanted), stays in
+      flow, CSS-only; **C** gutter hang — B plus heading markers out of the flow into a 30px
+      gutter so every line shares one left edge, CSS-only; **D** stacked glyphs in flow — the
+      literal reading, `##` as two `#` in one cell, needs a widget, and its weakness is drawn
+      honestly (a lone `#` and a lone `_` have nothing to stack, so three kinds end up with
+      three geometries); **E** level badge — an `H2` chip in the gutter; **F** gutter stack
+      (recommended) — C and D composed, the heading marker stacks into one cell _and_ hangs
+      in the gutter, so the gutter costs 18px instead of 30px, while inline bold and italic
+      stay real characters at real width (keeps the stacking instinct where it pays without
+      forcing it on a single `_`, and no caret surprises mid-sentence).
+      **(D2) Marker color, three variants** on top of F: today's flat literal (reference) /
+      one gray properly tokenised onto `--syn-marker` (one line, fixes dark) / a hue per
+      marker kind (recommended — structure neutral gray, emphasis cool blue-gray, literals
+      warm gray, all low-saturation).
+      **(D3) The face, six rungs** at real width so measure reads: what ships today (Segoe
+      UI, uncapped) / real Inter fetched for comparison, to judge whether the original intent
+      was even right / Segoe UI at 16px/1.65 capped to 72ch, to separate settings from face /
+      Candara / **Sitka Text (recommended** — drawn for on-screen reading, ships with the OS,
+      and the strongest case for splitting the note-body face from the UI-chrome face**)** /
+      Constantia. Each rung states its shipping cost; bundling a woff2 subset is the only
+      option that isn't free, and a runtime font fetch is out.
+      **(D4) The shared scale** — the same note in editor and preview, today versus both
+      surfaces reading one token set, with the proposed values written out
+      (`--md-base: 1rem`, `--md-line: 1.65`, h1/h2/h3 at 1.6/1.32/1.14em, weight 650,
+      `--md-block-gap: 0.55em`, `--md-measure: 72ch`).
+      _The sheet (temporary working link, private to this account — delete with this item):_
+      (a private working page, since removed)
+      _No code yet._ Candidates compose, and once picked the slice lands across
+      `livePreview.ts` and `App.css` — the shared scale reaches all five surfaces at once
+      (note editor, diff lens, file lens, preview pane, canvas text blocks).
+      _2026-08-19 round 1 picked: **F, gutter stack** (C and D composed) — with two
+      refinements that were faults in the drawing, not preferences._ **Round 2 published
+      same day on the same sheet, awaiting picks.**
+      **(R2a) The stacked mark needs a rule for depth.** Round 1 drew every level at one
+      glyph size, and the arithmetic is worse than "tight": at 9.4px glyphs a level-4 mark
+      stands 20.7px and a level-6 mark 31px inside a 24.3px line, so from level 4 up it
+      collides with the lines above and below. Sharper because levels 4–6 all render at the
+      same size and weight in the app — the mark is the _only_ thing distinguishing them, so
+      it cannot be the thing that degrades. Four rules drawn over levels 2–6, with marks that
+      outgrow their line outlined in red rather than left to clip: **G1** one size for every
+      level (the fault, as reference); **G2** a hand-picked size per level, 10px down to
+      6.5px — everything fits but level 6, at the price of five magic numbers with no rule
+      behind them; **G3** constant cell height, glyph size = cell ÷ hash count — fits every
+      level by construction and forever, but legibility collapses exactly where it is needed
+      (4.4px at level 5, 3.7px at level 6); **G4** wrap to two columns at level 4
+      (recommended) — glyphs stay fixed at 9.5px and the _mark_ wraps instead, so `####`
+      reads as a 2×2 block and `######` as 2×3, nothing ever falls below 9.5px, height never
+      passes three rows, and it still fits the same 18px gutter because a second column costs
+      about 6px. Marker sizes are absolute px, not em, across all four — a consequence of
+      this ask worth keeping: a mark sized in em inherits its heading's scale and so reads
+      differently at every level, which is half of what made the original look wrong.
+      **(R2b) The blockquote `>` belongs inside the vertical rule, not beside it.** Requested
+      verbatim. It makes the rule and the marker one object instead of two devices doing one
+      job — and since the rule is 3px and the glyph about 10px, something has to give. The
+      hard part is the repeat: every line of a blockquote carries its own `>` in the file and
+      the visibility invariant says none may vanish, so whatever the treatment is, it happens
+      on every line. Two-line quotes drawn throughout for exactly that reason. Four
+      treatments: **Q1** today, `>` as the first character after the rule (reference);
+      **Q2** a break in the rule with the glyph in the gap, centred on the rule's axis
+      (recommended — literally the `>` inside the line, at the rule's original weight, and it
+      costs zero horizontal space, so quotes indent no further than today; the thing to judge
+      is that a multi-line quote then reads as a dashed rule rather than a solid one);
+      **Q3** the rule widens into an 11px tinted band with the glyph inside it (unbroken edge
+      however long the quote runs, and the band reads as one block — but it costs ~8px more
+      indent and changes what a quote _looks like_, not just where its marker sits);
+      **Q4** the `>` hung in the gutter beside an untouched rule (the most consistent option —
+      one gutter for every marker kind — but not what was asked for; on the sheet so the
+      simpler answer is on the table).
+      _Both round-2 sections sit at the top of the same sheet; round 1's A–F, the color
+      variants, the font ladder and the shared-scale comparison stay below for the record,
+      with D1 marked settled. D2 (marker color), D3 (the face) and D4 (the shared scale) are
+      still open._
+      _2026-08-19 round 2 picked: **G3, the constant cell** (chosen over the recommended G4
+      wrap — one expression and no per-level table won), and the quote ask came back
+      redirected. **Round 3 published same day, same sheet, awaiting picks.**_
+      **(R3a) G3's constants were wrong in the drawing, not its rule.** Round 2 set G3's cell
+      at 12.1px inside a 24.3px line, so it gave away half the height it was free to use
+      before it began shrinking the glyph — hence the 3.7px tail that made it look like the
+      weak option. Same expression, honest constants, two settings drawn: **G3a** as round 2
+      drew it (reference) versus **G3b** cell = the line's usable 19px, capped at 10px so a
+      shallow mark never outgrows the body text, floored at 6px as the size below which a
+      hash stops being countable (recommended). Every level gains: 10 / 10 / 8.6 / 6.9 / 6px
+      against G3a's 11 / 7.3 / 5.5 / 4.4 / 3.7px, no level overruns its line, and the
+      property that won G3 survives — one expression, `min(cap, max(floor, cell ÷ count))`,
+      no table. Known costs of G3b: levels 2 and 3 both sit at the cap so the two shallowest
+      marks are the same size, and 6px at level 6 is legible rather than comfortable — if
+      that ever matters, round 2's G4 wrap stays available as a fallback for depths 5–6.
+      **(R3b) The quote rule must not break at all.** Requested: keep Q2's glyph position but
+      let the rule run through unbroken, the two told apart by slightly different colors so
+      both stay visible. That retires Q2's gap and Q3's band; Q4's gutter answer stays on the
+      sheet as a fallback. Three tones now in play — rule `#c9c9c9`/`#5a5a5a`, glyph
+      `#8e8e8e`/`#a5a5a5` (a clear step from the rule in both themes), and for one candidate
+      a third lighter rule tone. Three treatments: **Q5** glyph centred on the rule's axis
+      with the rule running straight through it (recommended — the literal ask; continuous
+      edge however long the quote runs, zero horizontal cost, only two tones, and the rule
+      passes through the open side of the `>` so the mark reads as sitting on the line);
+      **Q6** glyph nudged right so its point sits against the rule's edge rather than over it
+      (nothing overlaps, so both are perfectly crisp and the mark appears to point out of the
+      line — but it is beside the rule again, which is what the redirect rejected, and it
+      eats ~7px of the rule-to-text gap); **Q7** unbroken but the rule steps to a third,
+      lighter tone for the 14px the glyph crosses (maximum separation, at the price of three
+      tones for one small device and a rule that looks banded down a long quote).
+      _2026-08-19 round 3 picked: **G3b** (the cell rule on honest constants) and **Q5**
+      (unbroken rule, glyph on its axis a tone darker). Marker geometry is now specified
+      except for one request that arrived with the picks: carry the `>` **only on the quote's
+      first line**, at that line's height, so the mark reads as where the quote comes from.
+      **Round 4 published same day, same sheet, awaiting picks** — that request is two
+      questions, and the second one is the user's to answer, not a design lean._
+      **(R4a) Where the single glyph sits.** Three placements over three-line quotes:
+      **P1** a glyph on every line (the settled Q5, as reference — reads as a column of
+      arrows and says nothing about where the quote begins); **P2** one glyph on the opening
+      line, centred on the rule's axis at that line's own height (recommended — glyph and
+      rule divide the labour, the glyph saying where the quote starts and the rule how far it
+      runs, and it stays aligned with the first quoted words so the eye starts in the right
+      place); **P3** one glyph pinned to the top of the rule (unmistakably an opening mark
+      and never colliding with ascenders, but aligned to no line of text, so it floats
+      between the heading above and the quote below and can read as decoration on the rule
+      rather than a character in the file).
+      **(R4b) What becomes of the continuation `>` characters — the invariant question.**
+      Every line of a blockquote carries its own `>` in the file, so a single glyph means the
+      rest go undrawn, and round 1 settled that no marker may be hidden. There is a fair
+      reading in which this is not a breach — the unbroken rule _is_ what marks those lines,
+      so the syntax stays represented, just not glyph-by-glyph — but it is the first thing on
+      this sheet to touch that rule, so all three answers are drawn rather than assumed:
+      **V1** not drawn, and that is the design (quietest and simplest, but a marker in the
+      file never reaches the screen, and an accidentally deleted continuation `>` was never
+      being pointed at); **V2** every `>` drawn but continuations at ~quarter opacity (the
+      invariant holds literally, hierarchy instead of hiding, and nothing conditional — at
+      the price of a glyph faint enough to miss anyway, plus a fourth tone on a device that
+      already carries three); **V3** hidden while reading, all glyphs back at full strength
+      while the caret is anywhere inside the quote (recommended — keeps the invariant's
+      _purpose_ exactly, reading as clean as V1 and editing as honest as P1, and it extends
+      the cursor-proximity machinery already governing bullets and images; the cost is that
+      it is the one candidate whose appearance changes as the caret moves, and it needs the
+      quote's extent rather than just its line, so the guard becomes block-scoped). Drawn
+      with a third panel showing the same quote with the caret parked inside it.
+      _2026-08-19 round 4 picked: **P2** and **V3**. The marker geometry is now fully
+      specified and ready to build — five picks across four rounds (F, G3b, Q5, P2, V3),
+      drawn in full at the top of the sheet with the complete spec beside it:_
+      **Marker type** is its own, never inherited — absolute px, weight 400, upright (a mark
+      sized in em inherits its heading's scale and so reads differently at every level, which
+      was half of what made the original look wrong).
+      **Heading marks** are glyphs stacked in one cell, hung in the gutter at zero advance so
+      heading and body text share one left edge; gutter 18px, and the decoration must cover
+      the mark _and_ its trailing space or a stray indent is left behind.
+      **Stack size** is `min(10, max(6, 19 ÷ (0.55 × count)))` px, one column, row height
+      0.55 — level 1 a single `#` at the cap, then 10 / 10 / 8.6 / 6.9 / 6.0 for levels 2–6,
+      nothing overrunning the 24.3px line.
+      **Inline marks** (bold, italic, code) stay compact in the flow: 0.7em, weight 400,
+      upright, real characters at real width, so the caret never steps over a widget
+      mid-sentence.
+      **The quote rule** is solid 3px and unbroken down every quoted line. **The quote glyph**
+      is drawn once per block, on the opening line, centred on the rule's axis at that line's
+      height, one tone darker than the rule (`#8e8e8e`/`#a5a5a5` against `#c9c9c9`/`#5a5a5a`).
+      **Continuation `>` characters** are undrawn while reading and every one returns at full
+      strength while the caret is anywhere inside the block — the existing cursor-proximity
+      guard, made block-scoped. _This narrows the round-1 visibility invariant deliberately:_
+      markers may be undrawn while reading a quote's continuation lines, because the unbroken
+      rule marks them and the real characters come back wherever the caret is. The precedent
+      is reusable — the same block-scoped reveal could quiet heading and emphasis markers
+      later without ever truly hiding them.
+      _Build surface: `livePreview.ts` takes the heading-mark widget, the block-scoped quote
+      guard and the per-kind mark classes; `App.css` takes the marker type, the gutter, the
+      rule and the tokens. Still gating the rest of the slice, all three drawn on the sheet
+      since round 1 and still unanswered: **D2** marker colour, **D3** the face, **D4** the
+      shared type scale._
+      _2026-08-19 the last three answered, all as recommended — the design is complete and
+      building starts:_ **D2 a hue per marker kind** (structure neutral gray, emphasis cool
+      blue-gray, literals warm gray, all low-saturation, three token pairs);
+      **D3 Sitka Text** for the note body at 16px/1.65 with the measure capped to 72ch —
+      which also splits the note-body face from the UI-chrome face, chrome staying a sans
+      (system face, no bundle, needs a serif fallback for other platforms; note that `Inter`
+      stays named nowhere useful — the stack's first entry was never bundled, so this replaces
+      a font the app never actually had); **D4 yes, one shared token set** read by both
+      families, closing the 40% heading gap and reaching all five surfaces at once.
+      **Implemented 2026-08-19 — `npm run build`, `lint` and `format` clean (the one lint
+      warning is pre-existing, `zoomAt` in BoardView); no Rust touched, so the cargo gates are
+      not implicated. Not yet verified by eye — see the pending list.** Two files:
+      `livePreview.ts` gained the per-kind mark decorations (`cm-syntax` plus
+      `cm-mk-emphasis`/`cm-mk-literal`), a `HeadMarkWidget` carrying the G3b size rule
+      (`headMarkSize`), a `QuoteMarkWidget`, a heading block-gap line decoration, and quote-block
+      bookkeeping; `App.css` gained the marker and scale tokens and applied them to the editor,
+      the preview pane and the file lens. Heading sizes and weights now ride `var(--md-h1…3)`
+      and `var(--md-h-weight)` from inside `HighlightStyle`, which the existing colour vars
+      already proved works — the style is still built once and the tokens resolve per theme.
+      _Three scope decisions taken during the build, all deviations from what the sheet
+      claimed:_
+      **(1) The scale is shared as ratios, not as one absolute base.** `.board-node-text`
+      deliberately runs its own compact override (0.8rem body, every heading flattened to
+      0.95rem) because canvas cards are thumbnails; forcing the reading scale there would
+      break card layout. So the heading steps and block gap are `em`-relative and each surface
+      sets its own base. **Canvas text blocks were then left alone entirely** — even the
+      reading face — rather than half-converted: the sheet's "all five surfaces" is really
+      four reading surfaces (note editor, diff lens, file lens, preview pane), and cards keep
+      their own deliberate scale. Worth revisiting only if canvas text blocks stop being
+      thumbnails.
+      **(2) Heading marks give way to the real characters on the caret's line.** A
+      `Decoration.replace` cannot be typed inside, so a permanent widget would make `##` →
+      `###` impossible by typing — only by selection. The build uses the `onCursorLine` guard
+      that already governs bullets and images: stacked mark in the gutter while reading, raw
+      compact characters when the caret is on that line. Cost is a small horizontal shift when
+      the caret enters a heading, exactly the one bullets already have. This was never drawn
+      on the sheet, which only ever showed the reading state.
+      **(3) The reading face is scoped to markdown notes.** `.editor:not(.editor-plain)` takes
+      Sitka Text and the shared scale; a plain-text note keeps the interface face, since it is
+      as likely to hold config or code as prose. `.file-lens-text` stays monospace.
+      _Pending hands-on — a visual change, so compiling clean proves little. The dev instance
+      running during the build hot-reloaded both files, so the change is already live in it.
+      What needs eyes:_ (a) `max-width: var(--md-measure)` on `.cm-content` — whether capping
+      the measure disturbs click-to-position or the scrollbar at wide window sizes; (b) the
+      heading stack's vertical centring at each level, and whether the zero-width host really
+      holds it steady on lines that carry the block gap; (c) the quote glyph landing exactly on
+      the rule's axis, and the block reveal firing on caret entry; (d) Sitka Text at 16px in
+      both themes against the interface sans around it — the one pick made from a specimen
+      rather than from the app; (e) whether the 18px gutter is enough for a level-6 stack; and
+      (f) the preview pane and editor genuinely reading as one render now.
+      _2026-08-19 follow-up: **the inline bold pair now stacks too.**_ Reported after the
+      build: the `**` was compact but still ran along the line. Verified the compact type _was_
+      applying (0.7em, weight 400) — what was missing was the vertical stacking, which
+      round 1's F deliberately withheld from inline marks on a recommendation the original ask
+      had already contradicted ("maybe even kinda stack them on top of each other so it fills
+      less space horizontally"). F's exclusion is therefore **superseded for marker runs of two
+      or more characters**: an `EmphasisMark`/`StrikethroughMark` of length ≥2 (`**`, `~~`) is
+      replaced by a `MarkStackWidget` that stacks in the flow, so the pair costs one glyph of
+      width instead of two. A single character (`_`, `*`, a backtick) still has nothing to
+      stack and keeps the compact inline treatment; the caret's own line shows the real
+      characters, as with heading marks, so `**bold**` stays editable by typing. The size rule
+      and the stack DOM were hoisted on this second use — `stackGlyphSize` and `glyphStack`
+      now serve both the heading marks and the inline pairs, so a two-glyph stack is 10px in
+      both places. Gates clean again.
+      _Note for the next session: `livePreview.ts` was edited in the working tree while this
+      slice was being built_ — the `ListMark` case became a list-cell treatment
+      (`listLine`/`listDepth`/`listBullet`/`listMark`/`hidden`) and `BulletWidget` went away
+      with it. The marker work above sits alongside that cleanly and all gates pass on the
+      combined tree, but the two were written independently and have not been looked at
+      together by eye. Worth checking that list marks and the new per-kind marker colours read
+      as one system rather than two.
+
+- [ ] **Link targets collapse to their label; tooltip width fix** (2026-08-19) — requested
+      while the marker slice was landing: a file mention should "hide the real path and show
+      the `[]` only, unless we have the cursor in it, or if we hover it for a bit". A mention
+      writes an ordinary markdown link, so this is about every inline link, not only
+      `@`-mentions — there is nothing in the file that distinguishes one. **Three decisions
+      taken, all as recommended, then built the same day; gates clean.**
+      **(1) The caret reveal is node-scoped, not line-scoped** — the path returns when the
+      caret touches _that_ link's range (either end counts, so a caret parked just after a
+      link can still edit it). A new `onNode` helper beside the existing `onCursorLine`: a
+      line holding three links opens only the one you are in, where the line-scoped guard
+      would reflow all of them.
+      **(2) Hover shows the path in the app's own tooltip**, via a mark decoration carrying
+      `data-tip` — `Tooltip.tsx` already has a 300ms dwell and the `overflow-wrap: anywhere`
+      that exists precisely so paths can break, and `links.ts` already proves the pattern of
+      hanging a `data-*` attribute on a mark decoration. Rejected: expanding the path inline
+      on dwell (the line reflows under the pointer that is holding the hover) and
+      CodeMirror's own `hoverTooltip` (a second tooltip UI to style and keep consistent).
+      **(3) The brackets stay**, dimmed — only `(path)` is hidden, so a link still reads as a
+      link instead of as ordinary prose. A reference link (`[label][ref]`) has no URL child of
+      its own and is left exactly as it was.
+      _Verified while reading, not assumed:_ Ctrl+Click does not break — `links.ts` resolves
+      its target from the document and carries it in a `data-link` attribute, never from the
+      rendered text.
+      _Worth naming: this crosses a line the quote work did not._ A `>` is syntax; a path is
+      **content**. The note's own text is now invisible until the caret enters the link or the
+      hover dwells. Mitigations are the two reveals plus the file being untouched on disk, but
+      it is a further narrowing of the round-1 visibility invariant and the first one to hide
+      something that is not a marker.
+      **Tooltip width fix, shipped with it** (its own small bug, found by report: hovering the
+      titlebar close button showed a vertical column of characters "that looks like a
+      function"). `.tooltip` is `position: fixed` with `left` set and no width, so an anchor
+      near the window's right edge left it only the handful of pixels to the edge, and
+      `overflow-wrap: anywhere` then broke the text at every character. The measured re-fit in
+      `Tooltip.tsx` cannot recover, because it measures the box _after_ the collapse. Fixed
+      with `width: max-content`, so an explicit width replaces shrink-to-fit and the `left`
+      offset stops squeezing it; `max-width` still caps long paths and the existing clamp now
+      works on a real measurement. This also fixes minimize/maximize and any other tip
+      anchored near an edge — and it is a prerequisite for (2), since a collapsed tooltip is
+      exactly what a hovered link near the right edge would have produced.
+      _Pending hands-on:_ that the collapse and both reveals read well at speed, that the tip
+      fires on the label rather than needing the exact bracket, and the close-button tip.
+      _2026-08-19 list geometry — feedback: "the bullet indentation doesn't look perfect",
+      and put the marker "in the exact place the dot would be". The reference was named
+      explicitly — the rendered pane is right, the editor is what moves._ Three faults, one
+      cause: the editor indented by the characters the note holds, while the rendered pane
+      indents by **nesting depth** — two spaces or four both make one level there, and about
+      8px of proportional space here. **(a)** The `•` widget is gone; a list marker is now the
+      note's own character (`-`, `*`, `+`, `10.`), which also ends the horizontal shift the old
+      widget caused whenever the caret entered a list line, since there is no substitute glyph
+      left to swap back. **(b)** A list line indents by `depth × --md-list-step` and the marker
+      hangs into the step it opens, its cell ending one `--md-list-gap` short of the text — so
+      every item's words start on one edge whatever its marker is, and wrapped lines land under
+      the words rather than under the bullet. Continuation lines an item carries (a hard-wrapped
+      sentence, a second paragraph) take the same indent; lines a nested list owns take theirs
+      from their own marker. **(c)** The typed indent and the marker's trailing spaces are
+      hidden — still the note's own text, still selectable and deletable, just not drawn, since
+      the depth they encode is now drawn by the step.
+      `--md-list-step` is `2.5em`, which is exactly what the preview pane was already doing by
+      browser default; the pane's `padding-left` is now spelled out in that token instead, so
+      the editor has a number to match rather than a default to be measured against. **The
+      rendered pane therefore does not change** — deliberately, it is the reference. One
+      convention deviation: `.cm-list-mark` is unscoped where the other marker rules are
+      `.editor`-prefixed, because the line's indent rides on the decoration's own inline style
+      and the cell has to follow live preview wherever it is mounted (the diff lens included).
+      Gates clean; no Rust touched.
+      _Not seen by eye, and one number is a guess:_ `--md-list-gap: 0.5em` puts the dash where
+      the browser's disc sits, reasoned rather than measured — if it reads too far from or too
+      close to the text, that token is the single knob. Also unchecked: caret travel through
+      the hidden indent (two dead left-arrow presses at a two-space level), and the diff lens,
+      where an added list line's inline `padding-left` now beats `.cm-lens-add`'s 0.5rem
+      compensation.
+      _Left alone deliberately:_ a nested list in the rendered pane still carries
+      `--md-block-gap` above and below, which the editor has no equivalent for — a vertical
+      mismatch the left-axis fix does not touch, and an unrequested change to the reference
+      surface.
+
+- [ ] **Map lens: remembered camera, ghost reference lines, plain title boxes, zoom
+      slider, export moved to File** (2026-08-19) — a third feedback batch on the map
+      lens, all five asks settled the same day and built. Design pass first, one
+      question each; every recommendation was the pick.
+      **(1) The camera survives.** The lens recomputes on every activation, so its tab
+      remounts and the surface used to refit — you lost your place each time you
+      glanced at a note. `BoardView` gained `camera` (read once at mount) + `onCamera`;
+      the App keeps a `Map<mapTabId, Camera>` in a ref and hands it back. No camera →
+      fit on mount, exactly as before, so canvases and the annotation lens are
+      untouched. Rejected: keeping the tab mounted (a stable key would also fix
+      recompute flicker, but a tab switch still unmounts, so it doesn't answer the
+      ask). Deliberately left alone: real `.canvas` tabs still refit on activation —
+      the same three lines would fix them, unasked.
+      **(2) Reference lines inverted.** The 2026-08-17 model — hide the lines of a card
+      with more than three outgoing edges — showed exactly the sparse, least
+      interesting lines and hid the hub's, which was backwards ("those are usually the
+      most irrelevant"). `HIDE_EDGES_PAST` and the hub concept are gone. Now **every**
+      line draws, in a ghost layer at ~0.11 opacity (0.16 dark): enough to read the
+      shape of the map, quiet enough not to clutter. Hovering a card lifts its lines
+      out of the ghost layer in the plain line color; clicking **pins** them in a color
+      from the six presets, picked by position in the click order, and the card wears
+      that same color — so two pinned cards' bursts can't be confused. Pins are
+      additive and sticky (clicking another card keeps the first); clicking a pinned
+      card unpins it; clicking the background clears them all. Ghosts paint first so
+      lit lines lie on top. The degree balls went back to being pure counts — the whole
+      card is the toggle now, which deleted the ball's click plumbing. One fix the
+      inversion forced: a lens no longer renders the fat invisible click-twin each line
+      carries, or now-that-every-line-draws they would blanket the surface a plain drag
+      pans. Alternative offered and declined: separate green/orange balls for
+      incoming/outgoing traces.
+      **(3) Cards with nothing to show are plain title boxes.** Compact cards were
+      110×68 with a grey "file" tag under a two-line title — vertical air for nothing.
+      Now the full 220×150 card is for **a note with text to excerpt**, and everything
+      else is 110×50: a referenced file the lens can't render, and a note with nothing
+      written in it (the compute already reads every note, so blankness costs nothing
+      to know). The "file" tag is gone — icon plus name already say what it is —
+      while "missing" stays, because that one is news. Images are the exception at
+      110×96: they show their own content, so the box keeps room for the thumbnail.
+      Needed `IMAGE_FILE` hoisted from `App.tsx` into `paths.ts` (its second real use).
+      **(4) A zoom slider.** The board's overlay bar was already at the top, so the
+      slider joined its zoom cluster: logarithmic, `min=-1 max=1`, the middle exactly
+      100%. Zoom bounds widened from 0.25–2 to **0.1–10** (module-wide, so canvases get
+      the range too; `fit` still clamps at 100%). `zoomAt` was refactored into
+      `zoomAround(px, py, next)` so a wheel step and the slider's absolute level share
+      one path instead of a third copy of the transform, and the "100%" button now
+      keeps the view's middle put instead of jumping.
+      **(5) "Save as canvas…" left the surface.** The map's snapshot writes a file, so
+      it belongs with the file verbs: **File ▸ Export as canvas…**, gated on the map
+      being the open tab, plus the same entry on the map surface's right-click menu.
+      The bar button is gone; the annotation lens keeps **Save into image**, because
+      flattening is what that tab is for. `saveMapAsCanvas` → `exportMapAsCanvas`.
+      **Verified live** (second instance over the devtools protocol, scratch project of
+      7 notes — a 6-out hub, back-links, an empty note, refs to a `.rs`, a
+      `package.json`, an icon `.png` and a dead link; full cleanup, settings.json
+      confirmed untouched): 15 ghost lines at rest and nothing lit; pin the hub → 8
+      lines in preset 1 with the card ringed to match; pin `d.md` too → both sets stay,
+      the second in preset 2; hover a third card → one extra line lifts uncolored;
+      unpin → its lines fall back; background click → all 15 ghosts again. Card sizes
+      at 100%: 220×150 for notes with text, 110×50 for the empty note and the two file
+      refs, 110×96 for the image, no clipped titles (48 clipped a two-line name by a
+      pixel; 50 is the fix). Slider ends read 10% / 100% / 1000% and stay
+      centre-anchored. Camera: pan to 71%, switch to a note tab, come back — the
+      surface transform came back byte-identical. File menu carries "Export as
+      canvas…" only on the map tab; running it wrote `map.canvas`, opened it editable,
+      and there all 15 edges draw plain with their click-twins back.
+      _Pending hands-on:_ ghost opacity on a real, dense corpus in both themes (0.11 /
+      0.16 was picked on a 7-note map); whether pin colors shifting when an earlier pin
+      is removed reads as a bug (color = position in the click order); the 110×50 box
+      against real long file names — a "missing" tag still crowds the title into its
+      two-line clamp; and whether the widened zoom range wants a keyboard step.
+      _Noted, not touched (pre-existing):_ a real file under a registered project that
+      the corpus doesn't list still reads "missing" when its extension is a known note
+      type — `package.json` under the repo project showed the badge.
+
 ## Today (2026-08-17)
 
 - [ ] **Project map: degree balls, layout density, compact ref cards, wrapping titles,
@@ -63,8 +769,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
       awaiting a pick_ — the user asked for a visible hint of the main folder on a
       subfolder's tab (round 2's hue-kinship alone read too subtle). Making the link
       an explicit device also frees subfolders to take their own palette color while
-      still reading as the parent's family. Four variants, each shown at 100% (parent
-      + two sibling subfolders) and as a field scene: **F1** breadcrumb tab — a
+      still reading as the parent's family. Four variants, each shown at 100% (parent + two sibling subfolders) and as a field scene: **F1** breadcrumb tab — a
       `docs` segment in the parent's tab material, then the subfolder's segment in
       its color (recommended: fill beats text at map zoom, the parent is named,
       siblings read as siblings; depth 3+ collapses middle segments to F2's key),
@@ -112,6 +817,36 @@ The AI (or anyone) working on this repo keeps this file current while working:
       folder-level verb on it yet; **(d) where a folder-link edge lands** — lean:
       the cluster's first card's tab, and subfolder clusters sort adjacent to their
       parent (path sort already does this) so families sit together.
+      _F1 implemented 2026-08-18, all gates clean, verified live over the
+      devtools protocol; micro-decisions (a)–(d) built as leaned, one noted
+      deviation on (b)._ What shipped: the lens stops painting group backdrops
+      (the groups stay in the computed document, so "Save as canvas…" keeps
+      real spec groups — verified in the written snapshot); every foldered
+      card wears a `.board-tab` at the approved metrics, derived on the lens
+      from the document's own groups by geometric containment, so any computed
+      map works; breadcrumb segments for depth 2, middles collapsing to the
+      key square at depth 3+; the palette is six light/dark pairs as theme
+      tokens (`--folder-0..5` — the mock's four plus an amber and a blue),
+      assigned by a stable hash of the folder path in `BoardView`; packing
+      tightened in `projectMap.ts` (gap 20 in-folder + 14 vertical tab
+      headroom, clusters 110 apart card-to-card with the unpainted group rect
+      overlapping the gaps); folder-link edges land on the folder's first
+      card, edges dedupe on endpoints (a folder link and a direct link to its
+      first note draw one line) and self-edges are skipped; the tab is part of
+      its card — a press falls through and pans, double-click opens the note,
+      full path in the tooltip. The (b) deviation: no JS middle-ellipsis — the
+      breadcrumb already collapses the middle, so overflow is per-segment CSS
+      ellipsis with the parent segment yielding first (flex-shrink), tooltip
+      carrying the full path. Verified live (scratch registered project:
+      root hub + `docs` + `docs/deep` + `x/y/z`, both themes screenshotted,
+      full cleanup including a stray snapshot): zero group boxes on the lens,
+      tab geometry exact (card left + 8, rising 20, max-width card − 16),
+      single/breadcrumb/key-square all correct, in-folder gap 20 and cluster
+      gap 110 exact, hub's out-ball 3 after the dedupe, snapshot kept all
+      three groups. _Pending hands-on:_ the 10.5px tab text at typical zoom,
+      the six colors on both themes, long folder names, whether the tighter
+      packing reads as clusters without the boxes, and the amber/blue pairs
+      (they're mine, not the sheet's).
       **(3) Cards with no visible content get much smaller.** A card that renders
       only its head line (any non-`.md` target — code refs, assets, missing) takes
       the full default card size today, all body wasted. Lean: size decided at
@@ -148,7 +883,9 @@ The AI (or anyone) working on this repo keeps this file current while working:
       the read-only lens a card with more than 3 outgoing edges hides those
       lines; clicking the card or its orange ball reveals them, each edge
       cycling the spec's six preset colors; click-away or a second click
-      hides again. Render-only — "Save as canvas…" stays all-edges-shown,
+      hides again. **(Superseded 2026-08-19 — see the map-lens item under that
+      date: hiding by out-degree showed the least interesting lines, so every
+      line now ghosts and a click pins one card's set.)** Render-only — "Save as canvas…" stays all-edges-shown,
       uncolored. Cursors: grab at rest, grabbing mid-pan, pointer over
       cards, grab over group backdrops. File titles wrap to two clamped
       lines everywhere (link chips keep one line — theirs is a URL). - **The resolution seam fix** (the handoff's "missing"-badge look): a
@@ -187,7 +924,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
 - [ ] **Project map follow-ups: cursor, card menu, edge decluttering** (2026-08-16) —
       three asks on the shipped map lens, recorded together because they are all
       map-surface polish. _(1) and (3) landed with the 2026-08-17 slice above;
-      (2) and (4) remain._
+      (2) landed 2026-08-18; (4) remains._
       **(1) Grab cursor.** The map's left-drag pans, so the surface should say so: the
       hand/grab cursor always, except while hovering something that opens (a card →
       pointer). Essentially settled — a few CSS rules on the read-only board
@@ -201,6 +938,29 @@ The AI (or anyone) working on this repo keeps this file current while working:
       map must recompute after, or the dead card lingers; and what the menu offers on
       a referenced non-note file (lean: Open externally + Reveal, no Delete — the map
       shouldn't delete files the corpus doesn't own).
+      _Implemented 2026-08-18 as leaned, all gates + tests clean (36), verified
+      live over the devtools protocol._ What shipped: on the lens a note card's
+      menu is "Open note" plus the explorer row's own `noteOps` — Copy path,
+      Reveal in File Explorer, Delete note — supplied by the app through a new
+      `fileVerbs` prop, so the map card and the tree row literally share the
+      code; a referenced non-note file offers Open / Open externally / Reveal
+      only (new `reveal_path` command — absolute existing paths only, since
+      referenced files live outside the corpus); a missing target adds nothing,
+      and a card whose menu would be empty now falls back to the surface menu
+      instead of opening an empty box (pre-existing lens quirk, caught live).
+      Delete recomputes the map when it really deleted (`deleteNote` now
+      reports whether it did — cancel recomputes nothing), and `openMapTab`
+      lists the corpus fresh from disk instead of from state, because a
+      recompute can follow a deletion by less than a render. Accepted knock-on:
+      the recompute remounts the lens, so the camera re-fits after a delete.
+      Verified live: both menus' exact entries, the empty-menu fallback,
+      `reveal_path` refusing relative and non-existent paths, and
+      delete-then-reopen showing the deleted note as a _missing reference_
+      (the hub still links it — the honest picture) with its emptied folder's
+      cluster gone. _Pending hands-on:_ the Delete click through the real
+      confirm dialog (native — can't be driven headlessly), Reveal actually
+      opening File Explorer, and whether the camera re-fit after a delete
+      feels acceptable.
       **(3) Hide a card's edges past 3; click reveals them color-coded.** A card with
       more than 3 outgoing reference edges hides those lines (a hub note otherwise
       buries the map in curves); clicking the card shows its arrows, each in a
@@ -224,7 +984,42 @@ The AI (or anyone) working on this repo keeps this file current while working:
       canvas file card (lean: both — the affordance is about file cards, not about
       the lens, and the board's cards have the same invisible double-click today);
       and what it does on non-note targets (same answer the double-click gives:
-      notes open in-app, real files open externally).
+      notes open in-app, real files open externally — _superseded by the
+      2026-08-17 slice: the routing is now the double-click's own — notes
+      in-app, images to the system viewer, markdown to the lens, the rest per
+      the `openFilesExternally` setting_).
+      _2026-08-18: candidate sheet published, awaiting a pick_ — four
+      placements at real card metrics, both themes, live hover states, plus a
+      four-glyph ladder (composable, "A with 2"): **A** hover-revealed corner
+      icon button (recommended — the product reason is map density, and the
+      pointer is already on the card when the question is asked), **B** the
+      same button always visible (the MAP-chip precedent applied per card —
+      the sheet's field strip shows what a real map wears all day), **C** a
+      worded amber OPEN chip (richest; competes with the app's amber
+      where-you-are language repeated per card), **D** inline glyph in the
+      head row (quietest ink, but near-invisible at map zoom). Glyphs: 1 ↗
+      arrow (lean), 2 box-and-arrow (muddy at 12px, and notes open in-app),
+      3 chevron (reads "expand"), 4 straight arrow (echoes the edge arrows).
+      Scope stays the recorded lean — every canvas file card, not just the
+      map. _The sheet (temporary working link, delete with this item —
+      private to this account):_
+      (a private working page, since removed)
+      _Picked same day: **A with glyph 2** (hover-revealed corner button,
+      box-and-arrow), the user adding explicitly that double-click keeps
+      opening too — the button is an addition, never a replacement.
+      Implemented 2026-08-18, gates clean, verified live over the devtools
+      protocol through the real input path:_ `.board-open-btn` on every file
+      card with an openable target (missing cards wear none), hidden until
+      the card is hovered, routing through the same `openNode` the
+      double-click uses; the press stops propagation so the surface pan /
+      card drag can't eat the click; a raised draw tool hides the buttons
+      (strokes go over cards). Verified: opacity 0 at rest and 1 on a real
+      hover; a real click on a note card's button opened the note, on a ref
+      card's the file lens with the exact path; the buttons ride an editable
+      snapshot canvas too and stand down under the pen. _Pending hands-on:_
+      the reveal feel (fade timing, the 20px hit target), the glyph at real
+      zooms (the sheet flagged the box muddying at 12px), and hover on a
+      card whose top-right is tight against a long wrapped title.
 - [ ] **Double-click a project heading opens the project** (2026-08-16) — requested:
       today becoming "current project" takes opening one of the project's files; wanted
       a double-click on the project itself that moves there. Three shapes went up —
@@ -247,17 +1042,72 @@ The AI (or anyone) working on this repo keeps this file current while working:
       visible enough to bother; whether double-click wants to work on the
       current-project pane's own heading too (skipped — that project is already
       current, and its chip sits right there).
-- [ ] **Convert a folder between virtual and real** (2026-08-16) — requested: right-click
-      a folder (or a file in one) offers converting a virtual folder to a real one and a
-      real folder to a virtual one. Converting needs a destination pick — a virtual
-      folder's backing directory lives in the virtual-folders home, so "make it real"
-      must ask where the directory should go (and the reverse may ask which project the
-      mount joins). Also requested alongside: manually moving files between a virtual
-      folder and the real folder it becomes, so a conversion doesn't have to be
-      all-at-once. Not designed yet; open points: what conversion means for note ids and
-      open tabs (a backing-directory move re-roots every contained note's id — drafts,
-      history and tabs all key off it), whether "convert" is move-the-directory or
-      create-and-migrate, and how conflicts at the destination surface.
+- [x] **Convert a folder between virtual and real** (2026-08-16, built 2026-08-20) —
+      requested: right-click a folder (or a file in one) offers converting a virtual
+      folder to a real one and a real folder to a virtual one. Converting needs a
+      destination pick — a virtual folder's backing directory lives in the
+      virtual-folders home, so "make it real" must ask where the directory should go
+      (and the reverse may ask which project the mount joins). Also requested alongside:
+      manually moving files between a virtual folder and the real folder it becomes, so
+      a conversion doesn't have to be all-at-once. Not designed yet; open points: what
+      conversion means for note ids and open tabs (a backing-directory move re-roots
+      every contained note's id — drafts, history and tabs all key off it), whether
+      "convert" is move-the-directory or create-and-migrate, and how conflicts at the
+      destination surface.
+      _2026-08-20 — built, and **the destination pick is what got designed away**._ An
+      id is `project/<at>/…` whichever shape the folder is in: `base_of` sends it into
+      the mount's backing folder, and a real folder of that name shadows the mount. So a
+      conversion that **keeps the name** changes no id at all — no draft to move, no
+      history to move, no tab to retarget, no ledger to rewrite. The id re-rooting the
+      open points worried about is a property of _moving the folder somewhere else_, not
+      of converting it, so conversion doesn't ask where: "make it real" lands in the
+      project under the same name, "make it virtual" lands in the virtual-folders home at
+      `<project>/<at>`, which is where `create_virtual_folder` puts a new one. Wanting
+      the directory somewhere specific is Detach + Associate, which already exists.
+      _What shipped:_ `folder_to_real` and `folder_to_virtual` in `notes.rs`, beside the
+      other mount verbs. `checked_mount_at` split so the conversion can reuse the name,
+      depth and overlap checks without the "no real folder here" rule it exists to
+      violate (`checked_mount_name`). A `move_dir`/`copy_dir` pair — `rename` first, copy
+      then remove across volumes, the trade `move_note` already makes for one file.
+      **Each direction sequences its settings write on the side that can't hide files:**
+      real→virtual registers the mount _first_ (inert while the real folder is still
+      there, and rolled back if the move fails), virtual→real moves _first_ and detaches
+      after, so a failure part-way always leaves the real folder in charge. Refusals:
+      a conflicted or missing mount, a real folder already at the name, and a
+      destination that already holds a detached virtual folder's files — merging two
+      sets quietly is the one thing worth refusing.
+      _UI:_ "Convert to a real folder" / "Convert to a virtual folder" on the folder's
+      own row, and the same pair on a **note's** row inside it with the folder named
+      (`Convert "docs" to a real folder`) — that was the "or a file in one" half of the
+      ask. Shared `convertFolderEntries`, which also decides when there is nothing to
+      offer: the notes root, a project heading, a conflicted mount, a missing one, and
+      anything **inside** a virtual folder — a subfolder of a mount has no directory of
+      its own in the project, so both conversions are meaningless there and the backend
+      would only refuse. That last guard was the one thing the first live pass didn't
+      cover, and it was clicked through afterwards: a subfolder of a _real_ folder still
+      offers the conversion; the same row, once its parent is a mount, offers nothing,
+      and neither does a note in it.
+      real→virtual answers with its destination so the toast can say where the files
+      went, since nobody picked it.
+      _Verified live_ (debug build over the devtools protocol, scratch project of three
+      notes in the real notes root — one in the project, one in the folder, one two
+      levels down; full cleanup, `settings.json` byte-identical afterwards, and the
+      pre-existing `asapnotes/TEST` mount left alone): the three ids are **identical**
+      across both conversions; both notes read back through the mount and again through
+      the real folder, including the depth-4 one; the files really did land in
+      `…/virtual/zz-conv-scratch/docs` and come back; the folder row picked up the
+      `mount` class and the toast named the destination; the menus carry the entries in
+      both shapes and in the file-row form, and the project heading carries neither; and
+      the three refusals answered with the intended sentences. Renaming a note inside
+      the folder was driven in both shapes as part of the fix above.
+      _Pending hands-on:_ the confirm on an **external** mount (a folder the user owns
+      elsewhere) — the wording and warning kind were built to match the delete-virtual
+      confirm, but converting one has only been reasoned about, not clicked; and whether
+      the entry belongs above Detach or below it.
+      _Still open from the ask:_ moving individual files between the two shapes so a
+      conversion needn't be all-at-once. `move_note` already carries a note's draft and
+      history to a new id, so what is missing is only a way to aim it at a folder — a
+      "Move to…" picker, or drag-and-drop in the explorer (there is none anywhere yet).
 - [ ] **Project board: auto-generate the layout from the project's structure**
       (2026-08-16) — requested: an option on the project board to generate its content
       from what the project already knows — notes as file nodes, an `.md` referencing
@@ -510,6 +1360,23 @@ The AI (or anyone) working on this repo keeps this file current while working:
       yet; open points: what "status" can honestly mean for a stdio server the app
       doesn't spawn (the client does), and whether the per-project access grants
       (already designed into the sidecar item) surface here or stay in Projects.
+      _2026-08-19: the status question is answered in
+      [mcp-tool-surface.md](mcp-tool-surface.md)_ — the **last entry of the sidecar's
+      own tool-call log**, a fact we hold, rather than a connection state a stdio server
+      the app doesn't spawn could honestly report. That doc sequences this item last in
+      its build order, and its setup snippet waits on the doc's open distribution
+      question (whether the helper binary ships with the installer).
+      _2026-08-19, after the sidecar shipped: the backend half of this item is done and
+      only the UI is left._ `mcp_status` returns the resolved roots, the grant on every
+      project, the write-scope setting and the last 20 tool-call log entries;
+      `src/notes.ts` exposes it as `mcpStatus()`. So the section needs building, not
+      designing: a grant table per project, the write-pin toggle, and the honest status
+      readout (last call, not "connected"). The setup snippet's text exists in
+      [mcp/SETUP.md](../mcp/SETUP.md).
+      _2026-08-20: unblocked._ Distribution is settled — the helper ships with the app —
+      so the snippet prints a real path: `mcp_status` now also returns `helperPath` and
+      `helperExists`. Show the path when it exists and the build command when it does
+      not, which is the case in a dev tree.
 - [ ] **View the MCP's change log** (2026-08-16) — requested, sequences with the
       sidecar: a way to see what was changed by the MCP specifically, so its edits
       are reviewable. The recent-changes view (2026-08-13) already captures and shows
@@ -521,6 +1388,20 @@ The AI (or anyone) working on this repo keeps this file current while working:
       (lean — one machinery, one place to look) or a separate log surface, and
       whether tool-call metadata (which tool, which section) is worth storing beyond
       the content diff.
+      _2026-08-19: the storage half is picked in
+      [mcp-tool-surface.md](mcp-tool-surface.md)_ — the **sidecar's own append-only
+      tool-call log** (writes only; a read log would be a surveillance record of the
+      user's corpus and answers no question the user asked), carrying when / tool /
+      note / section / summary. The snapshot store keeps its two origins: a helper
+      binary writing a file _is_ an external edit, and the log carries more than an
+      `mcp` origin tag could. What stays open here is the surfacing lean — badge the
+      matching external edit in the changes view (match on note + timestamp) versus a
+      log surface of its own.
+      _2026-08-19: the log is **written** now_ — `mcp-calls.jsonl` in app data, one JSON
+      line per write carrying `atMs` / tool / note / section / a one-line summary, with a
+      1 MB soft cap that drops the oldest half (a resident tray app should not grow a file
+      the user never looks at). `mcp_status` already returns the tail of it. Reads are
+      not logged, and a test asserts that. Only the surfacing lean is left to decide.
 - [ ] **MCP can read and edit canvases** (2026-08-16) — requested, extends the
       sidecar's tool surface past `.md`: ideally the MCP also allows reading, editing
       and general usage of `.canvas` files — the files are already an open JSON
@@ -531,6 +1412,25 @@ The AI (or anyone) working on this repo keeps this file current while working:
       notes (lean: yes, same `off`/`read`/`write`), and how canvas edits land in the
       change-tracking above (a JSON diff isn't the readable hunk view; may need a
       node-level summary).
+      _2026-08-19: built the same day as the rest, so this item is done bar the change
+      tracking._ The grant lean held — canvases are notes, the registry claims `.canvas`,
+      so ids, grants and the walks already worked on them. The **tool shape** resolved as
+      _both, split by direction_, which is the answer neither option alone was:
+      `read_canvas` returns a **summary** (nodes with type, position and content, edges
+      with labels, and for ink a stroke **count**, never the coordinates — a drawn board
+      carries tens of thousands of numbers that mean nothing to a reader), with
+      `raw: true` handing over the document for a caller that means to edit it;
+      `write_canvas` takes the whole document and **validates** it first — unique ids,
+      every edge pointing at a node that exists, a rectangle on every node — reporting
+      every problem at once. Unknown node types and unknown fields ride through untouched,
+      because a conforming reader skips what it doesn't know and refusing would make this
+      the one tool that can't round-trip another tool's file. Being the surface's only
+      whole-file write, overwriting an existing canvas **requires** `expect_unchanged`;
+      creating a new one does not.
+      _What is left of this item:_ the third open point — how canvas edits land in the
+      change-tracking view, where a JSON diff is not a readable hunk. The call log already
+      records a node/edge count per write, which may be the node-level summary that ask
+      wanted.
 
 ## Today (2026-08-14)
 
@@ -839,11 +1739,120 @@ The AI (or anyone) working on this repo keeps this file current while working:
 - [ ] **Draw on images from a markdown note** (2026-08-14) — requested: double-click
       (or right-click) an image in an `.md` note pops the image up so it can be
       drawn on, like the canvas ink option — an image-annotation surface reusing
-      the canvas engine's ink layer. Not designed yet; open points: where the
-      inked result is written (overwrite the asset, a sibling copy, strokes as a
-      sidecar), and how the popup relates to the canvas view (same module,
-      lazy-loaded). Builds on the canvas engine; sequence after the project board
-      proves it.
+      the canvas engine's ink layer. Builds on the canvas engine; sequenced after
+      the project board proved it.
+      _Designed 2026-08-19, both recommendations picked; building._ The two open
+      points resolved:
+      **(1) The ink lands in the image itself — flatten and overwrite, with the
+      recycle bin as the net.** Saving rasterizes the strokes into the image at
+      its natural resolution and overwrites the file; the previous bytes go to
+      the recycle bin first (the same net deleting a note uses), so every
+      earlier version stays recoverable without sibling-file clutter. The
+      annotation is real pixels, so the note, canvas cards and every external
+      tool see it with zero new render machinery — the files-are-the-contract
+      answer. Stated plainly: strokes are re-editable only during the session;
+      after a save they are pixels. _Rejected:_ a sibling annotated copy with
+      the note's link rewritten (files multiply, other notes referencing the
+      same asset keep seeing the clean copy), and sidecar strokes composited at
+      render (re-editable forever, but invisible to every other tool and each
+      image render path must learn to composite).
+      **(2) The surface is a lens-idiom tab on the canvas engine.** An
+      `annotate:` tab — same etiquette family as `file:`/`map:` (never
+      persisted, never drafted, one at most, closes without the note plumbing
+      ever seeing its content) — rendering `BoardView` with a computed
+      one-image-node document sized at the image's natural pixels (canvas units
+      = image pixels, so the flatten maps 1:1). Layout locked (the read-only
+      lens gates), ink tools live, pen raised on open with a preset color, a
+      "Save into image" verb in the bar. _Rejected:_ a modal overlay — the app
+      has no modal surface idiom, and it gets none of the tab etiquette for
+      free.
+      Scope calls made with the design: annotatable formats are png / jpg /
+      webp — the ones the webview can re-encode; gif (animation would be
+      silently flattened), svg (vector — rasterizing is a real loss) and bmp
+      (no encoder) refuse with the reason. Entry points: double-click on an
+      image in the editor's live preview or the preview pane, plus a
+      context-menu entry; remote (http) images are not annotatable. Closing
+      the tab with unsaved strokes asks first — lens tabs close silently, but
+      strokes are real user work. After a save, image URLs get a version
+      query so the webview's cache can't show stale pixels.
+      _Implemented 2026-08-19, all gates + tests clean (36), verified live
+      over the devtools protocol._ What shipped: - `src/canvas/ink.ts`: stroke rendering (presets, accent resolution,
+      pressure taper) hoisted out of `BoardView` on its second use — the
+      flatten must draw a stroke identically to the surface. - `src/canvas/annotate.ts` (lazy, like all canvas machinery): the
+      computed document (one file node at the image's natural pixels, so
+      canvas units _are_ image pixels and the flatten maps 1:1),
+      `flattenAnnotation` (draws image + strokes into an offscreen canvas
+      at natural resolution, re-encodes in the file's own format — a
+      silent PNG fallback from `toBlob` is detected and refused rather
+      than writing PNG bytes under a `.jpg` name), and `withoutInk` (after
+      a save the strokes are pixels; they leave the lens document too). - `BoardView` gains `annotate`: rides every read-only gate (nothing
+      selects, moves or deletes; presses on cards fall through) but the
+      ink tools stay live — pen raised on open in preset red (theme ink is
+      picked for the app surface, not for arbitrary image pixels), Esc
+      puts the pen down, Ctrl+Z/Y drive the stroke journal, left-drag pans
+      only while no tool is up, and the save verb reads "Save into image". - App: `annotate:` lens tabs (never persisted/drafted, one at most,
+      excluded from rename/move/project verbs, ✎ tab glyph); the session
+      lives in a ref so drawing never re-renders the app, survives tab
+      switches, and even survives a bulk close (reopening the image
+      resumes it). Closing or retargeting with unflattened strokes asks
+      through the native confirm. Entry points: dblclick on a live-preview
+      image widget or a preview-pane image (raw link rides a data
+      attribute), right-click leads with "Draw on image"; gif/svg/bmp and
+      remote URLs refuse with the reason. - Backend `overwrite_asset`: raw-body bytes, percent-encoded path
+      header, absolute existing file of a flattenable extension only —
+      `trash::delete` first, then write, so every earlier version is in
+      the recycle bin. - `src/assetVersions.ts`: version stamps for rewritten files; every
+      image resolver (live preview via `imageIn`, `renderMarkdown`,
+      `resolveBoardTarget`, the lens itself) appends `?v=N` after a
+      rewrite, so the webview's cache can't show stale pixels.
+      **One real bug the live check caught:** an `<img>` loaded from the
+      asset protocol is cross-origin to the page — the flatten canvas was
+      tainted and `toBlob` refused. The flatten now fetches the bytes and
+      decodes via `createImageBitmap` (same-origin blob, no taint).
+      **Verified live** (CDP second instance, scratch registered project,
+      full cleanup, settings.json checked clean): dblclick on the png →
+      annotate tab, read-only board, pen up, color-1 swatch active, node at
+      natural 320×200; a real-input stroke made one ink node; Ctrl+Z/Y
+      within the session; "Save into image" → toast, strokes left the lens,
+      file rewritten on disk (bytes grew, recycle bin holds the original),
+      stroke midline pixel exactly preset red `#c8402f` with corners
+      untouched; `?v=1` on the lens image and on the note's live-preview
+      widget after returning; strokes survived a tab switch away and back;
+      gif → "would lose data" toast, remote → "only images on this machine";
+      right-click menu led with "Draw on image"; the saved-clean tab closed
+      silently, and a dirty close raised the native confirm (which headless
+      can't press — by design).
+      _Accepted knock-on, found live:_ re-activating the annotate tab
+      remounts the surface, so the journal restarts — strokes drawn before a
+      tab switch can't be Ctrl+Z'd after it (the eraser still removes them,
+      and nothing is flattened until an explicit save). Same per-session
+      shape as text blocks committing at blur.
+      _First hands-on pass 2026-08-19 (paste image → dblclick → draw), three
+      hits, all fixed and re-verified live the same day:_ **(1) Ctrl+S
+      no-op'd on the lens** — the bar button was the only save verb, so
+      "save then close" silently became "discard on close", which also
+      explained the md not updating (nothing had been written). Ctrl+S (and
+      the File-menu save) now routes to the flatten; the annotate tab wears
+      the unsaved dot while strokes are unflattened, with its own tooltip.
+      **(2) Closing the lens landed on a neighbor tab, not the note the
+      image came from.** The session now remembers its origin tab; every
+      close path (clean, prompt-Save, prompt-Discard) lands back on it when
+      it is still in the strip.
+      **(3) The native OK/Cancel close confirm read as "save?"** — replaced
+      with the app's own Save / Discard / Cancel stop (the same
+      `CloseConfirm` a dirty note gets; Save flattens, and the tab only
+      closes when the write really happened). Bonus: the prompt is in-app,
+      so the dirty-close path is now drivable headlessly — verified: dot
+      appears on draw and clears on Ctrl+S, all three close paths return to
+      the note, prompt wording and buttons exact, and the note's
+      live-preview image bumped to `?v=2` after the prompt-Save.
+      _Pending hands-on:_ how drawing over a real screenshot feels at fit
+      zoom (the lens opens fit-to-window, so strokes land in canvas units —
+      crispness after flatten at high zoom-out deserves a look); the preset
+      red on real image content and the swatch row's usefulness here; jpeg
+      re-encode quality (0.92) on a photo after a couple of annotate cycles;
+      and whether pen-up-by-default feels right when the tab was opened
+      just to look.
 - [ ] **Bigger default window + remember the last size** (2026-08-14) — requested:
       the first-run window should be ~30% wider and ~20% taller, or the app should
       just remember the last size across restarts (it already survives hide-to-tray,
@@ -2565,6 +3574,30 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
       sidecar also sees only what a project's file rules list, so exclusions are an
       access boundary, not just a display one. (b) and (c) still need the tool-surface
       doc.
+      **2026-08-19: (b) and (c) are settled by
+      [docs/mcp-tool-surface.md](mcp-tool-surface.md)** — the doc the "next concrete
+      step" asked for, written before any code. The load-bearing picks, all
+      recommendations: the sidecar is a TypeScript stdio server that **shells out to a
+      Rust helper binary from the existing crate**, so the project model has exactly one
+      implementation (a TS copy that drifts would be an access-boundary bug, not a
+      display one) — rejected: direct filesystem access, and a loopback listener in the
+      app; **(b) token economy** is an `outline` mode on the listing, **heading-path
+      section addressing** on reads and writes, excerpt search that names the section a
+      hit falls under, and an optional `expect_unchanged` mtime that makes a write
+      refuse rather than clobber a concurrent human edit — with **no whole-file write
+      tool** deliberately; **(c)** is a convention resource + prompts + two thin tools
+      (`append_todo`, `new_decision`), with ADR/MADR alignment landing as the fields new
+      entries get rather than a rewrite of the existing eight. Grants are enforced in the
+      helper per call, re-read from disk, and `off` means the project **does not exist**
+      to the sidecar (refusing by name would leak it). Attribution is the sidecar's own
+      append-only tool-call log (writes only — a read log would be a surveillance record),
+      which is what the change-log ask floated and carries more than an origin tag could.
+      _What the doc says this costs first:_ the corpus functions take `AppHandle` for
+      their two roots, so step 1 is extracting a plain-Rust core that takes explicit
+      roots — with a `doctor` subcommand, because a helper resolving a different
+      `settings.json` than the app would serve a different corpus and look fine.
+      Build order and the four open questions (distribution, per-call grant reads,
+      `files`-rule cost, multiple clients) are in the doc. No code yet.
 - [ ] **Project model — implementation, step 6** (2026-08-10) — the design is
       [docs/project-model.md](project-model.md), promoted to
       [a project is a location plus mounts](decisions/2026-08-10-a-project-is-a-location-plus-mounts.md)
@@ -2664,6 +3697,20 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
   and watch for the toast on next focus.
 
 ## Pending / future direction
+
+- [ ] **Project layers — sections a project belongs to** (2026-08-19) — raised while the
+      MCP sidecar was being built, and deliberately parked: some projects belong together
+      in a section and others do not, so a layer would be a named grouping over projects
+      rather than a folder. Nothing designed and nothing started. The reason it is worth
+      writing down now is that two surfaces would consume it the moment it exists — the
+      explorer (grouping the project headings) and the **MCP grant**, where a layer is the
+      obvious unit to grant access to instead of naming projects one at a time, and where
+      it would also be the natural scope for the write pin (`writeScope: "layer"` beside
+      today's `current`). Open before any code: whether a project can be in more than one
+      layer, whether layers nest, where they live (`settings.json` names machine paths and
+      grants, so probably there), and what a layer means to the corpus walks — a display
+      grouping, or something id resolution knows about. Treat the last one as the hinge:
+      display-only is cheap and reversible, id-bearing is not.
 
 - [ ] **Cloud share + live collaboration** on a group of notes — direction, not scheduled.
       Keep storage decisions compatible: files stay primary, sync layers on top.
