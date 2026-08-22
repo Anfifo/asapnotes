@@ -23,3 +23,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Notes kept out of the published repo: material whose value depends on naming
+# other products, and local tooling config.
+docs/private/
