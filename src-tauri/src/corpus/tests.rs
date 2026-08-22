@@ -1,9 +1,7 @@
 //! Tests for the corpus core.
 //!
-//! These exist because of the extraction. Every rule below used to sit behind
-//! `AppHandle`, which meant `notes.rs` shipped with no tests at all — the
-//! access boundary, the id resolution and the walks were all verified by
-//! running the app and looking. They now run against a real temp corpus.
+//! These run against a real temp corpus rather than a live app: the access
+//! boundary, the id resolution and the walks are the rules worth pinning.
 
 use super::testing::Fixture;
 use super::*;

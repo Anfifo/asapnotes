@@ -164,17 +164,10 @@ function logTime(atMs: number): string {
 
 /**
  * Settings → MCP: whether a sidecar can reach these notes, and what it has
- * changed.
+ * changed. Ordered connect → access → log, by what someone comes here to do.
  *
- * Ordered by what someone actually comes here to do. Connecting a client is
- * first because it is the step with nothing else to guide it — and the helper's
- * path is something only the running app knows. Access is second, and it is
- * editable: a grant that can only be set by hand-editing JSON is a grant nobody
- * sets. The log is last, and it exists for the same reason the whole feature
- * does — an app an agent can write to should show what was written.
- *
- * This section fetches its own state rather than taking it as props: nothing
- * else in the app needs it, and it has to be re-read after every change here.
+ * Fetches its own state rather than taking it as props: nothing else in the app
+ * needs it, and it has to be re-read after every change made here.
  */
 function McpSection() {
   const [status, setStatus] = useState<McpStatus | null>(null);

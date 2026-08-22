@@ -41,15 +41,12 @@ pub struct SearchHit {
     pub section: Option<String>,
 }
 
-/// Which notes a caller may be shown. `None` is the whole corpus — the app's
-/// own search, which has no boundary to enforce.
+/// Which notes a caller may be shown; `None` is the whole corpus.
 ///
-/// It is a parameter rather than a field on [`Query`] so that no call site can
-/// search without deciding, and it has to be consulted *before* a hit is
-/// counted. Filtering after the cap lets notes the caller cannot see spend the
-/// limit: one hidden project sorting early in the walk then starves every
-/// visible one, and the answer comes back looking like a nearly empty corpus
-/// rather than like a refusal.
+/// Consult it *before* counting a hit. Filtering after the cap lets notes the
+/// caller cannot see spend the limit — one hidden project sorting early in the
+/// walk starves every visible one, and the answer comes back looking like a
+/// nearly empty corpus rather than like a refusal.
 pub type Visible<'a> = Option<&'a dyn Fn(&str) -> bool>;
 
 /// What to look for and how much to bring back.

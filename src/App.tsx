@@ -70,37 +70,37 @@ const BoardView = lazy(() => import("./canvas/BoardView"));
 
 const AUTOSAVE_MS = 500;
 
-// The changes lens: one note read with its external edits marked, opened as a
-// read-only tab. The prefix can't collide with a note id — ':' is not a legal
-// filename character here. Only ever one such tab exists at a time.
+// A lens is a read-only tab over something computed rather than edited. All
+// four below share one idiom: never persisted or drafted, at most one tab of
+// that kind, retargeted rather than stacked by the next open, and a `<kind>:`
+// id prefix that cannot collide with a note id because ':' is not a legal
+// filename character here. Each comment below records only what its lens
+// differs in.
+//
+// Changes: one note read with its external edits marked.
 const DIFF_PREFIX = "changes:";
 const isDiffTab = (id: string) => id.startsWith(DIFF_PREFIX);
 /** The note a lens tab reads. */
 const diffNoteOf = (id: string) => id.slice(DIFF_PREFIX.length);
 
-// The project map: the project's notes and the references between them,
-// computed on open and rendered through the canvas engine with editing
-// disabled. Same lens idiom as the changes tab — never persisted, recomputed
-// each time, one tab at most — and the same prefix rule keeps the id safe.
+// Map: the project's notes and the references between them, laid out through
+// the canvas engine with editing disabled, recomputed on every open.
 const MAP_PREFIX = "map:";
 const isMapTab = (id: string) => id.startsWith(MAP_PREFIX);
 /** The project a map tab shows. */
 const mapProjectOf = (id: string) => id.slice(MAP_PREFIX.length);
 
-// A referenced file, read-only: what double-clicking a file card that isn't a
-// note opens. Same lens idiom as the map — never persisted or drafted, one
-// tab at most, retargeted by the next open, closes silently — showing any
-// real file as plain text, inside the corpus or out.
+// File: any real file a card points at, shown as plain text — inside the
+// corpus or out. Closes silently, since there is nothing to lose.
 const FILE_PREFIX = "file:";
 const isFileTab = (id: string) => id.startsWith(FILE_PREFIX);
 /** The absolute path (forward slashes) a file tab shows. */
 const filePathOf = (id: string) => id.slice(FILE_PREFIX.length);
 
-// The image-annotation lens: one image opened to be drawn on, rendered
-// through the canvas engine with layout locked and the ink tools live. Same
-// lens idiom as the file tab — never persisted or drafted, one tab at most,
-// retargeted by the next open — except closing asks when unsaved strokes
-// would be lost: unlike the computed lenses, there is real user work here.
+// Annotate: one image drawn on, through the canvas engine with layout locked
+// and the ink tools live. The exception to the idiom — closing asks when
+// strokes are unflattened, because unlike the computed lenses this holds real
+// user work.
 const ANNOTATE_PREFIX = "annotate:";
 const isAnnotateTab = (id: string) => id.startsWith(ANNOTATE_PREFIX);
 /** The absolute image path (forward slashes) an annotate tab draws on. */
@@ -126,9 +126,9 @@ const POPUP_SCALES = [85, 100, 115];
 const clampExplorerWidth = (w: number) =>
   Math.min(Math.max(EXPLORER_MIN_W, w), Math.max(EXPLORER_MIN_W, window.innerWidth - EDITOR_MIN_W));
 
-// Stroke icons (Lucide-style paths) for the symbolic buttons — text glyphs
-// like ``` and ❝ read poorly at toolbar size, and emoji render in color that
-// ignores the theme. Letters (H1–H3, B, I) stay letters.
+// Stroke-path icons for the symbolic buttons — text glyphs like ``` and ❝ read
+// poorly at toolbar size, and emoji render in color that ignores the theme.
+// Letters (H1–H3, B, I) stay letters.
 const icon = (paths: ReactNode) => (
   <svg
     viewBox="0 0 24 24"
@@ -519,7 +519,7 @@ function App() {
   const noteDirRef = useRef("");
   const autosaveTimer = useRef<number | null>(null);
   /** Autosave stood down for the open note: its file changed on disk behind
-   * us, and resolving that needs the user. Cleared when a doc opens. */
+   * the buffer, and resolving that needs the user. Cleared when a doc opens. */
   const autosaveOffRef = useRef(false);
   /** `save` in its silent form — held in a ref because the change handler is
    * defined before it and must not depend on its identity. */
@@ -1611,9 +1611,8 @@ function App() {
         // A chosen launch canvas outranks the restored tab — but only after the
         // first frame: the canvas module is a dynamic import, and awaiting it
         // here would put a chunk fetch and a JSON parse in front of the first
-        // paint, which is exactly what the idle-footprint rule forbids. So the
-        // tab paints from the restore path below, and this hands over on the
-        // next frame; nothing is loaded before something is on screen.
+        // paint. So the tab paints from the restore path below, and this hands
+        // over on the next frame; nothing is loaded before something is on screen.
         const launch = cfg.settings.openAtLaunch ?? null;
         if (launch && ns.some((n) => n.name === launch)) {
           requestAnimationFrame(() => {
@@ -1696,9 +1695,9 @@ function App() {
       ?.scrollIntoView({ inline: "nearest", block: "nearest" });
   }, [open]);
 
-  // Dropped image files are intercepted by Tauri (we get paths, not File
-  // objects): copy them into assets/ and insert the link at the cursor. Only
-  // for a note whose type takes images — an image link in a .log is noise.
+  // Dropped image files are intercepted by Tauri, which hands over paths rather
+  // than File objects: copy them into assets/ and insert the link at the cursor.
+  // Only for a note whose type takes images — an image link in a .log is noise.
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent(async (event) => {
       if (event.payload.type !== "drop" || modeRef.current !== "edit") return;
@@ -2097,8 +2096,8 @@ function App() {
   // project" means now, so the pane, title bar and creation targets follow.
   const currentProject =
     open && !lensOpen ? projectOf(open.id) : mapOpen && open ? mapProjectOf(open.id) : null;
-  // Publish where we are for the MCP sidecar. Only the write pin consumes the
-  // project (`mcp.writeScope: "current"`), where it is what keeps an agent's
+  // Publish the current project for the MCP sidecar. Only the write pin consumes
+  // the project (`mcp.writeScope: "current"`), where it is what keeps an agent's
   // edits inside whatever the user is actually working on — but it is sent on
   // every change regardless, so turning the pin on doesn't need a tab switch
   // before it means anything.

@@ -9,8 +9,8 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { bustAsset } from "./assetVersions";
 import { resolvePath } from "./paths";
 
-// html:false (the default) keeps raw HTML in notes escaped, so no sanitizer
-// is needed for our own rendered output.
+// html:false (the default) keeps raw HTML in notes escaped, so the rendered
+// output needs no sanitizer.
 const md = new MarkdownIt({ linkify: true });
 
 const defaultImage =

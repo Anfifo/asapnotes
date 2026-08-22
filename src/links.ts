@@ -14,7 +14,7 @@ const URL_RE = /(?:https?:\/\/|mailto:)[^\s<>"']+/gi;
 const PATH_RE = /[a-z]:[\\/][^\s<>"'|?*]+/gi;
 
 /** Trailing prose punctuation is not part of the target; a final `)` stays
- * only when the match has an opening `(` (Wikipedia-style URLs). */
+ * only when the match has an opening `(` — some URLs carry balanced parens. */
 function trimTarget(m: string): string {
   let s = m.replace(/[.,;:!?'"”’]+$/, "");
   while (s.endsWith(")") && !s.includes("(")) s = s.slice(0, -1);

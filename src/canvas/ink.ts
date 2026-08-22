@@ -7,8 +7,7 @@
 import type { InkStroke } from "./jsoncanvas";
 
 /** Spec colors are a preset "1".."6" or a hex value; both become one CSS
- * custom property the node's own rules pick up. Presets are named rather than
- * numbered so the stylesheet reads. */
+ * custom property the node's own rules pick up. */
 export const PRESET_COLORS = ["#c8402f", "#c8762f", "#c8a72f", "#4f9e4f", "#3f8fbf", "#8f5fbf"];
 
 export const nodeAccent = (color: string | undefined): string | undefined => {

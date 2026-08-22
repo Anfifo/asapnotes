@@ -143,7 +143,7 @@ export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) 
   }, []);
 
   // While a menu is open: click-away or Esc closes it. App's global Esc
-  // handler sees the open dropdown and leaves Esc to us.
+  // handler sees the open dropdown and leaves Esc to the menubar.
   useEffect(() => {
     if (!openMenu) return;
     const onDown = (e: PointerEvent) => {

@@ -151,7 +151,7 @@ pub fn set_mcp_current_project(app: AppHandle, project: Option<String>) -> Resul
 ///
 /// "Status" for a stdio server the app does not spawn can't honestly mean
 /// "connected": nothing here knows whether a client is attached. What it can
-/// mean is the last thing that actually happened, which is a fact we have.
+/// mean is the last thing that actually happened, which is a fact on hand.
 #[tauri::command]
 pub fn mcp_status(app: AppHandle) -> Result<serde_json::Value, String> {
     let roots = roots(&app)?;

@@ -2303,8 +2303,7 @@ body,
   overscroll-behavior: contain;
 }
 
-/* Rows carry the shared popup size (they used to inherit the root 16px —
-   the one popup surface that did); em paddings keep the geometry tracking. */
+/* Rows carry the shared popup size; em paddings keep the geometry tracking. */
 .palette li {
   display: flex;
   justify-content: space-between;
@@ -3221,8 +3220,7 @@ body,
   font-size: 0.78rem;
 }
 
-/* The read-only file view: any real file a canvas references, as plain text.
-   Never drafted, never persisted — the same etiquette as the map lens. */
+/* The read-only file view: any real file a canvas references, as plain text. */
 .file-lens {
   flex: 1;
   min-height: 0;
@@ -3294,8 +3292,7 @@ body,
 
 /* Dark theme. Keyed off the resolved theme that theme.ts stamps on the root
    element before the first paint, rather than reading `prefers-color-scheme`
-   here — that is what lets an explicit Light/Dark choice override the OS. The
-   rules stay nested, so this is the same block it has always been. */
+   here — that is what lets an explicit Light/Dark choice override the OS. */
 :root[data-theme="dark"] {
   color: #f6f6f6;
   background-color: #2f2f2f;

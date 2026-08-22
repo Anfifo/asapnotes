@@ -3029,7 +3029,7 @@ not registered (0x80070002)``) and errors _before_ the draft/history
       icons. Implemented: shared `Tooltip.tsx` (one fixed-position div, delegated
       `data-tip` listener — fixed because `.fmt-inline` is a scroll container that
       would clip a CSS bubble); the six symbolic format buttons are now inline
-      Lucide-style SVGs (`currentColor`, letters stay letters); buttons keep
+      stroke-path SVGs (`currentColor`, letters stay letters); buttons keep
       `aria-label` since SVG buttons have no text content. Toolbar + preview eye
       converted; **other `title=` sites (tabs, explorer, status bar, search) still
       native** — mechanical follow-up: swap `title` → `data-tip` per site. Gates
@@ -3054,7 +3054,7 @@ not registered (0x80070002)``) and errors _before_ the draft/history
       a long search hit and a mount row, the far-right window buttons, and the
       status-bar readouts (the flip).
       2026-08-09 visual check done (summon + PrintWindow capture — the
-      window sat behind VS Code, so screen capture alone showed the wrong thing):
+      window sat behind another app, so screen capture alone showed the wrong thing):
       all six stroke icons render crisp and theme-correct in dark, chevrons have
       air, color-emoji link gone. Still pending hands-on: tooltip position/delay
       feel (needs a real hover) and light theme.
@@ -3081,7 +3081,7 @@ not registered (0x80070002)``) and errors _before_ the draft/history
 - [x] **Quality gates + smoke check of the uncommitted slice** (2026-08-09) — `npm run
 build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launches,
       summons on Ctrl+Alt+A, and paints the whole new chrome correctly: menubar with
-      mnemonics, centered search pill showing the note name, Chrome-style shrinking tab
+      mnemonics, centered search pill showing the note name, shrinking tab
       strip, one-row toolbar with the preview eye pinned left, sectioned explorer
       (current project / Recent / Notes), status bar (Ln/Col, word count, latency 35 ms
       dev). Live preview renders sized headings, dim `##` markers, links, inline code,
@@ -3117,7 +3117,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
 
 ## Next
 
-- [ ] **UI conventions review — what VSCode/Notepad have and we don't** (2026-08-08) —
+- [ ] **UI conventions review — conventions a text editor is expected to have** (2026-08-08) —
       backlog from a read-through of the whole UI layer. Deliberately **not** copied:
       line-number gutter and active-line highlight (code-editor furniture that works
       against a prose capture surface).
@@ -3136,9 +3136,9 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
     a native confirm runs first. Also reachable from File menu + Ctrl+K palette.
     `reveal_note` (opener plugin's `reveal_item_in_dir`) backs the Reveal entries.
   - **Real Edit menu** (undo/redo, clipboard, select all, find/replace/go-to-line);
-    formatting moved to a new **Format** menu (mnemonic O, Notepad-style).
+    formatting moved to a new **Format** menu (mnemonic O, conventional placing).
   - **Ctrl+H** opens find/replace, **Ctrl+G** go-to-line (F3 keeps find-next).
-    **Ctrl+Shift+K went back to VSCode's delete-line** — decision: the muscle-memory
+    **Ctrl+Shift+K went back to delete-line** — decision: the muscle-memory
     reflex beats a rarely-chorded format; code block keeps toolbar/menu/palette.
   - **Zoom** — Ctrl+scroll / Ctrl+± / Ctrl+0 via `webview.setZoom` (0.5–3.0,
     persisted in localStorage, reapplied at startup); View menu entries; % readout
@@ -3154,7 +3154,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
 
   _Tier 2 — real features, need design:_
 
-  - **Search across all notes** (VSCode Ctrl+Shift+F) — was the biggest capability
+  - **Search across all notes** (Ctrl+Shift+F) — was the biggest capability
     gap (Ctrl+P fuzzy-matches _filenames_ only). Design agreed and implemented
     2026-08-09. **Engine: a plain Rust scan, no new dependencies** — chosen over
     the ripgrep crates (`grep-searcher`/`grep-regex`: real regex and speed on huge
@@ -3180,7 +3180,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
     holds in React 18, but it is reasoning, not an observation.
     Known limits, all deliberate: literal-only (no regex/whole-word/case toggles
     yet); a match late in a long line can sit past the ellipsis at narrow panel
-    widths (VSCode has the same behavior — the panel is resizable and the tooltip
+    widths (the conventional behaviour — the panel is resizable and the tooltip
     has the text); a note with an unsaved draft opens from the draft, so a jump can
     land a few lines off until it's saved.
   - **External file-change detection** — implemented 2026-08-09, pending hands-on
@@ -3324,8 +3324,8 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       for. Polish candidate: empty untitled drafts accumulate in the drafts folder.
 - [ ] **Ctrl+K command palette, phase 2** (2026-08-07) — grow the note switcher into a
       command palette (commands, then AI-assisted navigation/actions). Phase 1 ships as
-      a fuzzy note switcher with the editor. 2026-08-07 implemented after looking at the
-      Claude app's Ctrl+K (unified search + commands): **Ctrl+P** = VS Code-style fuzzy
+      a fuzzy note switcher with the editor. 2026-08-07 implemented after looking at
+      a unified search-and-commands Ctrl+K: **Ctrl+P** = a fuzzy
       note switcher (subsequence match with consecutive/word-start bonuses in
       `src/fuzzy.ts`, amber-highlighted matched chars); **Ctrl+K** = command palette —
       opens on the command list (New note first, then save/rename/preview/move-to-project/
@@ -3336,7 +3336,7 @@ build`, `npm run lint`, `cargo fmt --check`, `cargo clippy` all clean. App launc
       restyled Claude-floaty (narrower, 14px radius, border + deep shadow, blurred
       backdrop) with "Commands"/"Notes" section headers while the query is empty.
       2026-08-07 second feedback round: taller (74vh), footer hint bar below a divider
-      (↑↓ / ↵ / Esc, Claude-style), and slim inset scrollbars — applied app-wide
+      (↑↓ / ↵ / Esc), and slim inset scrollbars — applied app-wide
       (::-webkit-scrollbar), not just in the palette. Remaining: hands-on check;
       AI-assisted actions still future.
       **2026-08-14: `>` narrows either palette to commands alone**, gates clean,
@@ -3368,7 +3368,7 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
       (which never closed on outside click) replaced by an "Aa"-toggled expandable
       toolbar row of grouped format buttons; keybind hints moved out of the bar into a
       "?" popover (closes on outside click / Esc). Pending hands-on check.
-- [ ] **Obsidian-style live preview in the editor** (2026-08-07) — chosen over split view /
+- [ ] **Live preview in the editor** (2026-08-07) — chosen over split view /
       click-to-edit: the edit surface itself renders markdown (sized headings, real
       bold/italic/strikethrough, `•` bullets, blockquote bar, code-block shading, inline
       images via the asset protocol) and raw syntax reveals on cursor lines
@@ -3404,8 +3404,8 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
       busier). Masters, Tauri icons, and branding.md all regenerated/updated. Remaining:
       human eyeball in the real tray, then close.
 - [ ] **Explorer side rail** (2026-08-07) — agreed design after weighing a titlebar-toggle
-      overlay and a palette-only variant: permanent ~36px icon rail on the left (VS Code
-      style) toggling an explorer panel (`src/Explorer.tsx`) — Recent (top 5, notes+drafts
+      overlay and a palette-only variant: permanent ~36px icon rail on the left
+      toggling an explorer panel (`src/Explorer.tsx`) — Recent (top 5, notes+drafts
       merged by mtime) above a project tree (`<details>` groups, loose notes at root).
       2026-08-07 hands-on feedback round: the `▤` icon button replaced by the whole
       rail being the button (slim full-height strip, `›`/`‹` chevron, hover tint);
@@ -3418,11 +3418,11 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
       2026-08-07 second feedback round: explorer is now drag-resizable on its right
       edge (width in localStorage, clamped 168–480px); rail widened to 1.2rem;
       Recent collapsed by default; the open note's project is hoisted to the top as
-      its own section; projects render a nested folder tree (VSCode-style
-      `<details>` per subfolder) from the note paths the backend already returns.
+      its own section; projects render a nested folder tree (a `<details>`
+      per subfolder) from the note paths the backend already returns.
       Text selection restyled to translucent brand amber (app-wide `::selection` +
       CodeMirror selection layer, both themes) — the unstyled default was OS-accent
-      purple with unreadable contrast. VSCode-style paneling: candidate sheet
+      purple with unreadable contrast. Panelled chrome: candidate sheet
       (3 variants × light/dark) → **A picked**: menubar-dark chrome is the window
       ground (constant in both themes), explorer / titlebar+toolbar / editor float
       as three rounded panels with 6px gaps. Rail reworked with it: no more strip
@@ -3432,7 +3432,7 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
       decisions/ entry once eyeballed.
       2026-08-08 third feedback round (thick expanders / Recent blends into the
       project / other projects too eager): native `<details>` markers replaced by
-      slim VSCode-style CSS chevrons; top-level sections (current project / Recent /
+      slim CSS chevrons; top-level sections (current project / Recent /
       Notes) separated by hairline + gap so levels read distinctly; non-current
       projects now start collapsed and their tree only renders on first expand;
       startup paints from a shallow root-only `list_notes(deep:false)` with the
@@ -3460,7 +3460,7 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
       latency moved out of settings into an always-visible muted readout in the app's
       lower-right corner. Remaining: hands-on check.
 - [ ] **Custom title bar with menus + scan-for-projects** (2026-08-07) — implemented,
-      pending hands-on check. Window is now undecorated; a VSCode-style menubar
+      pending hands-on check. Window is now undecorated; an in-window menubar
       (`src/MenuBar.tsx`: File/Edit/View/Help, drag region, min/max/✕-hides-to-tray)
       replaces the native title bar, with Settings moved under File (⚙ button removed).
       File → "Scan folder for projects…" picks a folder, finds subfolders holding a
@@ -3504,21 +3504,20 @@ items, placeholder, emptyText }` — so a query starting with the char swaps
       the "+ New project" input still appears in the bar when invoked).
       Follow-up idea from the same feedback: make the explorer's current-project
       header the project selector. Second feedback round: tab strip is now a
-      darker band with the active tab filled in the panel color (VSCode-style)
+      darker band with the active tab filled in the panel color
       so tabs read distinctly from the toolbar row; and ```lang fences finally
       look highlighted — the nested parse always worked, but shell-ish modes
       tag bare commands as plain variableName which had no color, so the code
       palette in `livePreview.ts` gained variableName/operator/punctuation/
       meta/regexp entries. (Inline HTML outside fences colors by design —
-      HTML is valid markdown.) Third feedback round: Chrome-style tab sizing —
+      HTML is valid markdown.) Third feedback round: browser-like tab sizing —
       inactive tabs flex-shrink to a 2.6rem sliver before the strip ever pans,
       the active tab never shrinks, the strip's scrollbar is hidden (pans only
       when even minimums overflow) with the active tab kept in view via
       scrollIntoView; hairline separators between adjacent tabs, suppressed
       next to the active one.
 - [ ] **Titlebar search pill (command center)** (2026-08-09) — requested: a clean
-      VSCode-style search bar centered in the window's top bar mixing files and
-      commands. Implemented same day, pending hands-on check: pill in the menubar's
+      search bar centered in the window's top bar mixing files and commands. Implemented same day, pending hands-on check: pill in the menubar's
       flex row flanked by two drag regions — first version absolute-centered and the
       menus overlapped it on narrow windows (feedback), so it now lives in the flow
       where crossing is impossible: it centers in the leftover space, gives up width

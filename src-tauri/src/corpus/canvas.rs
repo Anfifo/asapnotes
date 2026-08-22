@@ -20,11 +20,9 @@
 use serde::Serialize;
 use serde_json::Value;
 
-/// Node types the spec defines, plus this app's documented `ink` extension —
-/// freehand strokes, which the spec's axis-aligned rectangles can't carry. An
-/// unknown type is *not* an error: a conforming reader skips what it doesn't
-/// know, and refusing would make this tool the one thing that can't round-trip
-/// a foreign file.
+/// The spec's node types plus this app's documented `ink` extension. An unknown
+/// type is *not* an error: a conforming reader skips what it doesn't know, and
+/// refusing would leave this the one tool that cannot round-trip a foreign file.
 pub const KNOWN_TYPES: [&str; 5] = ["text", "file", "link", "group", "ink"];
 
 #[derive(Debug, Clone, Serialize)]

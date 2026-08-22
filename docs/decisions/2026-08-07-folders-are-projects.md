@@ -5,7 +5,7 @@
 
 ## Context
 
-Notes need a grouping level (user → project → notes, Postman-like) before there are enough
+Notes need a grouping level (user → project → notes) before there are enough
 of them to drown the flat root. Whatever shape grouping takes constrains storage, future
 cloud sync, and the planned mappings to files living outside the notes root — so the shape
 was decided before code ([TODO item](../TODO.md), and see

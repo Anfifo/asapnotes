@@ -12,24 +12,15 @@
 import type { ViewId } from "./noteTypes";
 
 export interface ViewPolicy {
-  /**
-   * How the buffer reaches disk.
-   *
-   * `explicit` — Ctrl+S writes the file; edits between saves live in a shadow
-   * draft. Right for prose: a save is a decision.
-   *
-   * `auto` — the file itself is written shortly after each change, and the
-   * draft is skipped so dirty state has one source of truth. Right for a
-   * surface whose content *is* direct manipulation: nobody expects to press
-   * Ctrl+S after dragging a card, and a canvas already writes pasted images to
-   * disk the moment they land.
-   */
+  /** How the buffer reaches disk. `explicit` — Ctrl+S writes the file, edits
+   * between saves live in a shadow draft. `auto` — the file is written shortly
+   * after each change and the draft is skipped, so dirty state has one source
+   * of truth. Why each view gets which:
+   * [decision](../docs/decisions/2026-08-14-canvas-is-a-native-view.md). */
   persist: "explicit" | "auto";
-  /**
-   * Base file name for an untitled note of this view whose content cannot name
-   * itself. Null means derive the name from the first line, which is what
-   * prose supports and a JSON document does not.
-   */
+  /** Base file name for an untitled note of this view whose content cannot name
+   * itself; null derives the name from the first line, which prose supports and
+   * a JSON document does not. */
   nameBase: string | null;
 }
 

@@ -22,7 +22,7 @@ export function ContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose
     });
   }, [menu]);
 
-  // App's global Esc handler sees the .menu-drop in the DOM and leaves Esc to us.
+  // App's global Esc handler sees the .menu-drop in the DOM and leaves Esc to the menu.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
       if (!(e.target as Element).closest(".ctx-menu")) onClose();

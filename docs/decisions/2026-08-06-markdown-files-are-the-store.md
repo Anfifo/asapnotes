@@ -6,8 +6,8 @@
 ## Context
 
 An AI must be able to go over the notes via MCP, and three future abilities are wanted:
-including files that live outside the notes folder (VS Code-like "open anything"),
-grouping levels user → project → notes (Postman-like workspaces), and eventually cloud
+including files that live outside the notes folder (open anything, wherever it sits),
+grouping levels user → project → notes (nested workspaces), and eventually cloud
 share + live collaboration on a group of notes. The storage choice shapes all of them.
 
 ## Decision

@@ -560,9 +560,10 @@ const BoardView = forwardRef<CanvasHandle, BoardViewProps>(function BoardView(
     return true;
   };
 
-  // The app re-read the file behind us (external change while the buffer was
-  // clean) — the equivalent of the editor's setDoc: replace everything,
-  // history included, so a stale scene can never overwrite the newer file.
+  // The app re-read the file behind the surface (external change while the
+  // buffer was clean) — the equivalent of the editor's setDoc: replace
+  // everything, history included, so a stale scene can never overwrite the
+  // newer file.
   useEffect(() => {
     if (initialDoc === docRef.current) return;
     const { doc, error } = parseCanvas(initialDoc);
