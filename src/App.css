@@ -37,8 +37,7 @@
   /* One markdown type scale for every surface that renders a note: the
      live-preview family (note editor, diff lens, file lens) and the rendered
      family (preview pane). Heading steps and block spacing are relative, so a
-     surface with its own base size — canvas cards, which are thumbnails rather
-     than reading surfaces — keeps the same proportions at a smaller scale. */
+     surface with its own base size keeps the same proportions at another scale. */
   --md-body-font: "Sitka Text", Constantia, Georgia, serif;
   --md-base: 1rem;
   --md-line: 1.65;
@@ -71,12 +70,11 @@
   --tint-gray: #6e6e6e;
   --tint-teal: #10736b;
 
-  /* Folder-tab palette for the project map: six hand-tuned pairs (the dark
-     block re-tunes them), assigned to a folder by a stable hash of its path
-     so it keeps its color across recomputes. Lens-only chrome, never
-     persisted, so these owe nothing to the canvas format's node colors.
-     --tab-mix is how much folder color a tab's fill borrows over the card
-     surface; parent breadcrumb segments sit one step stronger. */
+  /* Folder palette for the project map: six hand-tuned pairs (the dark block
+     re-tunes them), assigned to a folder by a stable hash of its path so it
+     keeps its color across recomputes. --tab-mix is how much folder color a
+     tab's fill borrows over the card surface; parent breadcrumb segments sit
+     one step stronger. */
   --folder-0: #2f7f93;
   --folder-1: #5c7d2a;
   --folder-2: #a04f6a;
@@ -944,12 +942,6 @@ body,
   height: 11px;
 }
 
-/* The annotation tab wears the draw tool's own pen glyph. */
-.tab-anno {
-  color: var(--tint-amber);
-  margin-right: 0.3rem;
-}
-
 /* No CSS gap here: the 6px between panels is an element — a plain spacer or a
    draggable split. Its own display beats the `hidden` attribute, hence the rule. */
 .explorer-cards {
@@ -1069,7 +1061,7 @@ body,
 
 /* The MAP chip on project headings: always visible and worded, unlike the
    hover-revealed buttons — a project's map stays one visible click from its
-   heading. Amber because that is the canvas family's color. */
+   heading. Amber, the app's own accent. */
 .map-chip {
   margin-left: auto;
   display: inline-flex;
@@ -2492,11 +2484,12 @@ body,
   padding: 0 0.3rem;
 }
 
-/* --- Canvas board (BoardView, code-split — these rules are the only startup
-   cost the canvas has). The dot grid rides the camera: its size scales with
-   the zoom and its position pans, so the surface reads as one plane. --- */
-
-.board {
+/* --- Project map (MapView, code-split — these rules are the only startup
+   cost the map has). Three layouts share one surface: nodes are DOM, the
+   connections one SVG layer beneath them. The dot grid rides the camera: its
+   size scales with the zoom and its position pans, so the surface reads as
+   one plane. --- */
+.map {
   flex: 1;
   min-height: 0;
   position: relative;
@@ -2505,42 +2498,85 @@ body,
   user-select: none;
   touch-action: none;
   background-image: radial-gradient(rgba(0, 0, 0, 0.09) 1px, transparent 1px);
-}
-
-/* Left-drag on empty canvas draws a selection rectangle; panning is the middle
-   button, the wheel, or a held Space — which says so with the cursor. */
-.board-pan,
-.board-pan .board-node {
   cursor: grab;
 }
 
-/* A read-only lens pans with the plain left button, so the surface says so:
-   grab at rest, grabbing mid-pan, and a pointer over anything that opens.
-   (Group backdrops never paint on a lens — cards wear folder tabs instead.) */
-.board-readonly {
-  cursor: grab;
-}
-
-.board-readonly .board-node {
-  cursor: pointer;
-}
-
-.board-readonly.board-panning,
-.board-readonly.board-panning .board-node,
-.board-readonly.board-panning .board-tab {
+.map.panning,
+.map.panning .map-node,
+.map.panning .map-tab {
   cursor: grabbing;
 }
 
-.board-surface {
+.map-surface {
   position: absolute;
   top: 0;
   left: 0;
   transform-origin: 0 0;
 }
 
-.board-node {
+/* Connections. The layer rides the camera with the nodes, draws outside its
+   own 1×1 box, and never takes the pointer. */
+.map-edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.map-edge {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.38);
+  stroke-width: 2;
+}
+
+/* Every line no lit node owns: faint enough to leave the nodes legible,
+   present enough to show where the references run. */
+.map-edge.ghost {
+  opacity: 0.11;
+}
+
+.map-edge.lit {
+  marker-end: url(#map-arrow);
+}
+
+.map-edge.pin {
+  stroke: var(--pin);
+  marker-end: url(#map-arrow);
+}
+
+/* A folder's soft backdrop on the constellation: its dots' hull, fattened by
+   a round stroke and blurred, named above its highest dot. */
+.map-halo {
+  fill: var(--fc);
+  stroke: var(--fc);
+  stroke-width: 44;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.16;
+  filter: blur(10px);
+}
+
+.map-halo-label {
+  font-size: 10.5px;
+  font-weight: 650;
+  fill: var(--fc);
+  paint-order: stroke;
+  stroke: #f6f6f6;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.map-node {
   position: absolute;
   box-sizing: border-box;
+  cursor: pointer;
+}
+
+/* --- Cards (clusters) --- */
+.map-node.card {
   display: flex;
   flex-direction: column;
   padding: 0.4rem 0.6rem;
@@ -2548,13 +2584,25 @@ body,
   border: 1px solid rgba(0, 0, 0, 0.14);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  cursor: default;
   overflow: hidden;
+}
+
+.map-node.card.hot {
+  border-color: rgba(0, 0, 0, 0.3);
+}
+
+.map-node.card.pinned {
+  border-color: var(--pin);
+  box-shadow: 0 0 0 1px var(--pin);
+}
+
+.map-node.missing {
+  opacity: 0.55;
 }
 
 /* Top-aligned, not centered: the name may wrap to a second line, and the icon
    belongs beside the first. */
-.board-node-head {
+.map-card-head {
   display: flex;
   align-items: flex-start;
   gap: 0.4rem;
@@ -2562,49 +2610,58 @@ body,
   min-height: 1.5rem;
 }
 
-.board-node-head .file-icon,
-.board-node-head .board-node-detail {
+.map-card-head .file-icon,
+.map-card-head .map-card-tag {
   margin-top: 0.15rem;
 }
 
-.board-node.selected {
-  border-color: var(--tint-amber);
-  box-shadow: 0 0 0 1px var(--tint-amber);
-}
-
-.board-node.missing {
-  opacity: 0.55;
-}
-
-.board-node-name {
+/* Names wrap — two lines at most, so a long name can't eat the excerpt. */
+.map-card-name {
   font-size: 0.85rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* File titles wrap — two lines at most, so a long name can't eat a note
-   card's excerpt. Link chips keep the one-line cut: their "name" is a URL. */
-.board-node-head .board-node-name {
-  white-space: normal;
+  line-height: 1.25;
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
-  line-height: 1.25;
+  overflow: hidden;
 }
 
-.board-node-detail {
+.map-card-tag {
   flex-shrink: 0;
   font-size: 0.72rem;
   color: #9a9a9a;
 }
 
-/* Degree balls on a file card's edges: green counts what references it,
-   orange what it references. White text holds on both themes' green/orange
-   tints. */
-.board-ball {
+/* The note's opening text, clipped by the card and fading at the cut. */
+.map-card-body {
+  flex: 1;
+  min-height: 0;
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: #6f6f6f;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1rem), transparent);
+}
+
+/* An image card is the picture. */
+.map-node.card.image {
+  padding: 0;
+}
+
+.map-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* Degree balls on a card's edges: green counts what references it, orange
+   what it references. White text holds on both themes' green/orange tints. */
+.map-ball {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
@@ -2621,20 +2678,20 @@ body,
   pointer-events: none;
 }
 
-.board-ball-in {
+.map-ball.in {
   left: 2px;
   background: var(--tint-green);
 }
 
-.board-ball-out {
+.map-ball.out {
   right: 2px;
   background: var(--tint-orange);
 }
 
 /* The open the double-click already provides, made visible: a button in a
-   file card's free top-right corner, hidden until the card is hovered so a
-   map of many cards stays quiet at rest. */
-.board-open-btn {
+   card's free top-right corner, hidden until the card is hovered so a map of
+   many cards stays quiet at rest. */
+.map-open {
   position: absolute;
   top: 5px;
   right: 5px;
@@ -2654,146 +2711,24 @@ body,
   transition: opacity 0.12s;
 }
 
-.board-node:hover .board-open-btn,
-.board-open-btn:focus-visible {
+.map-node.card:hover .map-open,
+.map-open:focus-visible {
   opacity: 1;
 }
 
-.board-open-btn:hover {
+.map-open:hover {
   color: var(--tint-amber);
   border-color: var(--tint-amber);
 }
 
-.board-open-btn svg {
+.map-open svg {
   width: 12px;
   height: 12px;
   display: block;
 }
 
-/* A card whose reference lines are pinned on show, in the same color its
-   lines wear. */
-.board-node.traced {
-  border-color: var(--node-accent);
-  box-shadow: 0 0 0 1px var(--node-accent);
-}
-
-/* The note's opening text, clipped by the card and fading at the cut. */
-.board-node-body {
-  flex: 1;
-  min-height: 0;
-  margin-top: 0.15rem;
-  font-size: 0.76rem;
-  line-height: 1.4;
-  color: #6f6f6f;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow: hidden;
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 1rem), transparent);
-}
-
-/* A static text block: rendered markdown, clipped and faded at the cut like a
-   note card's excerpt. The focused block swaps this for a real editor. */
-.board-node-text {
-  flex: 1;
-  min-height: 0;
-  font-size: 0.8rem;
-  line-height: 1.45;
-  word-break: break-word;
-  overflow: hidden;
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 0.75rem), transparent);
-}
-
-.board-node-text > :first-child {
-  margin-top: 0;
-}
-
-.board-node-text > :last-child {
-  margin-bottom: 0;
-}
-
-.board-node-text p,
-.board-node-text ul,
-.board-node-text ol,
-.board-node-text blockquote {
-  margin: 0.25rem 0;
-}
-
-.board-node-text ul,
-.board-node-text ol {
-  padding-left: 1.1rem;
-}
-
-.board-node-text h1,
-.board-node-text h2,
-.board-node-text h3,
-.board-node-text h4 {
-  font-size: 0.95rem;
-  margin: 0.2rem 0;
-}
-
-.board-node-text img {
-  max-width: 100%;
-}
-
-.board-node-text pre {
-  overflow-x: auto;
-}
-
-/* The one live editor, mounted in the focused block only. */
-.board-node.editing {
-  border-color: var(--tint-amber);
-  box-shadow: 0 0 0 1px var(--tint-amber);
-  padding-top: 0.85rem;
-}
-
-.board-block-editor {
-  user-select: text;
-  cursor: text;
-}
-
-.board-block-editor .cm-scroller {
-  font-size: 0.8rem;
-  line-height: 1.45;
-  padding: 0;
-}
-
-/* Drag strip along the top of a block being edited: inside the text the
-   pointer belongs to the editor, so the node needs its own grab area. */
-.board-node-grip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 0.75rem;
-  cursor: grab;
-  background: var(--tint-amber);
-  opacity: 0.25;
-}
-
-.board-node-grip:hover {
-  opacity: 0.45;
-}
-
-/* Group nodes: a labelled backdrop, painted behind everything else. */
-.board-node-group {
-  background: rgba(0, 0, 0, 0.03);
-  border-style: dashed;
-  box-shadow: none;
-}
-
-.board-group-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #6f6f6f;
-}
-
-/* Folder tabs — how the map lens shows folders instead of painting group
-   boxes: each note card wears its folder as a small tab rising from its top
-   edge, in the folder's color. A subfolder's tab reads as a breadcrumb — the
-   parent segment named in its own material, middle folders collapsing to a
-   key square past depth 2. The tab behaves as part of its card: a press
-   falls through and pans, double-click opens the note. */
-.board-tab {
+/* A card's folder tab, rising from its top edge. */
+.map-tab {
   position: absolute;
   box-sizing: border-box;
   display: flex;
@@ -2808,7 +2743,7 @@ body,
   cursor: pointer;
 }
 
-.board-tab-seg {
+.map-tab-seg {
   min-width: 0;
   padding: 0 9px;
   color: var(--seg-color);
@@ -2820,18 +2755,18 @@ body,
 
 /* When the tab runs out of room, the parent gives way first — the leaf is
    the folder the card actually lives in. */
-.board-tab-parent {
+.map-tab-parent {
   flex-shrink: 4;
   padding: 0 7px;
   background: color-mix(in srgb, var(--seg-color) var(--tab-mix-parent), var(--tab-card));
   border-right: 1px solid color-mix(in srgb, var(--seg-color) 40%, transparent);
 }
 
-.board-tab-parent ~ .board-tab-seg {
+.map-tab-parent ~ .map-tab-seg {
   padding: 0 8px;
 }
 
-.board-tab-key {
+.map-tab-key {
   flex-shrink: 0;
   align-self: center;
   width: 8px;
@@ -2840,154 +2775,456 @@ body,
   border-radius: 2px;
 }
 
-.board-tab-key + .board-tab-seg {
+.map-tab-key + .map-tab-seg {
   padding-left: 0;
 }
 
-/* Link nodes: the URL, never an embed — loading the page would be a request
-   the user never made. */
-.board-link-body {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
+/* --- Dots (constellation) --- */
+.map-node.dot {
+  border-radius: 50%;
+  background: var(--fc);
+  border: 1.5px solid #f6f6f6;
+  overflow: visible;
 }
 
-/* Image nodes are file nodes whose target is a picture: the picture is the
-   whole card, and the node keeps the pointer so a drag still works. */
-.board-node.image {
-  padding: 0;
+/* A referenced file is a small hollow square; a dead link a dashed ring. */
+.map-node.dot.ref {
+  border-radius: 1px;
+  background: #ffffff;
+  border: 1.5px solid var(--fc);
 }
 
-.board-node-image {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  pointer-events: none;
+.map-node.dot.missing {
+  background: transparent;
+  border: 1.25px dashed #6f6f6f;
+  opacity: 0.8;
 }
 
-/* A node carrying a spec color ("1".."6", or a hex value): shown, not authored. */
-.board-node.accent {
-  border-left: 3px solid var(--node-accent);
-}
-
-.board-resize {
+/* Tiny dots need a bigger hit area than they show. */
+.map-node.dot::before {
+  content: "";
   position: absolute;
-  right: -1px;
-  bottom: -1px;
-  width: 14px;
-  height: 14px;
-  cursor: nwse-resize;
-  border-right: 2px solid var(--tint-amber);
-  border-bottom: 2px solid var(--tint-amber);
-  border-radius: 0 0 7px 0;
+  inset: -6px;
 }
 
-/* Connections. The layer rides the camera with the nodes, draws outside its own
-   1×1 box, and lets every press through except the ones on a line. */
-.board-edges {
+.map-node.dot.hot {
+  border-color: #0f0f0f;
+}
+
+.map-node.dot.pinned {
+  box-shadow:
+    0 0 0 2px #f6f6f6,
+    0 0 0 4px var(--pin);
+}
+
+.map-label {
+  position: absolute;
+  font-size: 10.5px;
+  line-height: 12px;
+  white-space: nowrap;
+  color: #0f0f0f;
+  text-shadow:
+    0 0 3px #f6f6f6,
+    0 0 3px #f6f6f6;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-label.soft {
+  font-size: 10px;
+  color: #6f6f6f;
+  opacity: 0;
+}
+
+.map-node.hot .map-label.soft {
+  opacity: 1;
+}
+
+/* While something is lit the bystanders step back: dimmed, and on the
+   constellation unnamed, so the lit node's neighbourhood is what reads. */
+.map-constellation.dim .map-node:not(.hot):not(.adj):not(.pinned),
+.map-ledger.dim .map-node:not(.hot):not(.adj):not(.pinned) {
+  opacity: 0.35;
+}
+
+.map-constellation.dim .map-node:not(.hot):not(.adj):not(.pinned) .map-label {
+  opacity: 0;
+}
+
+/* --- Rows (ledger): the map as a document — it scrolls, no camera. --- */
+.map-ledger {
+  cursor: default;
+  background-image: none;
+}
+
+.map-ledger-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding-top: 2.4rem;
+}
+
+.map-ledger-page {
+  position: relative;
+}
+
+.map-heading {
+  position: absolute;
+  left: 12px;
+  height: 20px;
+  line-height: 20px;
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--fc);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.14);
+}
+
+.map-node.row {
+  display: block;
+  border-radius: 4px;
+}
+
+.map-node.row.hot,
+.map-node.row.pinned {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.map-node.row.pinned {
+  box-shadow: inset 3px 0 0 var(--pin);
+}
+
+.map-row-name {
   position: absolute;
   left: 0;
   top: 0;
-  width: 1px;
-  height: 1px;
-  overflow: visible;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 0 0 0 12px;
+  box-sizing: border-box;
+  font-size: 0.8rem;
+}
+
+.map-row-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-row-dot {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--fc);
+}
+
+.map-node.row.ref .map-row-dot {
+  border-radius: 1px;
+  background: #ffffff;
+  border: 1.5px solid var(--fc);
+  box-sizing: border-box;
+}
+
+.map-node.row.missing .map-row-dot {
+  background: transparent;
+  border: 1.25px dashed #6f6f6f;
+  box-sizing: border-box;
+}
+
+/* --- Hover card: the excerpt card, moved from the layout into the pointer. --- */
+.map-hcard {
+  position: absolute;
+  width: 220px;
+  box-sizing: border-box;
+  padding: 0.4rem 0.6rem 0.45rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 8px;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.1),
+    0 1px 3px rgba(0, 0, 0, 0.06);
   pointer-events: none;
+  z-index: 3;
 }
 
-.board-edge-line {
-  fill: none;
-  stroke: var(--node-accent, rgba(0, 0, 0, 0.38));
-  stroke-width: 2;
+.map-hcard-name {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
-/* Every line a lens draws that no lit card owns: faint enough to leave the
-   cards legible, present enough to show where the references run. */
-.board-edge.ghost {
-  opacity: 0.11;
+.map-hcard-name .file-icon {
+  margin-top: 0.15rem;
 }
 
-/* A fat invisible twin: a 2px curve is far too thin to click. */
-.board-edge-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 14;
-  pointer-events: stroke;
+.map-hcard-title,
+.map-detail-title,
+.map-detail-kind {
+  font-size: 0.72rem;
+  color: #6f6f6f;
+  margin-top: 2px;
+}
+
+.map-hcard-excerpt {
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: #6f6f6f;
+  margin-top: 0.2rem;
+  max-height: 4.2em;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+
+.map-degrees {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 0.68rem;
+  color: #6f6f6f;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-degrees span::before,
+.map-detail-section h4::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: var(--tint-green);
+}
+
+.map-degrees .out::before,
+.map-detail-section h4.out::before {
+  background: var(--tint-orange);
+}
+
+/* A folder named as a chip — the tab's material, without the card. */
+.map-folder {
+  display: inline-block;
+  margin: 4px 0 2px;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 17px;
+  padding: 0 8px;
+  border-radius: 5px 5px 0 0;
+  color: var(--fc);
+  background: color-mix(in srgb, var(--fc) var(--tab-mix), var(--tab-card));
+  border: 1px solid color-mix(in srgb, var(--fc) 55%, transparent);
+  border-bottom: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.map-folder.small {
+  margin: 0 0 0 auto;
+  font-size: 9.5px;
+  line-height: 14px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fc) 55%, transparent);
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* --- Details: what a click gets. Docked at the right, under the bar. --- */
+.map-detail {
+  position: absolute;
+  top: 2.6rem;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  width: 17rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem 0.75rem 0.75rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-top: 3px solid var(--pin);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  overflow-y: auto;
+  cursor: default;
+  user-select: text;
+  z-index: 4;
+}
+
+/* The panel is a column of fixed height that scrolls; its children must not
+   shrink to fit it, or the excerpt collapses to a sliver. */
+.map-detail > * {
+  flex-shrink: 0;
+}
+
+.map-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.map-detail-head .file-icon {
+  margin-top: 0.2rem;
+}
+
+.map-detail-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.92rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.map-detail-close {
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  color: #6f6f6f;
+  background: none;
+  border: none;
+  border-radius: 4px;
   cursor: pointer;
 }
 
-.board-edge.selected .board-edge-line {
-  stroke: var(--tint-amber);
-  stroke-width: 3;
+.map-detail-close:hover {
+  color: inherit;
+  background: rgba(0, 0, 0, 0.06);
 }
 
-.board-edge-label {
-  font-size: 11px;
-  fill: #6f6f6f;
-  text-anchor: middle;
-  dominant-baseline: middle;
-  paint-order: stroke;
-  stroke: #ffffff;
-  stroke-width: 3;
+.map-detail-excerpt {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #6f6f6f;
+  margin-top: 0.4rem;
+  max-height: 11em;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  mask-image: linear-gradient(to bottom, #000 80%, transparent);
 }
 
-.board-edge-preview {
-  fill: none;
-  stroke: var(--tint-amber);
-  stroke-width: 2;
-  stroke-dasharray: 5 4;
+.map-detail-actions {
+  margin-top: 0.5rem;
 }
 
-/* Connection handles on the selected node, inset because the card clips. */
-.board-anchor {
+.map-detail-section {
+  margin-top: 0.8rem;
+}
+
+.map-detail-section h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #6f6f6f;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-detail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.map-detail-row {
+  font: inherit;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.2rem 0.35rem;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.map-detail-row:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.map-detail-rowname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-detail-none {
+  font-size: 0.78rem;
+  color: #9a9a9a;
+  padding: 0.1rem 0.35rem;
+}
+
+/* --- The bar: which view, and the camera. Floats over the surface and lets
+   presses through except on its own controls. --- */
+.map-bar {
   position: absolute;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--tint-amber);
-  opacity: 0.55;
-  cursor: crosshair;
-}
-
-.board-anchor:hover {
-  opacity: 1;
-  transform: scale(1.25);
-}
-
-.board-anchor-top {
-  top: 1px;
-  left: 50%;
-  margin-left: -4.5px;
-}
-
-.board-anchor-bottom {
-  bottom: 1px;
-  left: 50%;
-  margin-left: -4.5px;
-}
-
-.board-anchor-left {
-  left: 1px;
-  top: 50%;
-  margin-top: -4.5px;
-}
-
-.board-anchor-right {
-  right: 1px;
-  top: 50%;
-  margin-top: -4.5px;
-}
-
-/* The selection rectangle, drawn in screen space so its outline stays 1px at
-   every zoom level. */
-.board-marquee {
-  position: absolute;
-  border: 1px solid var(--tint-amber);
-  background: rgba(216, 160, 74, 0.12);
+  top: 0.5rem;
+  left: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   pointer-events: none;
 }
 
-.board-hint {
+.map-bar > * {
+  pointer-events: auto;
+}
+
+.map-views {
+  background: #ffffff;
+}
+
+.map-btn {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.55rem;
+  color: inherit;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.map-btn:hover {
+  background: #f0f0f0;
+}
+
+.map-zoom {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.map-zoom-slider {
+  width: 8rem;
+  height: 1.5rem;
+  margin: 0 0.1rem;
+  accent-color: var(--tint-amber);
+  cursor: pointer;
+}
+
+.map-zoom-pct {
+  min-width: 3.4rem;
+}
+
+.map-hint {
   position: absolute;
   inset: 0;
   display: flex;
@@ -3000,227 +3237,7 @@ body,
   pointer-events: none;
 }
 
-/* Overlay toolbar: the empty middle must not block panning underneath. */
-.board-bar {
-  position: absolute;
-  top: 0.5rem;
-  left: 0.6rem;
-  right: 0.6rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  pointer-events: none;
-}
-
-.board-bar > * {
-  pointer-events: auto;
-}
-
-.board-add {
-  position: relative;
-}
-
-.board-btn {
-  font: inherit;
-  font-size: 0.8rem;
-  padding: 0.2rem 0.55rem;
-  color: inherit;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.board-btn:hover {
-  background: #efefef;
-}
-
-.board-zoom {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-/* On the map the bar holds nothing else, and a lone child of a
-   space-between row would sit at the left edge. */
-.board-zoom:only-child {
-  margin-left: auto;
-}
-
-.board-zoom-slider {
-  width: 8rem;
-  height: 1.5rem;
-  margin: 0 0.1rem;
-  accent-color: var(--tint-amber);
-  cursor: pointer;
-}
-
-.board-zoom-pct {
-  min-width: 3.4rem;
-}
-
-/* Draw tools. The active wash is the app's one toggle idiom. */
-.board-draw {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.board-btn.active {
-  background: rgba(217, 154, 6, 0.22);
-}
-
-.board-swatches {
-  display: inline-flex;
-  gap: 0.2rem;
-  margin: 0 0.15rem;
-}
-
-.board-swatch {
-  width: 1.05rem;
-  height: 1.05rem;
-  padding: 0;
-  border: 1px solid rgba(0, 0, 0, 0.2);
-  border-radius: 50%;
-  cursor: pointer;
-  /* The unset swatch is the theme's own ink. */
-  background: currentColor;
-}
-
-.board-swatch.active {
-  box-shadow: 0 0 0 2px var(--tint-amber);
-}
-
-/* Tools swap the surface cursor so the mode is visible before the first mark. */
-.board-tool-pen {
-  cursor: crosshair;
-}
-
-.board-tool-eraser {
-  cursor: cell;
-}
-
-/* Ink nodes are strokes floating on the canvas, not cards. The div exists for
-   geometry and selection only: its mostly-empty rectangle must not steal
-   clicks from nodes beneath, so it is pointer-transparent and stroke presses
-   are hit-tested by the surface instead. */
-.board-node-ink {
-  padding: 0;
-  background: transparent;
-  border-color: transparent;
-  border-radius: 0;
-  box-shadow: none;
-  pointer-events: none;
-}
-
-.board-node-ink.selected {
-  border-color: var(--tint-amber);
-  box-shadow: 0 0 0 1px var(--tint-amber);
-}
-
-/* The corner and anchors take the pointer back through the transparent node. */
-.board-node-ink > .board-resize,
-.board-node-ink > .board-anchor {
-  pointer-events: auto;
-}
-
-.board-ink-bitmap {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-/* The in-progress stroke, in screen space above the surface. */
-.board-ink-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-.board-picker {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  width: 15rem;
-  max-height: 45vh;
-  display: flex;
-  flex-direction: column;
-  padding: 0.35rem;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-  z-index: 5;
-}
-
-.board-picker input {
-  font: inherit;
-  font-size: 0.8rem;
-  margin-bottom: 0.3rem;
-  padding: 0.25rem 0.4rem;
-  color: inherit;
-  background: transparent;
-  border: 1px solid rgba(0, 0, 0, 0.14);
-  border-radius: 5px;
-  outline: none;
-}
-
-.board-picker ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-}
-
-.board-picker li button {
-  font: inherit;
-  font-size: 0.8rem;
-  display: block;
-  width: 100%;
-  padding: 0.25rem 0.4rem;
-  text-align: left;
-  color: inherit;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.board-picker li button:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.board-picker-empty {
-  font-size: 0.8rem;
-  color: #9a9a9a;
-  padding: 0.25rem 0.4rem;
-}
-
-/* An unreadable canvas opens locked — message instead of surface. */
-.board-broken {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 2rem;
-  text-align: center;
-  color: #6e6e6e;
-  font-size: 0.9rem;
-  background-image: none;
-  cursor: default;
-  user-select: text;
-}
-
-.board-broken-msg {
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 0.78rem;
-}
-
-/* The read-only file view: any real file a canvas references, as plain text. */
+/* The read-only file view: any real file the map references, as plain text. */
 .file-lens {
   flex: 1;
   min-height: 0;
@@ -3348,93 +3365,131 @@ body,
     color: #9a9a9a;
   }
 
-  .board {
+  .map {
     background-image: radial-gradient(rgba(255, 255, 255, 0.09) 1px, transparent 1px);
   }
 
-  .board-node {
-    background: #3a3a3a;
-    border-color: rgba(255, 255, 255, 0.14);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-  }
-
-  .board-node-body {
-    color: #a8a8a8;
-  }
-
-  .board-node-group {
-    background: rgba(255, 255, 255, 0.04);
-  }
-
-  .board-group-label {
-    color: #a8a8a8;
-  }
-
-  .board-edge-line {
-    stroke: var(--node-accent, rgba(255, 255, 255, 0.42));
+  .map-edge {
+    stroke: rgba(255, 255, 255, 0.42);
   }
 
   /* Faint strokes on a dark ground need a little more to survive. */
-  .board-edge.ghost {
+  .map-edge.ghost {
     opacity: 0.16;
   }
 
-  /* Dark tints are light, so the ball text flips dark. */
-  .board-ball {
-    color: #232323;
+  .map-halo {
+    opacity: 0.2;
   }
 
-  .board-open-btn {
+  .map-halo-label {
+    stroke: #2f2f2f;
+  }
+
+  .map-node.card,
+  .map-hcard,
+  .map-detail,
+  .map-views,
+  .map-btn,
+  .map-open {
     background: #3a3a3a;
     border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .map-node.card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+
+  .map-node.card.hot {
+    border-color: rgba(255, 255, 255, 0.35);
+  }
+
+  .map-node.card.pinned {
+    border-color: var(--pin);
+    box-shadow: 0 0 0 1px var(--pin);
+  }
+
+  .map-detail {
+    border-top-color: var(--pin);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .map-card-body,
+  .map-hcard-excerpt,
+  .map-detail-excerpt,
+  .map-hcard-title,
+  .map-detail-title,
+  .map-detail-kind,
+  .map-degrees,
+  .map-detail-section h4,
+  .map-detail-close,
+  .map-open {
     color: #a8a8a8;
   }
 
-  .board-open-btn:hover {
+  .map-btn:hover {
+    background: #474747;
+  }
+
+  .map-open:hover {
     color: var(--tint-amber);
     border-color: var(--tint-amber);
   }
 
-  .board-edge-label {
-    fill: #c8c8c8;
-    stroke: #2f2f2f;
+  /* Dark tints are light, so the ball text flips dark. */
+  .map-ball {
+    color: #232323;
   }
 
-  .board-btn,
-  .board-picker {
+  .map-node.dot {
+    border-color: #2f2f2f;
+  }
+
+  .map-node.dot.ref,
+  .map-node.row.ref .map-row-dot {
     background: #3a3a3a;
-    border-color: rgba(255, 255, 255, 0.14);
+    border-color: var(--fc);
   }
 
-  .board-btn:hover {
-    background: #454545;
+  .map-node.dot.missing,
+  .map-node.row.missing .map-row-dot {
+    border-color: #a8a8a8;
   }
 
-  .board-btn.active {
-    background: rgba(217, 154, 6, 0.28);
+  .map-node.dot.hot {
+    border-color: #f6f6f6;
   }
 
-  .board-node-ink {
-    background: transparent;
-    border-color: transparent;
-    box-shadow: none;
+  .map-node.dot.pinned {
+    box-shadow:
+      0 0 0 2px #2f2f2f,
+      0 0 0 4px var(--pin);
   }
 
-  .board-node-ink.selected {
-    border-color: var(--tint-amber);
-    box-shadow: 0 0 0 1px var(--tint-amber);
+  .map-label {
+    color: #f6f6f6;
+    text-shadow:
+      0 0 3px #2f2f2f,
+      0 0 3px #2f2f2f;
   }
 
-  .board-swatch {
-    border-color: rgba(255, 255, 255, 0.25);
+  .map-label.soft {
+    color: #a8a8a8;
   }
 
-  .board-picker input {
-    border-color: rgba(255, 255, 255, 0.18);
+  .map-heading {
+    border-bottom-color: rgba(255, 255, 255, 0.14);
   }
 
-  .board-picker li button:hover {
+  .map-node.row.hot,
+  .map-node.row.pinned,
+  .map-detail-row:hover,
+  .map-detail-close:hover {
     background: rgba(255, 255, 255, 0.08);
+  }
+
+  .map-detail-none {
+    color: #8f8f8f;
   }
 
   .explorer-ext.mute {

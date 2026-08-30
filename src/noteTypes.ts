@@ -15,12 +15,12 @@
 
 /** Affordances a type can declare. A closed set: every name is something the
  * app implements, and the chrome keys off these rather than "is it markdown". */
-export type Feature = "live-preview" | "preview" | "mentions" | "format" | "images" | "ink";
+export type Feature = "live-preview" | "preview" | "mentions" | "format" | "images";
 
-const FEATURES: Feature[] = ["live-preview", "preview", "mentions", "format", "images", "ink"];
+const FEATURES: Feature[] = ["live-preview", "preview", "mentions", "format", "images"];
 
 /** Editing surfaces that exist. Anything else in the file reads as "text". */
-export type ViewId = "markdown" | "text" | "canvas";
+export type ViewId = "markdown" | "text";
 
 /** One registry entry, as it appears in `settings.json`. `view` and `features`
  * are plain strings because the file is user-editable; unknown values mean
@@ -70,20 +70,9 @@ export const featuresOf = (path: string): Feature[] => {
   return FEATURES.filter((f) => declared.includes(f));
 };
 
-/** What the app offers for markdown, whichever type claims that view. A text
- * block on a canvas is markdown wherever it sits, so it takes these rather than
- * the canvas type's own features — those describe the canvas file to the
- * chrome (a Format toolbar over a board would have nothing to talk to). */
-export const markdownFeatures = (): Feature[] => {
-  const declared = registry.find((t) => t.view === "markdown")?.features ?? [];
-  return FEATURES.filter((f) => declared.includes(f));
-};
-
 /** Editing surface for a path. */
-export const viewOf = (path: string): ViewId => {
-  const view = noteTypeOf(path)?.view;
-  return view === "markdown" || view === "canvas" ? view : "text";
-};
+export const viewOf = (path: string): ViewId =>
+  noteTypeOf(path)?.view === "markdown" ? "markdown" : "text";
 
 /** Tint ids the app defines per theme (as `--tint-*` in App.css). */
 const TINTS = ["blue", "amber", "rose", "purple", "green", "orange", "gray", "teal"];
@@ -105,12 +94,7 @@ export const iconOf = (path: string): string | null => noteTypeOf(path)?.icon ??
 export const extOfType = (id: string): string | null =>
   registry.find((t) => t.id === id)?.extensions[0] ?? null;
 
-/** Extension of whichever type owns a view — how the app names a new canvas
- * without hardcoding `.canvas` next to a registry that already says so. */
-export const extOfView = (view: ViewId): string | null =>
-  registry.find((t) => t.view === view)?.extensions[0] ?? null;
-
 /** Types a "new note of this format" choice can offer: the ones with a view
  * that authors content, listed so the walks show what gets created. */
 export const creatableTypes = (): NoteType[] =>
-  registry.filter((t) => t.listed !== false && (t.view === "markdown" || t.view === "canvas"));
+  registry.filter((t) => t.listed !== false && t.view === "markdown");

@@ -57,14 +57,15 @@ pub struct Settings {
     pub summon_hotkey: Option<String>,
     /// Registry type id a deliberate "New note" creates; absent means markdown.
     /// Capture — the blank note a summon lands in — is always markdown whatever
-    /// this says, because a canvas is not a place to start typing.
+    /// this says, because capture means start typing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_note_type: Option<String>,
-    /// Note id of a canvas the window opens on at launch, instead of the last
-    /// active tab. Absent means the tab that was up stays up.
+    /// Which layout the project map opens in: `clusters`, `constellation` or
+    /// `ledger`. Absent means constellation. One preference for every map — a
+    /// person reads all their maps the same way.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub open_at_launch: Option<String>,
-    /// Double-clicking a referenced non-markdown file on a canvas opens it
+    pub map_view: Option<String>,
+    /// Double-clicking a referenced non-markdown file on the map opens it
     /// with the system default app instead of the in-app read-only view.
     /// Absent means the in-app view.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,7 +120,7 @@ impl Default for Settings {
             keybinds: BTreeMap::new(),
             summon_hotkey: None,
             default_note_type: None,
-            open_at_launch: None,
+            map_view: None,
             open_files_externally: None,
             mcp: Mcp::default(),
         }
@@ -300,20 +301,22 @@ fn default_note_types() -> Vec<NoteType> {
         plain("xml", "XML", &["xml"], "file-code", Some("orange"), false),
         plain("log", "Log", &["log"], "file-terminal", Some("gray"), false),
         plain("latex", "LaTeX", &["tex"], "file-text", Some("teal"), true),
-        NoteType {
-            id: "canvas".into(),
-            name: "Canvas".into(),
-            extensions: strings(&["canvas"]),
-            view: "canvas".into(),
-            icon: Some("file-canvas".into()),
-            color: Some("amber".into()),
-            // What a canvas implements today: pasted and dropped pictures as
-            // file nodes, and drawn ink strokes. A feature name is something
-            // the app implements, not something it plans.
-            features: strings(&["images", "ink"]),
-            listed: true,
-        },
     ]
+}
+
+/// The registry as shipped 2026-08-16 through 2026-08-24, when the app had a
+/// canvas view: the canvas type declaring pictures and ink. The view left on
+/// 2026-08-25, so a file on this snapshot upgrades to a registry without it —
+/// and a `.canvas` file stops being a note. Composed from the frozen
+/// [`v5_note_types`], so this snapshot cannot drift either.
+fn v6_note_types() -> Vec<NoteType> {
+    let mut types = v5_note_types();
+    for t in &mut types {
+        if t.id == "canvas" {
+            t.features = vec!["images".into(), "ink".into()];
+        }
+    }
+    types
 }
 
 /// The registry as shipped 2026-08-14 with the freeform canvas: the canvas
@@ -351,10 +354,10 @@ fn v4_note_types() -> Vec<NoteType> {
 }
 
 /// The registry as shipped 2026-08-13: nine types with `listed` flags, no
-/// canvas — the view didn't exist yet. Frozen literally like the snapshots
-/// below (deriving it from the live defaults would drift the moment they
-/// change), so `load` can upgrade untouched defaults without touching a
-/// hand-edit.
+/// canvas — which is also today's registry, the canvas having come and gone in
+/// between. Frozen literally like the snapshots below (deriving it from the
+/// live defaults would drift the moment they change), so `load` can upgrade
+/// untouched defaults without touching a hand-edit.
 fn v3_note_types() -> Vec<NoteType> {
     let strings = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
     let plain =
@@ -529,15 +532,20 @@ impl Settings {
 /// means the whole list belongs to the user and nothing is touched. `true` when
 /// something changed, which is the caller's cue to write the file back.
 pub(crate) fn upgrade_registry(settings: &mut Settings) -> bool {
-    let shipped = settings.note_types == v1_note_types()
-        || settings.note_types == v2_note_types()
-        || settings.note_types == v3_note_types()
-        || settings.note_types == v4_note_types()
-        || settings.note_types == v5_note_types();
-    if shipped {
-        settings.note_types = default_note_types();
+    let shipped = [
+        v1_note_types(),
+        v2_note_types(),
+        v3_note_types(),
+        v4_note_types(),
+        v5_note_types(),
+        v6_note_types(),
+    ]
+    .contains(&settings.note_types);
+    if !shipped || settings.note_types == default_note_types() {
+        return false;
     }
-    shipped
+    settings.note_types = default_note_types();
+    true
 }
 
 /// Loaded state, as this process holds it. A parse failure keeps the app
@@ -658,16 +666,16 @@ pub fn set_default_note_type(app: AppHandle, id: Option<String>) -> Result<(), S
     })
 }
 
-/// The canvas the window opens on at launch, or `None` to go back to the last
-/// active tab. Only a note the registry opens as a canvas qualifies — the point
-/// of the setting is a surface to land on, not any file at all.
+/// Which layout the project map opens in. The default is stored as absent, so
+/// the file never holds shipped behavior; anything but the three names is
+/// refused here rather than read back as the default and mistaken for a bug.
 #[tauri::command]
-pub fn set_open_at_launch(app: AppHandle, note: Option<String>) -> Result<(), String> {
+pub fn set_map_view(app: AppHandle, view: String) -> Result<(), String> {
     update(&app, |s| {
-        s.open_at_launch = match note {
-            Some(note) if s.type_for(&note).is_some_and(|t| t.view == "canvas") => Some(note),
-            Some(note) => return Err(format!("\"{note}\" is not a canvas")),
-            None => None,
+        s.map_view = match view.as_str() {
+            "constellation" => None,
+            "clusters" | "ledger" => Some(view),
+            other => return Err(format!("not a map view: {other}")),
         };
         Ok(())
     })
@@ -777,73 +785,72 @@ mod tests {
     }
 
     #[test]
-    fn v3_era_registry_round_trips_and_upgrades() {
+    fn v3_era_registry_is_todays_registry() {
         // An untouched 2026-08-13 settings.json parses back to the snapshot…
         let data = serde_json::to_string(&v3_note_types()).expect("serializes");
         let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
         assert_eq!(parsed, v3_note_types());
-        // …and the canvas entry makes the upgrade a real change.
-        assert_ne!(v3_note_types(), default_note_types());
+        // …which is exactly what ships now: the canvas type came and went, and
+        // a file from before it needs no upgrade at all.
+        assert_eq!(v3_note_types(), default_note_types());
+        let mut s = Settings::default();
+        assert!(!upgrade_registry(&mut s));
+    }
+
+    /// The three canvas-era snapshots differ from today's registry by the
+    /// canvas entry alone, so each upgrades by losing exactly that entry.
+    fn upgrades_by_dropping_canvas(types: Vec<NoteType>) {
+        let data = serde_json::to_string(&types).expect("serializes");
+        let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
+        assert_eq!(parsed, types);
+        assert_ne!(types, default_note_types());
+        let without: Vec<NoteType> = types.iter().filter(|t| t.id != "canvas").cloned().collect();
+        assert_eq!(without, default_note_types());
+        let mut s = Settings {
+            note_types: types,
+            ..Settings::default()
+        };
+        assert!(upgrade_registry(&mut s));
+        assert_eq!(s.note_types, default_note_types());
     }
 
     #[test]
     fn v4_era_registry_round_trips_and_upgrades() {
-        // An untouched settings.json from the first canvas build parses back to
-        // the snapshot…
-        let data = serde_json::to_string(&v4_note_types()).expect("serializes");
-        let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
-        assert_eq!(parsed, v4_note_types());
-        // …and differs from today's only in what canvas declares, so the
-        // upgrade is exactly the feature and nothing else.
-        assert_ne!(v4_note_types(), default_note_types());
-        let strip = |types: Vec<NoteType>| {
-            types
-                .into_iter()
-                .map(|mut t| {
-                    t.features.clear();
-                    t
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(strip(v4_note_types()), strip(default_note_types()));
+        upgrades_by_dropping_canvas(v4_note_types());
     }
 
     #[test]
     fn v5_era_registry_round_trips_and_upgrades() {
-        // An untouched settings.json from the freeform-canvas build parses
-        // back to the snapshot…
-        let data = serde_json::to_string(&v5_note_types()).expect("serializes");
-        let parsed: Vec<NoteType> = serde_json::from_str(&data).expect("parses");
-        assert_eq!(parsed, v5_note_types());
-        // …and differs from today's only in what canvas declares, so the
-        // upgrade is exactly the `ink` feature and nothing else.
-        assert_ne!(v5_note_types(), default_note_types());
-        let strip = |types: Vec<NoteType>| {
-            types
-                .into_iter()
-                .map(|mut t| {
-                    t.features.clear();
-                    t
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(strip(v5_note_types()), strip(default_note_types()));
+        upgrades_by_dropping_canvas(v5_note_types());
     }
 
     #[test]
-    fn canvas_type_is_a_listed_note_that_takes_images_and_ink() {
+    fn v6_era_registry_round_trips_and_upgrades() {
+        upgrades_by_dropping_canvas(v6_note_types());
+    }
+
+    #[test]
+    fn a_hand_edited_registry_is_never_upgraded() {
+        let mut s = Settings::default();
+        s.note_types.push(NoteType {
+            id: "canvas".into(),
+            name: "My boards".into(),
+            extensions: vec!["canvas".into()],
+            view: "text".into(),
+            icon: None,
+            color: None,
+            features: Vec::new(),
+            listed: true,
+        });
+        let before = s.note_types.clone();
+        assert!(!upgrade_registry(&mut s));
+        assert_eq!(s.note_types, before);
+    }
+
+    #[test]
+    fn no_shipped_type_claims_canvas_files() {
         let s = Settings::default();
-        assert!(s.is_note("board.canvas"));
-        assert!(s.is_listed("board.canvas"));
-        assert_eq!(
-            s.type_for("board.canvas").map(|t| t.view.as_str()),
-            Some("canvas")
-        );
-        let features = s
-            .type_for("board.canvas")
-            .map(|t| t.features.clone())
-            .unwrap_or_default();
-        assert!(features.contains(&"images".to_string()));
-        assert!(features.contains(&"ink".to_string()));
+        assert!(!s.is_note("board.canvas"));
+        assert!(s.type_for("board.canvas").is_none());
     }
 }

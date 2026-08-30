@@ -410,14 +410,10 @@ interface SettingsProps {
   /** Registry type id "New note" creates; null means markdown. */
   defaultNoteType: string | null;
   onDefaultNoteTypeChange: (id: string | null) => void;
-  /** How a referenced non-markdown file opens from a canvas or map: false is
+  /** How a referenced non-markdown file opens from the project map: false is
    * the in-app read-only view, true the system default app. */
   openFilesExternally: boolean;
   onOpenFilesExternallyChange: (on: boolean) => void;
-  /** A canvas the window opens on at launch — set from the canvas itself, so
-   * this row only shows and clears it. */
-  openAtLaunch: string | null;
-  onClearOpenAtLaunch: () => void;
   /** Where to land on open — "shortcuts" scrolls to that table. */
   section: "top" | "shortcuts";
   onClose: () => void;
@@ -442,8 +438,6 @@ export function Settings({
   onDefaultNoteTypeChange,
   openFilesExternally,
   onOpenFilesExternallyChange,
-  openAtLaunch,
-  onClearOpenAtLaunch,
   section,
   onClose,
 }: SettingsProps) {
@@ -558,27 +552,11 @@ export function Settings({
                   </button>
                 </div>
                 <p className="settings-note">
-                  How double-clicking a file card that isn’t a note opens it. Markdown always opens
-                  in the app; images always open in the system viewer.
+                  How opening a file on the project map that isn’t a note works. Markdown always
+                  opens in the app; images always open in the system viewer.
                 </p>
               </td>
             </tr>
-            {openAtLaunch !== null && (
-              <tr>
-                <td>Opens at launch</td>
-                <td className="settings-path">
-                  {openAtLaunch}{" "}
-                  <button
-                    className="settings-edit"
-                    aria-label="Stop opening this canvas at launch"
-                    data-tip="Go back to reopening the last tab"
-                    onClick={() => onClearOpenAtLaunch()}
-                  >
-                    ✕
-                  </button>
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
         <h2>Storage</h2>

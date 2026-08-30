@@ -185,11 +185,6 @@ export const saveAsset = (bytes: Uint8Array, ext: string, note?: string | null) 
   });
 export const importAsset = (src: string, note?: string | null) =>
   invoke<string>("import_asset", { src, note: note ?? null });
-/** Overwrite an image file with the flattened annotation bytes; the previous
- * bytes go to the recycle bin first. The path rides in a header, so it must
- * survive the ASCII-only rule. */
-export const overwriteAsset = (path: string, bytes: Uint8Array) =>
-  invoke<void>("overwrite_asset", bytes, { headers: { path: encodeURIComponent(path) } });
 export const readNote = (name: string) => invoke<string>("read_note", { name });
 /** A referenced file's text for the read-only file view — any absolute path,
  * inside the corpus or out. Rejects binary or oversized files with the reason. */
@@ -339,9 +334,9 @@ export interface Settings {
   /** Registry type id "New note" creates; absent means markdown. Capture stays
    * markdown regardless — see `newCapture` in App. */
   defaultNoteType?: string | null;
-  /** A canvas the window opens on at launch, instead of the last active tab. */
-  openAtLaunch?: string | null;
-  /** Double-clicking a referenced non-markdown file on a canvas opens it with
+  /** Which layout the project map opens in; absent means constellation. */
+  mapView?: string | null;
+  /** Double-clicking a referenced non-markdown file on the map opens it with
    * the system default app instead of the in-app read-only view. */
   openFilesExternally?: boolean | null;
 }
@@ -366,10 +361,8 @@ export const setSummonHotkey = (hotkey: string) => invoke<void>("set_summon_hotk
 /** Which note type "New note" creates; null goes back to markdown. */
 export const setDefaultNoteType = (id: string | null) =>
   invoke<void>("set_default_note_type", { id });
-/** The canvas the window opens on at launch; null goes back to the last tab.
- * Rejects when the note isn't one the registry opens as a canvas. */
-export const setOpenAtLaunch = (note: string | null) =>
-  invoke<void>("set_open_at_launch", { note });
+/** Which layout the project map opens in — one preference for every map. */
+export const setMapView = (view: string) => invoke<void>("set_map_view", { view });
 /** Whether referenced non-markdown files open with the system default app
  * instead of the in-app read-only view. */
 export const setOpenFilesExternally = (on: boolean) =>

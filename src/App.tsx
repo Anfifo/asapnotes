@@ -6,7 +6,6 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm as confirmDialog, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ChangesView } from "./Changes";
-import { bumpAssetVersion, bustAsset } from "./assetVersions";
 import { changedNotes, SeenTarget } from "./changesLedger";
 import { DiffLens } from "./DiffLens";
 import { CloseConfirm } from "./CloseConfirm";
@@ -27,17 +26,17 @@ import {
 } from "./paths";
 import { AppActionId, bindingTable, chordFor, chordOfEvent, DEFAULT_SUMMON } from "./keybinds";
 import { About } from "./About";
-import type { Camera, CanvasHandle, NodeTarget } from "./canvas/BoardView";
+import type { MapGraph, MapNode } from "./map/graph";
+import type { Camera } from "./map/MapView";
+import { DEFAULT_VIEW, isViewKind, VIEW_KINDS, VIEW_LABELS, type ViewKind } from "./map/viewKinds";
 import { FileIcon } from "./fileIcons";
 import {
   colorOf,
   extOfType,
-  extOfView,
   featuresOf,
   hasFeature,
   iconOf,
   isNoteFile,
-  markdownFeatures,
   noteTypeOf,
   setNoteTypes,
   viewOf,
@@ -53,7 +52,6 @@ import { ToastStack } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { WelcomePanel, type WelcomeRecent } from "./WelcomePanel";
 import { errText, useToasts } from "./toasts";
-import { policyOf } from "./views";
 import * as api from "./notes";
 import "./App.css";
 
@@ -65,13 +63,13 @@ interface OpenNote {
 }
 
 // Loaded on demand, never at startup: summon latency is the product, and the
-// canvas module is only fetched when the first board actually renders.
-const BoardView = lazy(() => import("./canvas/BoardView"));
+// map module is only fetched when the first map actually renders.
+const MapView = lazy(() => import("./map/MapView"));
 
 const AUTOSAVE_MS = 500;
 
 // A lens is a read-only tab over something computed rather than edited. All
-// four below share one idiom: never persisted or drafted, at most one tab of
+// three below share one idiom: never persisted or drafted, at most one tab of
 // that kind, retargeted rather than stacked by the next open, and a `<kind>:`
 // id prefix that cannot collide with a note id because ':' is not a legal
 // filename character here. Each comment below records only what its lens
@@ -83,32 +81,19 @@ const isDiffTab = (id: string) => id.startsWith(DIFF_PREFIX);
 /** The note a lens tab reads. */
 const diffNoteOf = (id: string) => id.slice(DIFF_PREFIX.length);
 
-// Map: the project's notes and the references between them, laid out through
-// the canvas engine with editing disabled, recomputed on every open.
+// Map: the project's notes and the references between them, computed on every
+// open and laid out by the map view.
 const MAP_PREFIX = "map:";
 const isMapTab = (id: string) => id.startsWith(MAP_PREFIX);
 /** The project a map tab shows. */
 const mapProjectOf = (id: string) => id.slice(MAP_PREFIX.length);
 
-// File: any real file a card points at, shown as plain text — inside the
+// File: any real file the map points at, shown as plain text — inside the
 // corpus or out. Closes silently, since there is nothing to lose.
 const FILE_PREFIX = "file:";
 const isFileTab = (id: string) => id.startsWith(FILE_PREFIX);
 /** The absolute path (forward slashes) a file tab shows. */
 const filePathOf = (id: string) => id.slice(FILE_PREFIX.length);
-
-// Annotate: one image drawn on, through the canvas engine with layout locked
-// and the ink tools live. The exception to the idiom — closing asks when
-// strokes are unflattened, because unlike the computed lenses this holds real
-// user work.
-const ANNOTATE_PREFIX = "annotate:";
-const isAnnotateTab = (id: string) => id.startsWith(ANNOTATE_PREFIX);
-/** The absolute image path (forward slashes) an annotate tab draws on. */
-const annotatePathOf = (id: string) => id.slice(ANNOTATE_PREFIX.length);
-/** Image formats the flatten can write back — the webview both decodes and
- * encodes these. Gif would silently lose animation, svg its vectors, bmp has
- * no encoder; all three refuse with the reason instead. */
-const ANNOTATABLE = /\.(png|jpe?g|webp)$/i;
 
 const EXPLORER_DEFAULT_W = 224;
 const EXPLORER_MIN_W = 168;
@@ -262,13 +247,6 @@ type Entry = NoteEntry | CommandEntry;
  * honest and Ctrl+S recreates the file. */
 const draftName = (id: string) => (/^untitled-\d+\.[a-z0-9]+$/i.test(fileOf(id)) ? null : id);
 
-/** Extension of a note id, without the dot; markdown when it carries none. */
-const extOf = (id: string) => {
-  const file = fileOf(id);
-  const dot = file.lastIndexOf(".");
-  return dot > 0 ? file.slice(dot + 1) : "md";
-};
-
 /** `<base>.<ext>`, numbered until the name is free. */
 function uniqueName(base: string, ext: string, taken: Set<string>): string {
   let name = `${base}.${ext}`;
@@ -313,8 +291,7 @@ function App() {
   const [tabs, setTabs] = useState<OpenNote[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("tabs") ?? "[]") as OpenNote[];
-      // Lens tabs (diff, map, file, annotate) are session-temporary and never
-      // restored.
+      // Lens tabs (diff, map, file) are session-temporary and never restored.
       return Array.isArray(stored)
         ? stored.filter(
             (t) =>
@@ -322,8 +299,7 @@ function App() {
               typeof t.id === "string" &&
               !isDiffTab(t.id) &&
               !isMapTab(t.id) &&
-              !isFileTab(t.id) &&
-              !isAnnotateTab(t.id),
+              !isFileTab(t.id),
           )
         : [];
     } catch {
@@ -332,10 +308,10 @@ function App() {
   });
   const [docKey, setDocKey] = useState("");
   const [initialDoc, setInitialDoc] = useState("");
-  // The open map tab's computed document; null while the notes are being
-  // read. Its own state, not `initialDoc` — the map is a lens, and the note
-  // plumbing (drafts, saves, baselines) must never see its content.
-  const [mapDoc, setMapDoc] = useState<{ key: string; text: string } | null>(null);
+  // The open map tab's computed graph; null while the notes are being read.
+  // Its own state, not `initialDoc` — the map is a lens, and the note plumbing
+  // (drafts, saves, baselines) must never see it.
+  const [mapGraph, setMapGraph] = useState<{ key: string; graph: MapGraph } | null>(null);
   // What the open file lens shows: the text, or the reason it can't be shown
   // (binary, huge, gone). Keyed by tab id so a stale read is dropped.
   const [fileDoc, setFileDoc] = useState<{
@@ -343,21 +319,6 @@ function App() {
     text: string | null;
     error: string | null;
   } | null>(null);
-  // The annotation lens's document: computed at open (one image node at the
-  // image's natural pixels) and then owned by the surface — the note plumbing
-  // never sees it. `key` remounts the surface (fresh open, and after a save
-  // clears the flattened strokes).
-  const [annoDoc, setAnnoDoc] = useState<{ id: string; key: string; text: string } | null>(null);
-  // The session's latest serialized state, written on every stroke commit —
-  // a ref, so drawing never re-renders the app. `base` is what a save would
-  // make redundant; the close guard compares the two.
-  const annoRef = useRef<{ id: string; text: string; base: string } | null>(null);
-  // Mirror of "the session holds unflattened strokes", as state so the tab
-  // can wear the unsaved dot (updated per stroke commit, not per frame).
-  const [annoDirty, setAnnoDirty] = useState(false);
-  // Where the drawing started: the tab that was open when the image was
-  // double-clicked, so closing the lens lands back on it.
-  const annoOriginRef = useRef<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [paletteOpen, setPaletteOpen] = useState<"notes" | "commands" | null>(null);
@@ -427,9 +388,9 @@ function App() {
   // gets an inline input row in the tree, Enter creates the file — or, with
   // kind "folder", a real directory.
   const [explorerCreate, setExplorerCreate] = useState<string | null>(null);
-  const [explorerCreateKind, setExplorerCreateKind] = useState<
-    "note" | "canvas" | "folder" | "virtual"
-  >("note");
+  const [explorerCreateKind, setExplorerCreateKind] = useState<"note" | "folder" | "virtual">(
+    "note",
+  );
   // Folders created this session that hold no note yet: the explorer tree
   // derives from note files, so these are remembered to stay visible.
   const [newFolders, setNewFolders] = useState<string[]>([]);
@@ -446,12 +407,12 @@ function App() {
     bindingsRef.current = bindingTable(keybinds);
   }, [keybinds]);
   const [summonHotkey, setSummonHotkeyState] = useState(DEFAULT_SUMMON);
-  // Which format "New note" creates, and the canvas (if any) the window opens
-  // on at launch. Both null until settings load, which is markdown and
-  // last-active-tab — the shipped behavior.
+  // Which format "New note" creates. Null until settings load, which is
+  // markdown — the shipped behavior.
   const [defaultNoteType, setDefaultNoteTypeState] = useState<string | null>(null);
-  const [openAtLaunch, setOpenAtLaunchState] = useState<string | null>(null);
-  // Double-clicking a non-markdown file card: false opens the in-app
+  // Which layout the project map opens in — one preference for every map.
+  const [mapView, setMapViewState] = useState<ViewKind>(DEFAULT_VIEW);
+  // Double-clicking a non-markdown file on the map: false opens the in-app
   // read-only view, true hands it to the system default app.
   const [openFilesExternally, setOpenFilesExternallyState] = useState(false);
   const defaultExtRef = useRef("md");
@@ -482,18 +443,11 @@ function App() {
   const [welcome, setWelcome] = useState(false);
 
   const editorRef = useRef<EditorHandle>(null);
-  /** Where each project's map was last left, keyed by its tab id. The lens
-   * recomputes on every activation and so remounts, which would otherwise
-   * throw you back to the fitted view every time you glance at a note. */
+  /** Where each project's map was last left, keyed by tab id and view: the
+   * map recomputes on every activation, which would otherwise reset the camera
+   * to the fitted view on every tab switch, and each layout has a camera of
+   * its own. */
   const mapCamRef = useRef(new Map<string, Camera>());
-  const rememberMapCam = useCallback((cam: Camera) => {
-    const cur = openRef.current;
-    if (cur && isMapTab(cur.id)) mapCamRef.current.set(cur.id, cam);
-  }, []);
-
-  // The canvas surface, for the one thing it can't listen for itself: files
-  // dropped on the window arrive as paths at the app level.
-  const canvasRef = useRef<CanvasHandle>(null);
   const contentRef = useRef("");
   const openRef = useRef<OpenNote | null>(null);
   openRef.current = open;
@@ -518,12 +472,6 @@ function App() {
   rootPathRef.current = rootPath;
   const noteDirRef = useRef("");
   const autosaveTimer = useRef<number | null>(null);
-  /** Autosave stood down for the open note: its file changed on disk behind
-   * the buffer, and resolving that needs the user. Cleared when a doc opens. */
-  const autosaveOffRef = useRef(false);
-  /** `save` in its silent form — held in a ref because the change handler is
-   * defined before it and must not depend on its identity. */
-  const autoSaveRef = useRef<() => Promise<void>>(async () => {});
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   const dirtyRef = useRef(dirty);
@@ -656,27 +604,12 @@ function App() {
     return false;
   };
 
-  /** Does the open buffer write its own file, rather than waiting for Ctrl+S?
-   * A view whose policy says so (canvas), once it has a file to write — an
-   * unnamed note keeps the draft path, because autosave keeps a file in sync
-   * and never invents one the user hasn't named. Suspended by an external
-   * change, so a conflict can't be resolved silently. */
-  const autoPersists = () => {
-    const cur = openRef.current;
-    if (!cur || cur.name === null || isDiffTab(cur.id)) return false;
-    return policyOf(viewOf(cur.id)).persist === "auto" && !autosaveOffRef.current;
-  };
-
   /** Write a pending (debounced) change immediately — called before switching
    * away, hiding, or closing, so nothing is left sitting in a timer. */
   const flushDraft = useCallback(async () => {
     if (!cancelAutosave()) return;
     const cur = openRef.current;
     if (!cur) return;
-    if (autoPersists()) {
-      await autoSaveRef.current();
-      return;
-    }
     await api.writeDraft(cur.id, contentRef.current);
     upsertDraft(cur.id);
   }, []);
@@ -694,10 +627,6 @@ function App() {
       autosaveTimer.current = null;
       const cur = openRef.current;
       if (!cur) return;
-      if (autoPersists()) {
-        void autoSaveRef.current();
-        return;
-      }
       void api.writeDraft(cur.id, doc);
       upsertDraft(cur.id);
     }, AUTOSAVE_MS);
@@ -709,9 +638,6 @@ function App() {
       // Dirty on arrival means the content came from a draft, not the file —
       // no baseline to compare a close against.
       baselineRef.current = isDirty ? null : content;
-      // A stand-down belongs to the doc that hit the conflict, not to the tab
-      // that opens next.
-      autosaveOffRef.current = false;
       setOpen(note);
       setWelcome(false);
       setTabs((ts) =>
@@ -746,21 +672,15 @@ function App() {
   );
 
   /** Capture: the blank note a summon, a startup with nothing to restore, or a
-   * closed last tab lands in. Always markdown — capture means "type now", and
-   * that is not a thing a canvas does, whatever the default-format setting
-   * says. The deliberate verbs go through `newNote`. */
+   * closed last tab lands in. Always markdown — capture means "type now",
+   * whatever the default-format setting says. The deliberate verbs go through
+   * `newNote`. */
   const newCapture = useCallback((project?: string | null) => newDoc(project, "md"), [newDoc]);
 
-  /** The "New note" verb: the extension comes from the default note type, so a
-   * user who works in canvases gets one from the File menu, the palette and the
-   * explorer alike. */
+  /** The "New note" verb: the extension comes from the default note type, the
+   * same from the File menu, the palette and the explorer alike. */
   const newNote = useCallback(
     (project?: string | null) => newDoc(project, defaultExtRef.current),
-    [newDoc],
-  );
-
-  const newCanvas = useCallback(
-    (project?: string | null) => newDoc(project, extOfView("canvas") ?? "canvas"),
     [newDoc],
   );
 
@@ -913,10 +833,10 @@ function App() {
   }, []);
 
   /** Open a project's map: its markdown notes read and laid out fresh, so the
-   * view can never be stale. The tab appears at once and the document lands
-   * when the notes have been read; a stale compute (another tab took over
-   * meanwhile) is dropped. The compute module loads on demand, like the
-   * canvas view itself — a summon never pays for it. */
+   * view can never be stale. The tab appears at once and the graph lands when
+   * the notes have been read; a stale compute (another tab took over
+   * meanwhile) is dropped. The compute module loads on demand, like the map
+   * view itself — a summon never pays for it. */
   const openMapTab = useCallback(
     async (project: string) => {
       await flushDraft();
@@ -934,30 +854,32 @@ function App() {
       setMode("edit");
       setPaletteOpen(null);
       trackMtime(null);
-      setMapDoc(null);
-      const { computeProjectMap } = await import("./canvas/projectMap");
+      setMapGraph(null);
+      const { computeGraph } = await import("./map/graph");
       // Listed fresh from disk, not from state: a recompute can follow a
       // deletion by less than a render, and a computed view must trust the
       // disk over a ref that hasn't caught up.
-      const noteIds = (await api.listNotes())
+      const listed = await api.listNotes();
+      const names = new Set(listed.map((n) => n.name));
+      const noteIds = listed
         .map((n) => n.name)
         .filter((name) => projectOf(name) === project && viewOf(name) === "markdown");
-      const text = await computeProjectMap(project, {
+      const graph = await computeGraph(project, {
         projectDir: projectDirOf(project),
         noteIds,
         readNote: api.readNote,
         noteDirOf,
         noteIdOf,
+        hasNote: (name) => names.has(name),
       });
-      if (openRef.current?.id === id) setMapDoc({ key: `${id}@${Date.now()}`, text });
+      if (openRef.current?.id === id) setMapGraph({ key: `${id}@${Date.now()}`, graph });
     },
     [flushDraft, trackMtime, projectDirOf, noteDirOf, noteIdOf],
   );
 
-  /** Open a referenced file read-only: any real file a canvas or map points
-   * at, corpus or not. The tab appears at once; the text lands when the read
-   * does — or the reason it can't be shown, with "Open externally" still on
-   * offer. */
+  /** Open a referenced file read-only: any real file the map points at,
+   * corpus or not. The tab appears at once; the text lands when the read does
+   * — or the reason it can't be shown, with "Open externally" still on offer. */
   const openFileTab = useCallback(
     async (abs: string) => {
       await flushDraft();
@@ -984,124 +906,6 @@ function App() {
       }
     },
     [flushDraft, trackMtime],
-  );
-
-  /** Open an image to be drawn on. The document is computed before the tab
-   * appears (the size read is a local decode — there is nothing slow to show
-   * a placeholder for), and re-activating the tab keeps the session's
-   * strokes: unlike the computed lenses there is real user work here, so
-   * nothing recomputes. */
-  const openAnnotateTab = useCallback(
-    async (abs: string) => {
-      const id = `${ANNOTATE_PREFIX}${abs}`;
-      // Retargeting the one annotate tab closes the previous session — which
-      // must ask first when it holds strokes a save hasn't flattened yet.
-      const prev = annoRef.current;
-      if (prev && prev.id !== id && prev.text !== prev.base) {
-        const ok = await confirmDialog(
-          `Close without saving the drawing on ${fileOf(annotatePathOf(prev.id))}?`,
-          { title: "Unsaved drawing", kind: "warning" },
-        );
-        if (!ok) return;
-        annoRef.current = null;
-      }
-      let text = annoRef.current?.id === id ? annoRef.current.text : null;
-      if (text === null) {
-        const { annotateDocFor, imageNaturalSize } = await import("./canvas/annotate");
-        const size = await imageNaturalSize(bustAsset(abs, convertFileSrc(abs)));
-        if (!size) {
-          toast(`Couldn't read ${fileOf(abs)} — is the file still there?`);
-          return;
-        }
-        text = annotateDocFor(fileOf(abs), size.width, size.height);
-        annoRef.current = { id, text, base: text };
-      }
-      await flushDraft();
-      // Remember where the drawing started, so closing the lens lands back
-      // there. Opening from the lens itself (a retarget) keeps the original.
-      const from = openRef.current?.id;
-      if (from && !isAnnotateTab(from)) annoOriginRef.current = from;
-      const tab = { id, name: null };
-      contentRef.current = "";
-      setOpen(tab);
-      setWelcome(false);
-      setTabs((ts) => {
-        const at = ts.findIndex((t) => isAnnotateTab(t.id));
-        if (at < 0) return [...ts, tab];
-        return ts[at].id === id ? ts : ts.map((t, i) => (i === at ? tab : t));
-      });
-      setDirty(false);
-      setMode("edit");
-      setPaletteOpen(null);
-      trackMtime(null);
-      setAnnoDirty(annoRef.current !== null && annoRef.current.text !== annoRef.current.base);
-      setAnnoDoc({ id, key: `${id}@${Date.now()}`, text });
-    },
-    [flushDraft, trackMtime, toast],
-  );
-
-  /** An image link in the open note, asked to be drawn on: resolve it to a
-   * real local image and open the annotation lens. */
-  const openImageAnnotate = useCallback(
-    (src: string) => {
-      const winAbs = /^[a-z]:[\\/]/i.test(src);
-      if (!winAbs && /^[a-z][a-z0-9+.-]*:/i.test(src)) {
-        toast("Only images on this machine can be drawn on.");
-        return;
-      }
-      const abs = winAbs ? src.replace(/\\/g, "/") : resolvePath(noteDirRef.current, src);
-      if (!ANNOTATABLE.test(abs)) {
-        toast("Drawing needs a png, jpg or webp image — this file would lose data.");
-        return;
-      }
-      void openAnnotateTab(abs);
-    },
-    [openAnnotateTab, toast],
-  );
-
-  /** "Save into image" on the annotation lens (the bar verb, Ctrl+S, and the
-   * close prompt's Save all land here): rasterize the strokes into the image
-   * at its natural resolution and overwrite the file — the recycle bin keeps
-   * the previous bytes. The flattened strokes then leave the document (they
-   * are pixels now; an eraser could no longer take them back), which
-   * remounts the surface with a fresh journal. Resolves true when the tab's
-   * drawing is safe in the file — saved now, or nothing to save. */
-  const saveAnnotation = useCallback(
-    async (id: string): Promise<boolean> => {
-      const a = annoRef.current;
-      if (!a || a.id !== id) return true; // no session — nothing at risk
-      if (a.text === a.base) return true; // nothing drawn since the last save
-      const abs = annotatePathOf(id);
-      const ext = (/\.([a-z0-9]+)$/i.exec(abs)?.[1] ?? "png").toLowerCase();
-      const mime =
-        ext === "jpg" || ext === "jpeg"
-          ? "image/jpeg"
-          : ext === "webp"
-            ? "image/webp"
-            : "image/png";
-      const mod = await import("./canvas/annotate");
-      try {
-        const bytes = await mod.flattenAnnotation({
-          doc: a.text,
-          imageUrl: bustAsset(abs, convertFileSrc(abs)),
-          mime,
-          ink: getComputedStyle(document.documentElement).color,
-        });
-        await api.overwriteAsset(winPath(abs), bytes);
-      } catch (err) {
-        toast(`Couldn't save into the image — ${errText(err)}`);
-        return false;
-      }
-      bumpAssetVersion(abs);
-      const cleared = mod.withoutInk(a.text);
-      a.text = cleared;
-      a.base = cleared;
-      setAnnoDirty(false);
-      setAnnoDoc((d) => (d && d.id === id ? { id, key: `${id}@${Date.now()}`, text: cleared } : d));
-      toast(`Saved into ${fileOf(abs)} — the old version is in the recycle bin`);
-      return true;
-    },
-    [toast],
   );
 
   /** Follow a Ctrl+Clicked editor target: URLs → browser; paths resolving to
@@ -1154,15 +958,9 @@ function App() {
   }, [docKey]);
 
   const save = useCallback(
-    async (asName?: string, silent = false) => {
+    async (asName?: string) => {
       const cur = openRef.current;
       if (!cur || isDiffTab(cur.id)) return null;
-      // Ctrl+S on the annotation lens means the one thing it can mean there:
-      // flatten the drawing into the image.
-      if (isAnnotateTab(cur.id)) {
-        if (!silent) await saveAnnotation(cur.id);
-        return null;
-      }
       cancelAutosave();
       const doc = contentRef.current;
       if (!cur.name && !asName && doc.trim() === "") return null;
@@ -1170,31 +968,13 @@ function App() {
       if (!name) {
         const project = projectOf(cur.id);
         const taken = new Set(notesRef.current.map((n) => n.name.toLowerCase()));
-        // A document whose text can't name itself (a canvas is JSON) takes its
-        // view's base name instead of a first line reading "{".
-        const base = policyOf(viewOf(cur.id)).nameBase;
-        const prefix = project ? `${project}/` : "";
-        name = base
-          ? uniqueName(`${prefix}${base}`, extOf(cur.id), taken)
-          : deriveName(doc, prefix, taken);
+        name = deriveName(doc, project ? `${project}/` : "", taken);
       }
       // External-change guard: the file is shared with other tools by design —
       // if it changed on disk since this buffer loaded, never overwrite silently.
       if (cur.name && openMtimeRef.current !== null) {
         const now = await api.noteMtime(cur.name).catch(() => null);
         if (now !== null && now !== openMtimeRef.current) {
-          // An autosave cannot ask, and must not decide: it stands down, says
-          // so once, and leaves a draft holding the edits until an explicit
-          // Ctrl+S resolves the conflict through the prompt below.
-          if (silent) {
-            autosaveOffRef.current = true;
-            await api.writeDraft(cur.id, doc);
-            upsertDraft(cur.id);
-            toast(
-              `"${fileOf(cur.name)}" changed on disk — this canvas stopped saving itself. Ctrl+S to overwrite.`,
-            );
-            return null;
-          }
           const ok = await confirmDialog(
             `"${fileOf(cur.name)}" changed on disk since you opened it. Overwrite those changes?`,
             { title: "Note changed on disk", kind: "warning" },
@@ -1203,7 +983,6 @@ function App() {
         }
       }
       await api.saveNote(name, doc);
-      autosaveOffRef.current = false;
       baselineRef.current = doc;
       mtimeTokenRef.current++; // invalidate any in-flight track
       openMtimeRef.current = (await api.noteMtime(name).catch(() => null)) ?? null;
@@ -1213,40 +992,19 @@ function App() {
       }
       if (cur.id !== name) retagOpen(cur.id, { id: name, name });
       setDirty(false);
-      // A silent save runs every few seconds; walking the whole corpus each
-      // time would be the cost of a drag. Only a file that wasn't listed yet
-      // changes what the explorer shows.
-      if (!silent || !notesRef.current.some((n) => n.name === name)) {
-        setNotes(await api.listNotes());
-      }
+      setNotes(await api.listNotes());
       // The id the note now lives under — callers that close after saving
       // need it, since an untitled tab changed identity on the way.
       return name;
     },
-    [retagOpen, saveAnnotation, toast],
+    [retagOpen],
   );
-
-  autoSaveRef.current = async () => {
-    await save(undefined, true).catch((err: unknown) => {
-      // Stop retrying every keystroke against a folder that isn't there.
-      autosaveOffRef.current = true;
-      toast(`Couldn't save this canvas — ${errText(err)}`);
-      return null;
-    });
-  };
 
   /** Move the open note (or retarget the open untitled draft) to a project. */
   const changeProject = useCallback(
     async (target: string | null) => {
       const cur = openRef.current;
-      if (
-        !cur ||
-        isDiffTab(cur.id) ||
-        isMapTab(cur.id) ||
-        isFileTab(cur.id) ||
-        isAnnotateTab(cur.id)
-      )
-        return;
+      if (!cur || isDiffTab(cur.id) || isMapTab(cur.id) || isFileTab(cur.id)) return;
       if (target === projectOf(cur.id)) return;
       const newId = (target ? `${target}/` : "") + fileOf(cur.id);
       if (cur.name) {
@@ -1288,7 +1046,7 @@ function App() {
   const imageIn = useCallback((dir: string, src: string) => {
     if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return src;
     const abs = resolvePath(dir, src);
-    return bustAsset(abs, convertFileSrc(abs));
+    return convertFileSrc(abs);
   }, []);
 
   /** The open note's own images — what the editor and the preview render. */
@@ -1346,33 +1104,6 @@ function App() {
     [assetLink, toast],
   );
 
-  /** Copy an image already on disk into the open note's assets folder, and hand
-   * back the path a canvas node should store. */
-  const importImage = useCallback(
-    async (path: string): Promise<string | null> => {
-      try {
-        return assetLink(await api.importAsset(path, openRef.current?.id ?? null));
-      } catch (err) {
-        toast(`Couldn't import that image — ${errText(err)}`);
-        return null;
-      }
-    },
-    [assetLink, toast],
-  );
-
-  /** "Add image" on a canvas: pick files, copy them in, hand back node paths. */
-  const pickImages = useCallback(async (): Promise<string[]> => {
-    const picked = await openFolderDialog({
-      multiple: true,
-      filters: [
-        { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] },
-      ],
-    }).catch(() => null);
-    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
-    const imported = await Promise.all(paths.map((p) => importImage(p)));
-    return imported.filter((f): f is string => f !== null);
-  }, [importImage]);
-
   /** Adopt a settings document: the note-type registry, project locations, and
    * appearance — the file is the source of truth, so it wins over the boot
    * mirror the first paint read. */
@@ -1427,7 +1158,7 @@ function App() {
       setKeybindsState(settings.keybinds ?? {});
       setSummonHotkeyState(settings.summonHotkey ?? DEFAULT_SUMMON);
       setDefaultNoteTypeState(settings.defaultNoteType ?? null);
-      setOpenAtLaunchState(settings.openAtLaunch ?? null);
+      setMapViewState(isViewKind(settings.mapView) ? settings.mapView : DEFAULT_VIEW);
       setOpenFilesExternallyState(settings.openFilesExternally ?? false);
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
@@ -1435,21 +1166,16 @@ function App() {
     [applyZoom, toast],
   );
 
-  /** Which canvas the window opens on at launch (null = the last active tab). */
-  const setLaunchCanvas = useCallback(
-    (note: string | null) => {
-      setOpenAtLaunchState(note);
+  /** Which layout the project map opens in. The view switches at once; the
+   * setting follows, and a failed write says so without switching back. */
+  const setMapView = useCallback(
+    (view: ViewKind) => {
+      setMapViewState(view);
       void api
-        .setOpenAtLaunch(note)
-        .then(() =>
-          toast(note ? `"${fileOf(note)}" will open at launch` : "Launch opens the last tab again"),
-        )
-        .catch((err: unknown) => {
-          setOpenAtLaunchState(openAtLaunch);
-          toast(`Couldn't save that setting — ${errText(err)}`);
-        });
+        .setMapView(view)
+        .catch((err: unknown) => toast(`Couldn't save that setting — ${errText(err)}`));
     },
-    [openAtLaunch, toast],
+    [toast],
   );
 
   /** Which format "New note" creates. */
@@ -1464,8 +1190,8 @@ function App() {
     [defaultNoteType, toast],
   );
 
-  /** How a referenced non-markdown file opens from a canvas or map: the
-   * in-app read-only view, or the system default app. */
+  /** How a referenced non-markdown file opens from the map: the in-app
+   * read-only view, or the system default app. */
   const setOpenFilesExternally = useCallback(
     (on: boolean) => {
       setOpenFilesExternallyState(on);
@@ -1608,17 +1334,6 @@ function App() {
         // Same reasoning for the changes scan: it reads only what changed, but
         // the first paint shouldn't wait for even that.
         refreshChanges();
-        // A chosen launch canvas outranks the restored tab — but only after the
-        // first frame: the canvas module is a dynamic import, and awaiting it
-        // here would put a chunk fetch and a JSON parse in front of the first
-        // paint. So the tab paints from the restore path below, and this hands
-        // over on the next frame; nothing is loaded before something is on screen.
-        const launch = cfg.settings.openAtLaunch ?? null;
-        if (launch && ns.some((n) => n.name === launch)) {
-          requestAnimationFrame(() => {
-            void openItem({ id: launch, isNote: true }, new Set(ds.map((d) => d.name)));
-          });
-        }
         // Restored tabs win: reopen the last active one (content loads here, the
         // rest stay lazy). A tab whose note vanished is dropped and we fall back.
         const restored = tabsRef.current;
@@ -1658,9 +1373,6 @@ function App() {
         showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
       }
     })();
-    // Runs once at launch; `openItem` is stable but naming it as a dependency
-    // would re-run the whole startup sequence when its identity changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDoc, applySettings, applyProjects, refreshChanges, toast]);
 
   // Tabs (and which one is active) survive restarts — diff tabs excepted,
@@ -1668,21 +1380,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       "tabs",
-      JSON.stringify(
-        tabs.filter(
-          (t) => !isDiffTab(t.id) && !isMapTab(t.id) && !isFileTab(t.id) && !isAnnotateTab(t.id),
-        ),
-      ),
+      JSON.stringify(tabs.filter((t) => !isDiffTab(t.id) && !isMapTab(t.id) && !isFileTab(t.id))),
     );
   }, [tabs]);
   useEffect(() => {
-    if (
-      open &&
-      !isDiffTab(open.id) &&
-      !isMapTab(open.id) &&
-      !isFileTab(open.id) &&
-      !isAnnotateTab(open.id)
-    )
+    if (open && !isDiffTab(open.id) && !isMapTab(open.id) && !isFileTab(open.id))
       localStorage.setItem("activeTab", open.id);
   }, [open]);
 
@@ -1705,22 +1407,6 @@ function App() {
       if (!cur || !hasFeature(cur.id, "images")) return;
       const images = event.payload.paths.filter((p) => IMAGE_FILE.test(p));
       if (images.length === 0) return;
-      // On a canvas a dropped picture is a node, and it belongs where it was
-      // let go. The position arrives in physical pixels: the window's scale
-      // factor takes it to logical, and the webview zoom to the CSS pixels the
-      // surface measures itself in.
-      if (viewOf(cur.id) === "canvas") {
-        const scale = await getCurrentWindow()
-          .scaleFactor()
-          .catch(() => 1);
-        const divisor = scale * (zoomRef.current || 1);
-        canvasRef.current?.dropImages(
-          images,
-          event.payload.position.x / divisor,
-          event.payload.position.y / divisor,
-        );
-        return;
-      }
       for (const path of images) {
         try {
           const rel = await api.importAsset(path, cur.id);
@@ -1879,14 +1565,9 @@ function App() {
         if (undoSeen(key === "y" || e.shiftKey)) e.preventDefault();
       }
     } else if (e.key === "Escape") {
-      if (
-        document.querySelector(".menu-drop") ||
-        document.querySelector(".board-picker") ||
-        document.querySelector(".board-editing")
-      ) {
-        // An open menubar dropdown, context menu, canvas picker, or focused
-        // text block on a canvas owns Esc — Esc there means "leave this", not
-        // "hide the window".
+      if (document.querySelector(".menu-drop")) {
+        // An open menubar dropdown or context menu owns Esc — Esc there means
+        // "leave this", not "hide the window".
       } else if (renaming) {
         setRenaming(false);
         editorRef.current?.focus();
@@ -2080,15 +1761,11 @@ function App() {
   // the pre-startup instant keeps the chrome (something markdown is about to
   // open, and hiding it would flash), the welcome panel drops it.
   const diffOpen = open !== null && isDiffTab(open.id);
-  // The open tab is the computed project map: the board view renders it with
-  // editing disabled.
+  // The open tab is the computed project map.
   const mapOpen = open !== null && isMapTab(open.id);
   // The open tab is the read-only file view of a referenced file.
   const fileOpen = open !== null && isFileTab(open.id);
-  const annotateOpen = open !== null && isAnnotateTab(open.id);
-  const lensOpen = diffOpen || mapOpen || fileOpen || annotateOpen;
-  // The open tab is a canvas: the board view renders instead of the editor.
-  const canvasOpen = open !== null && !lensOpen && viewOf(open.id) === "canvas";
+  const lensOpen = diffOpen || mapOpen || fileOpen;
   const canPreview = open ? !lensOpen && hasFeature(open.id, "preview") : !welcome;
   const canFormat = open ? !lensOpen && hasFeature(open.id, "format") : !welcome;
   // The open note's real directory (for resolving relative image links).
@@ -2110,56 +1787,10 @@ function App() {
   const noteDir = open && !lensOpen ? noteDirOf(open.id) : rootPath;
   noteDirRef.current = noteDir;
 
-  // Canvas plumbing: a node's `file` is a path relative to the canvas's own
-  // folder (the same rule mention links follow), with the bare note id as the
-  // recorded fallback for targets a relative path can't reach (other drive).
-  // The map resolves against the project root — its computed paths are
-  // written relative to it, so a map saved there resolves unchanged.
-  const boardDir = canvasOpen
-    ? noteDir
-    : mapOpen && open
-      ? projectDirOf(mapProjectOf(open.id))
-      : null;
-  const boardProject = canvasOpen && open ? projectOf(open.id) : null;
-  /** A project's `board.canvas` leads with note cards; every other canvas
-   * leads with text and images. Same format, same surface — only the order of
-   * the verbs differs, and neither refuses the other's nodes. */
-  const canvasRole = open && fileOf(open.id) === "board.canvas" ? "board" : "canvas";
-  /** What a node's path points at. The spec has no image node — an image is a
-   * file node — so this is also where a card learns what it is showing. */
-  const resolveBoardTarget = (file: string): NodeTarget => {
-    const none: NodeTarget = { kind: "missing", id: null, url: null, modifiedMs: 0 };
-    if (!boardDir) return none;
-    const abs = resolvePath(boardDir, file);
-    // Extension first: an image is never a note, but it does resolve to an id
-    // when it sits under the notes root, which would read as a missing note.
-    if (IMAGE_FILE.test(file))
-      return { kind: "image", id: null, url: bustAsset(abs, convertFileSrc(abs)), modifiedMs: 0 };
-    let id = noteIdOf(abs);
-    if (!id && noteNames.has(file)) id = file;
-    if (id === null) return { kind: "file", id: null, url: null, modifiedMs: 0 };
-    // Under a base but not listed: a note-shaped path with nothing behind it
-    // is missing; anything else is a real file the corpus doesn't own (code,
-    // data — a map is full of them), which "missing" would wrongly dim.
-    if (!noteNames.has(id))
-      return isNoteFile(id)
-        ? { ...none, id }
-        : { kind: "file", id: null, url: null, modifiedMs: 0 };
-    return {
-      kind: "note",
-      id,
-      url: null,
-      // The card excerpt's cache key — a changed note re-reads its excerpt.
-      modifiedMs: notes.find((n) => n.name === id)?.modified_ms ?? 0,
-    };
-  };
-  /** Double-click on a file card that isn't a note: markdown always opens in
+  /** Opening a file on the map that isn't a note: markdown always opens in
    * the in-app read-only view; images are never text, so always the system
    * viewer; everything else follows the setting. */
-  const openBoardFile = (file: string) => {
-    const abs = /^[a-z]:[\\/]/i.test(file)
-      ? file.replace(/\\/g, "/")
-      : resolvePath(boardDir ?? noteDirRef.current, file);
+  const openMapFile = (abs: string) => {
     if (IMAGE_FILE.test(abs) || (openFilesExternally && !/\.md$/i.test(abs))) {
       void api
         .openExternal(winPath(abs))
@@ -2169,59 +1800,8 @@ function App() {
     void openFileTab(abs);
   };
 
-  /** Text a board card shows under the note's name; null when the target has
-   * none to offer (unreadable, or itself a canvas). */
-  const boardExcerpt = async (id: string): Promise<string | null> => {
-    if (viewOf(id) === "canvas") return null;
-    try {
-      return (await api.readNote(id)).trimStart().slice(0, 600);
-    } catch {
-      return null;
-    }
-  };
-  const boardFileFor = (id: string): string =>
-    boardDir ? (relativePath(boardDir, `${noteDirOf(id)}/${fileOf(id)}`) ?? id) : id;
-  // What "Add note" offers: the board's own project (or the loose notes for a
-  // board in the notes root), newest first, the board file itself excluded.
-  const boardAddItems = canvasOpen
-    ? notes
-        .filter((n) => projectOf(n.name) === boardProject && n.name !== open?.id)
-        .sort((a, b) => b.modified_ms - a.modified_ms)
-        .map((n) => ({
-          id: n.name,
-          label: boardProject ? n.name.slice(boardProject.length + 1) : n.name,
-        }))
-    : [];
-
-  /** "Export as canvas…" on the map: snapshot the computed layout into a real,
-   * editable `.canvas` at the project's root and open it. The live map stays
-   * computed — the snapshot is the fork you arrange, annotate and ink. */
-  const exportMapAsCanvas = async () => {
-    const cur = openRef.current;
-    const text = mapDoc?.text;
-    if (!cur || !isMapTab(cur.id) || text === undefined) return;
-    const project = mapProjectOf(cur.id);
-    const taken = new Set(notesRef.current.map((n) => n.name.toLowerCase()));
-    const name = uniqueName(`${project}/map`, extOfView("canvas") ?? "canvas", taken);
-    try {
-      await api.saveNote(name, text);
-    } catch (err) {
-      toast(`Couldn't save the map — ${errText(err)}`);
-      return;
-    }
-    setNotes(await api.listNotes());
-    await openItem({ id: name, isNote: true }, draftIds);
-  };
-
   const startRename = () => {
-    if (
-      !open ||
-      isDiffTab(open.id) ||
-      isMapTab(open.id) ||
-      isFileTab(open.id) ||
-      isAnnotateTab(open.id)
-    )
-      return;
+    if (!open || isDiffTab(open.id) || isMapTab(open.id) || isFileTab(open.id)) return;
     setRenameValue(open.name ? fileOf(open.name) : "");
     setRenaming(true);
   };
@@ -2293,7 +1873,6 @@ function App() {
       detail: kb("new-note"),
       run: () => void newNote(),
     },
-    { kind: "command", id: "cmd:new-canvas", label: "New canvas", run: () => void newCanvas() },
     {
       kind: "command",
       id: "cmd:save",
@@ -2302,20 +1881,15 @@ function App() {
       run: () => void save(),
     },
     { kind: "command", id: "cmd:rename", label: "Rename note", run: startRename },
-    // Setting the launch canvas belongs where you can see the canvas, not in a
-    // Settings picker over every note in the corpus.
-    ...(canvasOpen && open?.name
-      ? [
-          {
-            kind: "command" as const,
-            id: "cmd:open-at-launch",
-            label:
-              openAtLaunch === open.name
-                ? "Stop opening this canvas at launch"
-                : "Open this canvas at launch",
-            run: () => setLaunchCanvas(openAtLaunch === open.name ? null : open.name),
-          },
-        ]
+    // The map's layouts, offered while a map is what's open — the same switch
+    // the map's own bar carries.
+    ...(mapOpen
+      ? VIEW_KINDS.filter((k) => k !== mapView).map((k) => ({
+          kind: "command" as const,
+          id: `cmd:map-view:${k}`,
+          label: `Map view: ${VIEW_LABELS[k]}`,
+          run: () => setMapView(k),
+        }))
       : []),
     {
       kind: "command",
@@ -2451,10 +2025,6 @@ function App() {
       label: "File",
       items: [
         { label: "New note", detail: kb("new-note"), run: () => void newNote() },
-        { label: "New canvas", run: () => void newCanvas() },
-        // The map's snapshot writes a new canvas file, so it belongs with the
-        // other file-creating verbs — and only while the map is what's open.
-        ...(mapOpen ? [{ label: "Export as canvas…", run: () => void exportMapAsCanvas() }] : []),
         { label: "Save note", detail: kb("save"), run: () => void save() },
         { label: "Rename note", run: startRename },
         ...(openName ? [{ label: "Delete note", run: () => void deleteNote(openName) }] : []),
@@ -2599,11 +2169,7 @@ function App() {
           ? // Re-read on activation; a file that vanished shows the reason,
             // with "Open externally" still on the header.
             openFileTab(filePathOf(id)).then(() => true)
-          : isAnnotateTab(id)
-            ? // Re-activating keeps the drawing session — real user work,
-              // nothing recomputes.
-              openAnnotateTab(annotatePathOf(id)).then(() => true)
-            : openItem({ id, isNote: noteNames.has(id) }, draftIds);
+          : openItem({ id, isNote: noteNames.has(id) }, draftIds);
 
   /** Enter the zero-tab state: flush any pending draft, drop the editor
    * surface, show the welcome panel. Reached only by closes that empty the
@@ -2672,57 +2238,17 @@ function App() {
     void openItem({ id: note, isNote: true }, draftIds).then(closeLens);
   };
 
-  /** Close the annotate tab and land back where the drawing started — the
-   * tab the image was double-clicked from, when it is still in the strip. */
-  const closeAnnotateTab = (id: string) => {
-    annoRef.current = null;
-    setAnnoDirty(false);
-    const origin = annoOriginRef.current;
-    annoOriginRef.current = null;
-    const cur = tabsRef.current;
-    const idx = cur.findIndex((t) => t.id === id);
-    if (idx < 0) return;
-    const rest = cur.filter((t) => t.id !== id);
-    setTabs(rest);
-    if (openRef.current?.id !== id) return;
-    if (origin && rest.some((t) => t.id === origin)) {
-      void openTabItem(origin);
-      return;
-    }
-    void handOff(rest, idx);
-  };
-
   /** Close a tab, stopping to ask when its content would otherwise live on
    * only as a shadow draft: Save / Discard / Cancel. Dirty buffer means ask
    * when the tab is active; a draft means ask when it's in the background.
    * A never-typed untitled tab closes silently and its empty draft goes too. */
   const requestCloseTab = (id: string) => {
     // A lens tab holds no content of its own — nothing to save or discard.
-    // The annotation lens is the exception: its strokes are real user work,
-    // so an unflattened drawing gets the same Save / Discard / Cancel stop
-    // a dirty note gets (Save flattens into the image).
-    if (isAnnotateTab(id)) {
-      const a = annoRef.current;
-      if (a && a.id === id && a.text !== a.base) {
-        setCloseAsk(id);
-        return;
-      }
-      closeAnnotateTab(id);
-      return;
-    }
     if (isDiffTab(id) || isMapTab(id) || isFileTab(id)) {
       closeTab(id);
       return;
     }
     if (openRef.current?.id === id) {
-      if (autoPersists()) {
-        // For an autosaving view the file *is* the buffer: write whatever the
-        // debounce still holds and close. There is nothing a Save/Discard
-        // prompt could protect, and asking would be the same false alarm the
-        // baseline check exists to prevent.
-        void flushDraft().then(() => closeTab(id));
-        return;
-      }
       if (openRef.current.name === null && contentRef.current.trim() === "") {
         cancelAutosave();
         void api.deleteDraft(id);
@@ -2769,12 +2295,6 @@ function App() {
    * save that didn't happen (guard declined, error) keeps the tab open. */
   const closeAskSave = async (id: string) => {
     setCloseAsk(null);
-    // The annotation lens: Save means flatten into the image; the tab only
-    // closes when the write really happened.
-    if (isAnnotateTab(id)) {
-      if (await saveAnnotation(id)) closeAnnotateTab(id);
-      return;
-    }
     try {
       // A background tab that failed to activate (file and draft gone) was
       // dropped by openTabItem — saving now would save the wrong note.
@@ -2790,12 +2310,6 @@ function App() {
    * the recycle bin holds exactly what was discarded, then trash it. */
   const closeAskDiscard = async (id: string) => {
     setCloseAsk(null);
-    // The annotation lens holds no draft — discarding is just letting the
-    // strokes go (the image file was never touched).
-    if (isAnnotateTab(id)) {
-      closeAnnotateTab(id);
-      return;
-    }
     try {
       if (openRef.current?.id === id) {
         cancelAutosave();
@@ -2936,26 +2450,23 @@ function App() {
     },
   ];
 
-  /** The map lens's card file verbs: a note card speaks the explorer row's
-   * own menu; a referenced file the corpus doesn't own only reveals — the
-   * map must not delete files it merely points at. A missing target offers
-   * nothing (there is no file to reveal or delete). */
-  const mapFileVerbs = (target: NodeTarget, file: string): MenuEntry[] => {
-    if (target.kind === "note" && target.id)
-      return noteOps(target.id, () => {
+  /** The map's file verbs for a node: a note speaks the explorer row's own
+   * menu; a referenced file the corpus doesn't own only reveals — the map
+   * must not delete files it merely points at. A dead link offers nothing
+   * (there is no file to reveal or delete). */
+  const mapFileVerbs = (node: MapNode): MenuEntry[] => {
+    if (node.noteId)
+      return noteOps(node.noteId, () => {
         const cur = openRef.current;
         if (cur && isMapTab(cur.id)) void openMapTab(mapProjectOf(cur.id));
       });
-    if (target.kind === "image" || target.kind === "file") {
-      const abs = /^[a-z]:[\\/]/i.test(file)
-        ? file.replace(/\\/g, "/")
-        : resolvePath(boardDir ?? noteDirRef.current, file);
+    if (node.kind === "image" || node.kind === "file") {
       return [
         {
           label: "Reveal in File Explorer",
           run: () =>
             void api
-              .revealPath(winPath(abs))
+              .revealPath(winPath(node.abs))
               .catch((err: unknown) => toast(`Couldn't reveal that file — ${errText(err)}`)),
         },
       ];
@@ -2979,10 +2490,7 @@ function App() {
     setRenaming(true);
   };
 
-  const startExplorerCreate = (
-    dir: string,
-    kind: "note" | "canvas" | "folder" | "virtual" = "note",
-  ) => {
+  const startExplorerCreate = (dir: string, kind: "note" | "folder" | "virtual" = "note") => {
     setExplorerOpen(true);
     setExplorerView("files");
     // Creation targeting the Notes panel reopens it, the way creation into a
@@ -2997,8 +2505,7 @@ function App() {
   };
 
   /** Inline name-first creation: write the (empty) file immediately, open it as
-   * a saved note. A typed extension the registry claims sticks, else the one
-   * the verb implies — `.md` for a note, the canvas type's own for a canvas. */
+   * a saved note. A typed extension the registry claims sticks, else `.md`. */
   const createNamedNote = async (dir: string, name: string, ext = "md") => {
     setExplorerCreate(null);
     const trimmed = name.trim().replace(/^\/+|\/+$/g, "");
@@ -3208,7 +2715,6 @@ function App() {
         ? [{ label: "Open project map", run: () => void openMapTab(dir) }, "sep" as const]
         : []),
       { label: "New note here", run: () => startExplorerCreate(dir) },
-      { label: "New canvas here", run: () => startExplorerCreate(dir, "canvas") },
       // All three need a project to land in, which the notes-root heading ("")
       // isn't — a top-level folder is a project, created by "New project…".
       // "New folder" makes a real directory right here; "New virtual folder"
@@ -3253,7 +2759,6 @@ function App() {
   const explorerBodyMenu = (e: React.MouseEvent) =>
     openContextMenu(e, [
       { label: "New note", run: () => startExplorerCreate("") },
-      { label: "New canvas", run: () => startExplorerCreate("", "canvas") },
       { label: "New project…", run: () => setCreatingProject(true) },
       "sep",
       { label: "Scan folder for projects…", run: () => void scanForProjects() },
@@ -3280,7 +2785,6 @@ function App() {
   // name at the newest timestamp — the explorer's Recent rule, shortened.
   const welcomeActions = [
     { label: "New note", detail: kb("new-note"), run: () => void newNote() },
-    { label: "New canvas", run: () => void newCanvas() },
     { label: "New project…", run: () => setCreatingProject(true) },
     { label: "Scan folder for projects…", run: () => void scanForProjects() },
     { label: "Settings", run: () => setSettingsOpen("top") },
@@ -3358,11 +2862,7 @@ function App() {
                 ? createNamedFolder(dir, name)
                 : explorerCreateKind === "virtual"
                   ? createNamedVirtualFolder(dir, name)
-                  : createNamedNote(
-                      dir,
-                      name,
-                      explorerCreateKind === "canvas" ? (extOfView("canvas") ?? "canvas") : "md",
-                    ))
+                  : createNamedNote(dir, name))
             }
             onCreateCancel={() => setExplorerCreate(null)}
             newFolders={newFolders}
@@ -3429,7 +2929,6 @@ function App() {
                 const diffNote = isDiffTab(t.id) ? diffNoteOf(t.id) : null;
                 const mapProject = isMapTab(t.id) ? mapProjectOf(t.id) : null;
                 const lensFile = isFileTab(t.id) ? filePathOf(t.id) : null;
-                const annoFile = isAnnotateTab(t.id) ? annotatePathOf(t.id) : null;
                 return (
                   <div
                     key={t.id}
@@ -3441,9 +2940,7 @@ function App() {
                           ? `Project map — ${mapProject}`
                           : lensFile
                             ? `Read-only — ${lensFile}`
-                            : annoFile
-                              ? `Draw on image — ${annoFile}`
-                              : (t.name ?? "Unsaved note — double-click to name")
+                            : (t.name ?? "Unsaved note — double-click to name")
                     }
                     onClick={() => {
                       if (!active) void openTabItem(t.id);
@@ -3487,11 +2984,6 @@ function App() {
                             </span>
                             {fileOf(lensFile)}
                           </>
-                        ) : annoFile ? (
-                          <>
-                            <span className="tab-anno">✎</span>
-                            {fileOf(annoFile)}
-                          </>
                         ) : t.name ? (
                           fileOf(t.name)
                         ) : (
@@ -3499,14 +2991,10 @@ function App() {
                         )}
                       </span>
                     )}
-                    {(annoFile ? annoDirty : active ? dirty : draftIds.has(t.id)) && (
+                    {(active ? dirty : draftIds.has(t.id)) && (
                       <span
                         className="dirty"
-                        data-tip={
-                          annoFile
-                            ? `Drawing not saved into the image yet. ${kb("save")} to save.`
-                            : `Unsaved — autosaved as draft. ${kb("save")} to save.`
-                        }
+                        data-tip={`Unsaved — autosaved as draft. ${kb("save")} to save.`}
                       >
                         ●
                       </span>
@@ -3575,20 +3063,9 @@ function App() {
           <div
             className="content-panel"
             onContextMenu={(e) => {
-              if (lensOpen || canvasOpen) return;
-              // A rendered image (live preview or the preview pane) leads
-              // with its own verb — the right-click half of the annotation
-              // entry point.
-              const raw = (e.target as HTMLElement).closest("img")?.dataset.rawSrc;
-              if (raw) {
-                openContextMenu(e, [
-                  { label: "Draw on image", run: () => openImageAnnotate(raw) },
-                  ...(mode === "edit" ? ["sep" as const, ...editEntries] : []),
-                ]);
-                return;
-              }
-              // The Edit menu talks to the editor, which a lens tab or a
-              // board doesn't have (the board raises its own menus).
+              // The Edit menu talks to the editor, which a lens tab doesn't
+              // have (the map raises its own menus).
+              if (lensOpen) return;
               if (mode === "edit") openContextMenu(e, editEntries);
             }}
           >
@@ -3609,38 +3086,21 @@ function App() {
                 onError={(msg) => toast(`Recent changes — ${msg}`)}
               />
             )}
-            {mapOpen && open && mapDoc && (
+            {mapOpen && open && (
               <Suspense fallback={null}>
-                <BoardView
-                  key={mapDoc.key}
-                  initialDoc={mapDoc.text}
-                  camera={mapCamRef.current.get(open.id) ?? null}
-                  onCamera={rememberMapCam}
-                  onChange={() => {}}
-                  role="canvas"
-                  readOnly
-                  onSaveAs={() => void exportMapAsCanvas()}
-                  emptyHint="This project has no notes to map yet."
-                  noteDir={boardDir ?? rootPath}
-                  resolveTarget={resolveBoardTarget}
-                  loadExcerpt={boardExcerpt}
-                  fileFor={(id) => id}
-                  addItems={[]}
+                <MapView
+                  key={open.id}
+                  graph={mapGraph?.graph ?? null}
+                  view={mapView}
+                  onView={setMapView}
+                  camera={mapCamRef.current.get(`${open.id}|${mapView}`) ?? null}
+                  onCamera={(cam) => mapCamRef.current.set(`${open.id}|${mapView}`, cam)}
                   onOpenNote={(id) => void openItem({ id, isNote: true }, draftIds)}
-                  onOpenLink={(target) => openLink(target, boardDir ?? undefined)}
-                  onOpenFile={openBoardFile}
-                  importImage={async () => null}
-                  pickImages={async () => []}
-                  block={{
-                    onPasteImage: pasteImage,
-                    resolveImage,
-                    mentionItems,
-                    mentionLink,
-                    features: markdownFeatures(),
-                  }}
+                  onOpenFile={openMapFile}
+                  imageUrl={convertFileSrc}
                   onMenu={openContextMenu}
                   fileVerbs={mapFileVerbs}
-                  inkTools={false}
+                  emptyHint="This project has no notes to map yet."
                 />
               </Suspense>
             )}
@@ -3671,88 +3131,7 @@ function App() {
                 )}
               </div>
             )}
-            {annotateOpen && open && annoDoc && annoDoc.id === open.id && (
-              <Suspense fallback={null}>
-                <BoardView
-                  key={annoDoc.key}
-                  initialDoc={annoDoc.text}
-                  onChange={(text) => {
-                    const a = annoRef.current;
-                    if (a?.id !== annoDoc.id) return;
-                    a.text = text;
-                    setAnnoDirty(text !== a.base);
-                  }}
-                  role="canvas"
-                  readOnly
-                  annotate
-                  inkTools
-                  onSaveAs={() => void saveAnnotation(annoDoc.id)}
-                  noteDir={annotatePathOf(open.id).replace(/\/[^/]*$/, "")}
-                  resolveTarget={() => {
-                    const abs = annotatePathOf(open.id);
-                    return {
-                      kind: "image",
-                      id: null,
-                      url: bustAsset(abs, convertFileSrc(abs)),
-                      modifiedMs: 0,
-                    };
-                  }}
-                  loadExcerpt={async () => null}
-                  fileFor={(id) => id}
-                  addItems={[]}
-                  onOpenNote={() => {}}
-                  onOpenLink={(target) =>
-                    openLink(target, annotatePathOf(open.id).replace(/\/[^/]*$/, ""))
-                  }
-                  onOpenFile={() =>
-                    void api
-                      .openExternal(winPath(annotatePathOf(open.id)))
-                      .catch((err: unknown) => toast(`Couldn't open that file — ${errText(err)}`))
-                  }
-                  importImage={async () => null}
-                  pickImages={async () => []}
-                  block={{
-                    onPasteImage: pasteImage,
-                    resolveImage,
-                    mentionItems,
-                    mentionLink,
-                    features: markdownFeatures(),
-                  }}
-                  onMenu={openContextMenu}
-                />
-              </Suspense>
-            )}
-            {canvasOpen && open && (
-              <Suspense fallback={null}>
-                <BoardView
-                  key={docKey}
-                  ref={canvasRef}
-                  initialDoc={initialDoc}
-                  onChange={handleChange}
-                  role={canvasRole}
-                  noteDir={noteDir}
-                  resolveTarget={resolveBoardTarget}
-                  loadExcerpt={boardExcerpt}
-                  fileFor={boardFileFor}
-                  addItems={boardAddItems}
-                  onOpenNote={(id) => void openItem({ id, isNote: true }, draftIds)}
-                  onOpenLink={openLink}
-                  onOpenFile={openBoardFile}
-                  importImage={importImage}
-                  pickImages={pickImages}
-                  block={{
-                    onPasteImage: pasteImage,
-                    resolveImage,
-                    mentionItems,
-                    mentionLink,
-                    features: markdownFeatures(),
-                  }}
-                  onMenu={openContextMenu}
-                  inkTools={hasFeature(open.id, "ink")}
-                />
-              </Suspense>
-            )}
-            {open && !lensOpen && !canvasOpen && (
+            {open && !lensOpen && (
               <Editor
                 ref={editorRef}
                 docKey={docKey}
@@ -3760,7 +3139,6 @@ function App() {
                 onChange={handleChange}
                 onPasteImage={pasteImage}
                 resolveImage={resolveImage}
-                onImageOpen={openImageAnnotate}
                 mentionItems={mentionItems}
                 mentionLink={mentionLink}
                 onOpenLink={openLink}
@@ -3770,9 +3148,7 @@ function App() {
                 features={featuresOf(open.id)}
               />
             )}
-            {open && mode === "preview" && (
-              <Preview doc={initialDoc} noteDir={noteDir} onImageOpen={openImageAnnotate} />
-            )}
+            {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
             {!open && welcome && (
               <WelcomePanel
                 actions={welcomeActions}
@@ -3856,8 +3232,6 @@ function App() {
           onDefaultNoteTypeChange={setDefaultNoteType}
           openFilesExternally={openFilesExternally}
           onOpenFilesExternallyChange={setOpenFilesExternally}
-          openAtLaunch={openAtLaunch}
-          onClearOpenAtLaunch={() => setLaunchCanvas(null)}
           section={settingsOpen}
           onClose={() => {
             setSettingsOpen(null);
@@ -3875,14 +3249,8 @@ function App() {
       )}
       {closeAskTab && (
         <CloseConfirm
-          label={
-            isAnnotateTab(closeAskTab.id)
-              ? fileOf(annotatePathOf(closeAskTab.id))
-              : closeAskTab.name
-                ? fileOf(closeAskTab.name)
-                : "Untitled note"
-          }
-          untitled={!isAnnotateTab(closeAskTab.id) && closeAskTab.name === null}
+          label={closeAskTab.name ? fileOf(closeAskTab.name) : "Untitled note"}
+          untitled={closeAskTab.name === null}
           onSave={() => void closeAskSave(closeAskTab.id)}
           onDiscard={() => void closeAskDiscard(closeAskTab.id)}
           onCancel={() => {

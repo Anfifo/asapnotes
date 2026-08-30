@@ -1,7 +1,8 @@
 # Canvas files are JSONCanvas plus an ink extension
 
 - Date: 2026-08-14 (ink schema added 2026-08-16)
-- Status: Built (nodes, edges, and the ink node)
+- Status: Superseded by [The map is a graph view, not a canvas](2026-08-25-map-is-a-graph-view-not-a-canvas.md)
+  — the app reads and writes no `.canvas` files since 2026-08-25.
 
 ## Context
 

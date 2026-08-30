@@ -61,9 +61,6 @@ interface EditorProps {
   onPasteImage: (file: File) => Promise<string | null>;
   /** Resolve an image src from the doc to a URL the webview can load. */
   resolveImage: (src: string) => string;
-  /** Double-click on a live-preview image — the annotation entry point. Gets
-   * the link as written in the note. */
-  onImageOpen?: (src: string) => void;
   /** Notes offered by the `@`-mention dropdown. */
   mentionItems: MentionItem[];
   /** Markdown link inserted when a mention is accepted. */
@@ -75,9 +72,6 @@ interface EditorProps {
   onStatus?: (status: EditorStatus | null) => void;
   /** Hide instead of unmounting (preview mode) so undo history survives. */
   hidden?: boolean;
-  /** Container class, when this isn't the full-height note editor — the canvas
-   * mounts one of these inside a text node, which sizes itself. */
-  className?: string;
   /** Empty-document prompt; the default speaks for a whole note. */
   placeholder?: string;
   /** Editing surface from the open note's type: the markdown view brings the
@@ -295,13 +289,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     onChange,
     onPasteImage,
     resolveImage,
-    onImageOpen,
     mentionItems,
     mentionLink,
     onOpenLink,
     onStatus,
     hidden,
-    className,
     placeholder: placeholderText,
     view: noteView,
     features,
@@ -318,8 +310,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   onPasteImageRef.current = onPasteImage;
   const resolveImageRef = useRef(resolveImage);
   resolveImageRef.current = resolveImage;
-  const onImageOpenRef = useRef(onImageOpen);
-  onImageOpenRef.current = onImageOpen;
   const mentionItemsRef = useRef(mentionItems);
   mentionItemsRef.current = mentionItems;
   const mentionLinkRef = useRef(mentionLink);
@@ -398,14 +388,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           ...(noteViewRef.current === "markdown"
             ? [markdown({ base: markdownLanguage, codeLanguages: languages })]
             : []),
-          ...(has("live-preview")
-            ? [
-                livePreview(
-                  (src) => resolveImageRef.current(src),
-                  (src) => onImageOpenRef.current?.(src),
-                ),
-              ]
-            : []),
+          ...(has("live-preview") ? [livePreview((src) => resolveImageRef.current(src))] : []),
           ...(has("mentions")
             ? [
                 mentions(
@@ -495,7 +478,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   return (
     <div
       ref={containerRef}
-      className={className ?? (noteView === "markdown" ? "editor" : "editor editor-plain")}
+      className={noteView === "markdown" ? "editor" : "editor editor-plain"}
       hidden={hidden}
     />
   );

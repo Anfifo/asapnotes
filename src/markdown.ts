@@ -1,12 +1,10 @@
 /**
- * The app's one markdown renderer. Both the preview pane and the canvas's
- * static text blocks read it, so a note and a block on a canvas render the same
- * markdown the same way — including how their images resolve.
+ * The app's one markdown renderer, behind the preview pane — kept as the single
+ * place markdown becomes HTML, including how images resolve.
  */
 
 import MarkdownIt from "markdown-it";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { bustAsset } from "./assetVersions";
 import { resolvePath } from "./paths";
 
 // html:false (the default) keeps raw HTML in notes escaped, so the rendered
@@ -20,15 +18,13 @@ const defaultImage =
 // Relative image links (assets/…, ../assets/…) resolve against the note's own
 // directory and go through Tauri's asset protocol so the webview can load them.
 // The raw link rides along as a data attribute, so a rendered image can be
-// traced back to its file — the annotation entry points need the path, and
-// the resolved URL no longer carries it readably.
+// traced back to its file — the resolved URL doesn't carry it readably.
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const token = tokens[idx];
   const src = String(token.attrGet("src") ?? "");
   const noteDir = (env as { noteDir?: string }).noteDir;
   if (noteDir && src && !/^[a-z][a-z0-9+.-]*:/i.test(src)) {
-    const abs = resolvePath(noteDir, src);
-    token.attrSet("src", bustAsset(abs, convertFileSrc(abs)));
+    token.attrSet("src", convertFileSrc(resolvePath(noteDir, src)));
     token.attrSet("data-raw-src", src);
   }
   return defaultImage(tokens, idx, options, env, self);

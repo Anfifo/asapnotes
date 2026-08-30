@@ -266,20 +266,19 @@ branches in `App`.
 ```
 
 Shipped entries: **markdown** as above; **text** (`txt`, `text`, `tex`, `log`, `csv`,
-`json`, `yaml`, `yml`, `ini`, `cfg`, `toml`, `xml`) with `view: "text"` and no features;
-**canvas** (`canvas`) with `view: "canvas"` and `["images", "ink"]`.
+`json`, `yaml`, `yml`, `ini`, `cfg`, `toml`, `xml`) with `view: "text"` and no features.
+(A **canvas** type shipped 2026-08-14–24 and was removed with the canvas view; a settings
+file still carrying the shipped canvas entry upgrades to this list.)
 
 ### The registry is data; view providers are a code table
 
 `view` and `icon` are **ids into small in-tree tables**, not paths, module specifiers, or
-anything else loadable. The provider table maps `markdown`/`text`/`canvas` to components,
-the canvas one behind a dynamic import so it stays off the startup path.
+anything else loadable. The provider table maps `markdown`/`text` to components.
 
 So a user can add `rs` to the text type, or give `.log` its own color, by editing JSON.
-A user cannot introduce a new view — that is code in this repository. This is what keeps
-"canvas is a native view, not a plugin system" honest while still giving canvas a real
-seam to plug into: the registry is the extension point for _formats_, the provider table
-is the extension point for _views_, and only the first is user data.
+A user cannot introduce a new view — that is code in this repository. The registry is the
+extension point for _formats_, the provider table is the extension point for _views_, and
+only the first is user data.
 
 ### Features are a closed set
 
@@ -340,22 +339,14 @@ would otherwise refuse to touch.
 
 ## What this unlocks
 
-### Canvas
+### The project map
 
-The project board is **`board.canvas` at the project root** — a JSONCanvas file whose
-nodes are the spec's own `file` nodes — not a key in the config file. One format serves
-both canvas vocabularies, other tools and the planned MCP can read a board, and dragging a
-node stops rewriting a settings file. It is created lazily, on first placement.
-
-A node's `file` is a real relative path from the board to the target where one exists,
-computed with the same [`relativePath`](../src/paths.ts) that already backs `@`-mention
-links, so conforming readers can follow it; for a mounted note on another drive it falls
-back to the project-relative id, which only this app resolves. Same trade as mentions,
-already made.
-
-The note-type registry is the seam: `view: "canvas"` on the `canvas` type is what makes a
-`.canvas` file open as a board instead of raw JSON, and the provider table is where the
-dynamic import lives.
+A project's map is **computed, never stored**: every markdown note is a node, every
+markdown link to another file a reference, laid out on open in one of three views
+([decision](decisions/2026-08-25-map-is-a-graph-view-not-a-canvas.md)). Nothing about it
+lives in a project file — the notes are the data, so there is nothing to keep in sync. (A
+`board.canvas` file per project was this section's earlier answer, 2026-08-14–24; it went
+with the canvas view.)
 
 ### MCP
 

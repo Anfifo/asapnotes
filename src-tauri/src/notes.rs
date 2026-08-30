@@ -238,8 +238,8 @@ pub fn read_note(app: AppHandle, name: String) -> Result<String, String> {
 /// reason as the error.
 const MAX_LENS_BYTES: u64 = 2_000_000;
 
-/// A referenced file's text, for the read-only file view: any real file a
-/// canvas or map points at, inside the corpus or out. Read-only by
+/// A referenced file's text, for the read-only file view: any real file the
+/// project map points at, inside the corpus or out. Read-only by
 /// construction — there is no write twin.
 #[tauri::command]
 pub fn read_file_text(path: String) -> Result<String, String> {
@@ -670,46 +670,6 @@ pub fn save_asset(app: AppHandle, request: Request<'_>) -> Result<String, String
     let (path, rel) = unique_asset(&dir, &format!("img-{}", now_ms()), &ext);
     fs::write(path, bytes).map_err(|e| e.to_string())?;
     Ok(rel)
-}
-
-/// Extensions the annotation flatten may overwrite — the formats the webview
-/// can decode *and* re-encode. Gif (animation would flatten silently), svg
-/// (vector) and bmp (no encoder) are refused at the entry point already;
-/// this is the backend's own line.
-const FLATTEN_EXTS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
-
-/// Overwrite an image file in place with new bytes — the annotation lens's
-/// flatten. The previous bytes go to the recycle bin first, so every earlier
-/// version of the image stays recoverable. The bytes arrive as the raw IPC
-/// body; the (percent-encoded) absolute path rides in a header.
-#[tauri::command]
-pub fn overwrite_asset(request: Request<'_>) -> Result<(), String> {
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected raw image bytes".into());
-    };
-    if bytes.is_empty() {
-        return Err("refusing to write an empty image".into());
-    }
-    let path = request
-        .headers()
-        .get("path")
-        .and_then(|v| v.to_str().ok())
-        .map(percent_decode)
-        .ok_or("missing path")?;
-    let p = PathBuf::from(&path);
-    if !p.is_absolute() || !p.is_file() {
-        return Err(format!("not an existing absolute file: {path}"));
-    }
-    let ext = p
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !FLATTEN_EXTS.contains(&ext.as_str()) {
-        return Err(format!("not an overwritable image type: {ext}"));
-    }
-    trash::delete(&p).map_err(|e| e.to_string())?;
-    fs::write(&p, bytes).map_err(|e| e.to_string())
 }
 
 /// Copy an image dropped from the filesystem into `assets/`. Returns the asset

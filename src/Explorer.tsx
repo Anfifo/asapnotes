@@ -74,7 +74,7 @@ interface ExplorerProps {
   creatingIn: string | null;
   /** What the create row makes: a note file, a real folder here, or a virtual
    * folder whose backing directory is created in the virtual-folders home. */
-  creatingKind: "note" | "canvas" | "folder" | "virtual";
+  creatingKind: "note" | "folder" | "virtual";
   onCreate: (dir: string, name: string) => void;
   onCreateCancel: () => void;
   /** Folders created this session that hold no note yet. The tree derives from
@@ -326,9 +326,7 @@ export function Explorer({
             ? "virtual folder name…"
             : creatingKind === "folder"
               ? "folder name…"
-              : creatingKind === "canvas"
-                ? "canvas name…"
-                : "note name…"
+              : "note name…"
         }
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {

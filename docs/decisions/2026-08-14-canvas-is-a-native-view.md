@@ -1,7 +1,9 @@
 # Canvas is a native view, not a plugin
 
 - Date: 2026-08-14
-- Status: Built (project board and freeform canvas; ink still open)
+- Status: Superseded by [The map is a graph view, not a canvas](2026-08-25-map-is-a-graph-view-not-a-canvas.md)
+  — the canvas view was removed 2026-08-25. The registry-versus-code seam this entry
+  drew still stands; the view it was drawn for is gone.
 
 ## Context
 

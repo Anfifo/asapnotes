@@ -135,9 +135,8 @@ class QuoteMarkWidget extends WidgetType {
 class ImageWidget extends WidgetType {
   constructor(
     readonly src: string,
-    /** The link as written in the note — what the annotation flow resolves. */
+    /** The link as written in the note, kept on the element for the chrome. */
     readonly raw: string,
-    readonly onOpen?: (raw: string) => void,
   ) {
     super();
   }
@@ -149,14 +148,6 @@ class ImageWidget extends WidgetType {
     img.className = "cm-live-image";
     img.src = this.src;
     img.dataset.rawSrc = this.raw;
-    if (this.onOpen) {
-      const onOpen = this.onOpen;
-      const raw = this.raw;
-      img.addEventListener("dblclick", (e) => {
-        e.preventDefault();
-        onOpen(raw);
-      });
-    }
     return img;
   }
   // Let clicks through so CodeMirror places the cursor (which reveals the syntax).
@@ -214,11 +205,7 @@ const listDepth = (node: Ancestry) => {
   return depth;
 };
 
-function buildDecorations(
-  view: EditorView,
-  resolveImage: (src: string) => string,
-  onImageOpen?: (raw: string) => void,
-): DecorationSet {
+function buildDecorations(view: EditorView, resolveImage: (src: string) => string): DecorationSet {
   const decos: Range<Decoration>[] = [];
   const { doc, selection } = view.state;
 
@@ -403,7 +390,7 @@ function buildDecorations(
               const raw = doc.sliceString(url.from, url.to);
               decos.push(
                 Decoration.replace({
-                  widget: new ImageWidget(resolveImage(raw), raw, onImageOpen),
+                  widget: new ImageWidget(resolveImage(raw), raw),
                 }).range(node.from, node.to),
               );
               return false;
@@ -424,19 +411,16 @@ function buildDecorations(
   return Decoration.set(decos, true);
 }
 
-export function livePreview(
-  resolveImage: (src: string) => string,
-  onImageOpen?: (raw: string) => void,
-) {
+export function livePreview(resolveImage: (src: string) => string) {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       constructor(view: EditorView) {
-        this.decorations = buildDecorations(view, resolveImage, onImageOpen);
+        this.decorations = buildDecorations(view, resolveImage);
       }
       update(update: ViewUpdate) {
         if (update.docChanged || update.selectionSet || update.viewportChanged) {
-          this.decorations = buildDecorations(update.view, resolveImage, onImageOpen);
+          this.decorations = buildDecorations(update.view, resolveImage);
         }
       }
     },
