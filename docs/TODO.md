@@ -12,6 +12,117 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-08-25)
+
+- [ ] **Remove the canvas engine; the project map becomes a purpose-built graph view**
+      (2026-08-25) — **built the same day**; the record is at the foot of this item, the
+      decision in [decisions/2026-08-25](decisions/2026-08-25-map-is-a-graph-view-not-a-canvas.md).
+      The map is what the project surface is for
+      ("the goal is to view the project connections", 2026-08-16), and it rides a
+      2,259-line editing engine as a `readOnly` lens while the JSONCanvas format forces
+      every node to be a rectangle — which forced the cards, which forced the grid. The
+      engine itself already renders as positioned DOM plus SVG edges; the weight is
+      ownership, not rendering. **Decision: remove it whole.** Leaves: `src/canvas/`
+      (BoardView, jsoncanvas, ink, annotate), `corpus/canvas.rs` and the `read_canvas` /
+      `write_canvas` MCP tools with their tests, the `canvas` note type (needs a settings
+      migration step; existing `.canvas` files stop being listed), launch-onto-a-canvas,
+      Export-as-canvas, the Explorer's "new canvas", the `.board-*` CSS, and the
+      `annotate:` tab — **image annotation goes with it** (asked 2026-08-14, shipped
+      2026-08-20, never used by hand); pasting/dropping images into notes is untouched,
+      it predates the canvas. Stays: the `file:` lens (the map still points at referenced
+      files), the "open referenced file" preference, `IMAGE_FILE` in `paths.ts`.
+      Considered and declined: keeping the engine for the freeform canvas and giving the
+      map its own renderer anyway (no feature loss, two surfaces to maintain for features
+      nobody has used), and only swapping the layout algorithm inside the lens (leaves
+      the weight and the rectangles). Both 2026-08-14 decision entries flip to
+      Superseded when this lands, and a new entry records the why.
+      **Order picked: candidate sheet first, then one slice** — the new map view and the
+      deletion land together so the MAP chip never goes dark.
+      _2026-08-25: candidate sheet published, awaiting a pick_ —
+      (a private working page, since removed). Four
+      treatments over the repo's own docs graph (21 notes, 15 referenced files, 101
+      references, computed the way `projectMap.ts` computes a map), both themes at the
+      app's tokens, every pane live (hover lifts a node's lines and shows its card, click
+      pins in the preset colors): **A** today's cards in folder clusters (reference, at
+      fit zoom); **B** constellation — a dot per file sized by degree and colored by
+      folder, force-placed with a soft pull to the folder centroid, blurred folder halos,
+      seeded so the picture is stable (recommended: proximity carries folder and hub at
+      once, whole project on one screen); **C** ring — folders as arcs, references as
+      chords through the middle (best for folder-to-folder traffic, fixed order, no
+      simulation); **D** ledger — files listed under folders, references as arcs to the
+      right (fully readable, scrolls, no picture). Composable axes with live toggles:
+      edges at rest (ghost / hidden / plain), labels (file name / first heading / on
+      hover), folder halos, node form ladder (dot / split in-out ring / title box / card
+      on pin), detail on demand (hover card / pinned inspector). Open on the sheet:
+      whether referenced non-markdown files get nodes or a count chip; six-hue hash vs
+      hue families for folders; what a pin does; stability across opens (B warm-starts
+      from the last layout; C and D are deterministic by construction).
+      **Picked 2026-08-25, same day: all but the ring, as switchable views.** One
+      `MapView` replaces the canvas lens — graph model, camera, hover card, pins, file
+      verbs shared — with three layouts behind a segmented control on the map's bar (and
+      palette commands): **Clusters** (today's look re-created: excerpt cards, title boxes,
+      folder tabs, degree balls; the pack algorithm carries over from `projectMap.ts`),
+      **Constellation** (the default: dots by degree, folder halos, seeded force layout
+      with a warm start so a new note lands near its folder and nothing else moves), and
+      **Ledger** (rows under folder headings, arcs to the right; scrolls like a document,
+      no zoom cluster). Nodes are DOM, edges SVG — cards need real rendered excerpts.
+      Settled defaults: ghost edges at rest in every view; labels are file names (first
+      heading as a later toggle); referenced non-markdown files stay nodes; folder colors
+      keep the six-hue hash; the last-used view is **one app-wide preference** in
+      `settings.json` (per-project can come later without moving anything), camera
+      remembered per tab as today. **Clicking gets more:** a click pins the node in a
+      preset color _and_ opens its detail — name, folder, title, opening text, and its
+      references and back-references as rows that open the note (the sheet's "pinned
+      inspector", built in). The ring (C) is dropped. Building: new view with the three
+      layouts and the canvas deletion land together, so the MAP chip never goes dark.
+      **Built 2026-08-25, all gates clean, verified live over the devtools protocol.**
+      What shipped: `src/map/` — `graph.ts` (the model: notes, referenced files, dead
+      links, folders, degrees, each note's title and opening text read once at compute
+      time, so there is no excerpt cache any more), `layouts.ts` (clusters ported from
+      the old pack; constellation as a seeded force layout with label placement and
+      folder hulls; ledger rows), `viewKinds.ts` (the three names, the one piece the
+      shell imports eagerly), `MapView.tsx` (the surface: DOM nodes, one SVG edge layer,
+      camera, hover card, pins, the details panel, the view switcher, menus). `App.tsx`
+      lost every canvas path (~600 lines): the lazy import is the map, `openMapTab`
+      computes a graph, `mapFileVerbs` takes a node, `openMapFile` replaces the board's
+      target resolution, the camera is remembered per tab _and_ view. `settings.rs`:
+      `openAtLaunch`/`set_open_at_launch` → `mapView`/`set_map_view`; the registry's
+      default is the pre-canvas list again (= the v3 snapshot), with v6 added to the
+      upgrade chain so every canvas-era shipped registry sheds the entry and a hand-edit
+      is untouched; tests rewritten around that. Gone: `src/canvas/`, `src/views.ts`
+      (the view-policy table only ever varied for the canvas — autosave-to-file and
+      `nameBase` went with it), `src/assetVersions.ts` (only the annotation flatten ever
+      bumped a version), `corpus/canvas.rs`, the two MCP tools and their tests (Rust 116
+      → 111, MCP 74 → 71), `overwrite_asset`, the `ink` feature, `ViewId` is `markdown |
+    text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
+      Superseded; project-model.md, mcp-tool-surface.md and mcp/README.md reworded.
+      _Verified live_ (second instance, own WebView2 profile, the real corpus — the
+      `asapnotes` project: 43 nodes, 113 references, 11 folder halos): the MAP chip
+      opens the constellation fitted at 82 %; hovering `TODO.md` lifts its 25 lines and
+      shows the card (name, folder chip, title, opening text, 10 in · 15 out); clicking
+      pins it red and opens the details — "Referenced by 10 / References 15", 25 rows
+      with folder chips for rows from other folders; clicking a row moves the panel to
+      `README.md` and adds a second pin; the node menu reads Open note · Details · Copy
+      path · Reveal in File Explorer · Delete note; a background click clears pins and
+      panel; Clusters shows 43 cards with 41 folder tabs (the two root notes wear none)
+      at 28 %; Ledger shows 43 rows under 11 headings with the zoom cluster hidden and a
+      pinned row's 14 arcs colored; switching views wrote and cleared `mapView` and
+      `settings.json` came back **byte-identical**; the palette offers the two other
+      views while the map is open; double-click opened `CLAUDE.md` in its own tab; both
+      themes screenshotted. Two things the live check caught and fixed: the details
+      panel is a fixed-height flex column, so its excerpt shrank to a sliver until its
+      children got `flex-shrink: 0`; and the excerpt repeated the heading line the title
+      already shows, so the leading heading is stripped at compute time.
+      _Pending hands-on:_ **label density on the constellation** — labels live in world
+      units and shrink with the fit (82 % on 43 nodes; a bigger project will be worse),
+      and the dense middle overlaps even so; the honest fix is screen-space labels
+      (counter-scaled by 1/z) plus a "hubs only past N nodes" rule, which wants the app
+      in front of a human before picking numbers. Also: whether referenced non-markdown
+      files should be nodes at all or a count chip (they are 15 of the 43 here); folder
+      colors as the six-hue hash vs hue families; whether the details panel should also
+      open on hover-dwell; the ledger's long arcs at real corpus heights; and the warm
+      start, which only exists within a session (a fresh launch lays out from the seed).
+
 ## Today (2026-08-20)
 
 - [x] **MCP — the TypeScript half is tested now, and it found three bugs**
