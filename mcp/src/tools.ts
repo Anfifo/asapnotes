@@ -204,42 +204,6 @@ export const TOOLS: ToolDef[] = [
   ),
 
   forward(
-    "read_canvas",
-    "Review a canvas (.canvas, JSONCanvas). Returns what is on the board — " +
-      "nodes with their type, position and content, and the edges between " +
-      "them — but for drawn ink only a stroke count, never the coordinates. " +
-      "Pass raw: true to get the document itself, which you need if you mean " +
-      "to edit and write it back; on a drawn board it is very large.",
-    object({ note: NOTE_ARG, raw: bool("Include the full JSONCanvas document.") }, ["note"]),
-    true,
-  ),
-
-  forward(
-    "write_canvas",
-    "Write a whole canvas. Node ids must be unique, every edge must point at " +
-      "nodes that exist, and every node needs x/y/width/height — the call is " +
-      "refused with all the problems at once rather than writing a board that " +
-      "will not open. Overwriting an existing canvas REQUIRES expectUnchanged: " +
-      "read it first (raw: true) and pass the mtimeMs you got. Creating a new " +
-      "one needs no such argument.",
-    object(
-      {
-        note: NOTE_ARG,
-        canvas: {
-          type: "object",
-          description:
-            "A JSONCanvas document: { nodes: [...], edges: [...] }. Node types are " +
-            "text (with text), file (with file), link (with url), group (with label), " +
-            "and ink (with strokes). Fields you do not understand are preserved.",
-        },
-        expectUnchanged: EXPECT_ARG,
-      },
-      ["note", "canvas"],
-    ),
-    false,
-  ),
-
-  forward(
     "read_settings",
     "The user's settings.json. Off unless the user turns it on, because this " +
       "file names every project location on the machine; the refusal says " +

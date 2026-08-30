@@ -3,8 +3,8 @@
 _2026-08-19. Design doc, written before the code. The MCP sidecar item (2026-08-06) and
 three asks that queue behind it defer to this; it is the answer they were waiting for._
 
-**Built the same day — all six build-order steps, plus canvas and settings tools the
-first pass had deferred.** The code is `src-tauri/src/corpus/` (the shared core),
+**Built the same day — all six build-order steps, plus settings tools the first pass had
+deferred (and canvas tools, since removed with the canvas view).** The code is `src-tauri/src/corpus/` (the shared core),
 `src-tauri/src/bin/asapnotes-mcp.rs` (the helper), and `mcp/` (the stdio server); setup
 and the grant table live in [mcp/README.md](../mcp/README.md). What the implementation
 taught us is recorded in **[What changed in the building](#what-changed-in-the-building)**
@@ -296,22 +296,11 @@ hole.
 
 ### Canvas and settings tools, which "not here yet" said would wait
 
-Both were built, because both were asked for.
-
-**Canvas** resolved its open question (raw JSON versus structured verbs) as _both, split by
-direction_. `read_canvas` returns a summary — nodes with type, position and content, edges
-with labels, and for ink a stroke **count** — because a drawn board carries tens of
-thousands of coordinates that mean nothing to a reader; `raw: true` hands over the document
-for a caller that means to edit it. `write_canvas` takes the whole document and validates
-it first (unique ids, every edge pointing at a node that exists, a rectangle on every
-node), reporting every problem at once. Unknown node types and unknown fields ride through
-untouched — a conforming reader skips what it doesn't know, and refusing would make this
-the one tool that can't round-trip a file another tool wrote.
-
-This is the one **whole-file write** in the surface, since a canvas has no sections to
-address. So it carries the discipline the note tools left optional: overwriting an existing
-canvas **requires** `expect_unchanged`. Creating a new one does not, there being nothing to
-lose.
+Both were built, because both were asked for. The canvas pair — `read_canvas` summarizing
+a board, `write_canvas` validating and writing one whole, the surface's one whole-file
+write — **left again on 2026-08-25 with the canvas view itself**
+([decision](decisions/2026-08-25-map-is-a-graph-view-not-a-canvas.md)); the surface has no
+whole-file write now.
 
 **Settings** stayed as cautious as the original note implied but became reachable: one
 `mcp.settings` grant, defaulting to **`off`**, because that file names every machine path

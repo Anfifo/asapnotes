@@ -12,11 +12,11 @@
 //! read per call; if it ever shows up as latency the fix is an mtime-gated
 //! cache, not a longer-lived grant.
 
-use super::{canvas, edits, grants, ids, log, search, sections, store, walk, Roots};
+use super::{edits, grants, ids, log, search, sections, store, walk, Roots};
 use serde_json::{json, Map, Value};
 
 /// Every wire name this helper answers to, in the order the docs list them.
-pub const COMMANDS: [&str; 13] = [
+pub const COMMANDS: [&str; 11] = [
     "doctor",
     "list_projects",
     "list_notes",
@@ -26,8 +26,6 @@ pub const COMMANDS: [&str; 13] = [
     "find_notes",
     "write_section",
     "append_to_note",
-    "read_canvas",
-    "write_canvas",
     "read_settings",
     "write_settings",
 ];
@@ -87,8 +85,6 @@ pub fn dispatch(roots: &Roots, command: &str, args: &Value) -> Result<Value, Str
         "find_notes" => find_notes(roots, args),
         "write_section" => write_section(roots, args),
         "append_to_note" => append_to_note(roots, args),
-        "read_canvas" => read_canvas(roots, args),
-        "write_canvas" => write_canvas(roots, args),
         "read_settings" => read_settings(roots),
         "write_settings" => write_settings(roots, args),
         other => Err(format!(
@@ -362,93 +358,6 @@ fn append_to_note(roots: &Roots, args: &Value) -> Result<Value, String> {
         .on(&result.note, &result.section),
     );
     serde_json::to_value(result).map_err(|e| e.to_string())
-}
-
-/// A canvas is a note like any other here — the registry claims `.canvas`, so
-/// ids, grants and the walks already work on it. What differs is the shape that
-/// comes back: a summary, not the file, because a hand-drawn board carries tens
-/// of thousands of stroke coordinates that mean nothing to a reader.
-fn read_canvas(roots: &Roots, args: &Value) -> Result<Value, String> {
-    let s = settings(roots)?;
-    let note = str_arg(args, "note")?;
-    grants::check_read(&s, note).map_err(|d| d.to_string())?;
-    let path = ids::resolve(roots, &s, note)?;
-    let source = std::fs::read_to_string(&path).map_err(|_| format!("no such canvas: {note}"))?;
-    let doc = canvas::parse(&source)?;
-    let summary = canvas::summarize(&doc);
-    let mut out = serde_json::to_value(summary).map_err(|e| e.to_string())?;
-    out["note"] = json!(note);
-    out["mtimeMs"] = json!(super::mtime_ms(&path).unwrap_or(0));
-    // `raw: true` hands over the document itself, for a caller that means to
-    // edit it and send it back. Opt-in, because on a drawn board it is huge.
-    if opt_bool(args, "raw") {
-        out["canvas"] = doc;
-    }
-    Ok(out)
-}
-
-/// Write a whole canvas.
-///
-/// This is the one whole-file write in the surface, because a canvas has no
-/// section addressing to target — so it carries the discipline the note tools
-/// use `expect_unchanged` for, and carries it as a **requirement**: overwriting
-/// an existing canvas without saying which version you read is exactly the call
-/// that silently destroys work nobody looked at. Creating a new one needs no
-/// such argument, there being nothing to lose.
-fn write_canvas(roots: &Roots, args: &Value) -> Result<Value, String> {
-    let s = settings(roots)?;
-    let state = grants::read_state(roots);
-    let note = str_arg(args, "note")?;
-    grants::check_write(&s, &state, note).map_err(|d| d.to_string())?;
-    let doc = args
-        .get("canvas")
-        .ok_or("missing required argument \"canvas\"")?;
-    canvas::validate(doc).map_err(|problems| {
-        format!(
-            "that canvas wouldn't open as a board:\n- {}",
-            problems.join("\n- ")
-        )
-    })?;
-    let path = ids::resolve(roots, &s, note)?;
-    let existed = path.exists();
-    let expect = opt_u64(args, "expectUnchanged");
-    if existed {
-        let Some(expected) = expect else {
-            return Err(format!(
-                "{note} already exists — read it first and pass expectUnchanged with the \
-                 mtime you got, so this call can't overwrite work you never saw"
-            ));
-        };
-        let actual = super::mtime_ms(&path);
-        if actual != Some(expected) {
-            return Err(edits::stale(note, expected, actual));
-        }
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, canvas::to_text(doc)?).map_err(|e| e.to_string())?;
-    let summary = canvas::summarize(doc);
-    log::record(
-        roots,
-        &log::Entry::new(
-            "write_canvas",
-            format!(
-                "{} canvas with {} nodes and {} edges",
-                if existed { "rewrote" } else { "created" },
-                summary.nodes.len(),
-                summary.edges.len()
-            ),
-        )
-        .on(note, ""),
-    );
-    Ok(json!({
-        "note": note,
-        "created": !existed,
-        "nodes": summary.nodes.len(),
-        "edges": summary.edges.len(),
-        "mtimeMs": super::mtime_ms(&path).unwrap_or(0),
-    }))
 }
 
 /// Settings access is off unless the user turns it on, and that default is not

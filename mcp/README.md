@@ -1,7 +1,7 @@
 # asapnotes over MCP
 
-An MCP stdio server that lets an agent read, search and edit your notes — and
-review or build canvases — through the same project model the app itself uses.
+An MCP stdio server that lets an agent read, search and edit your notes through
+the same project model the app itself uses.
 
 Two pieces:
 
@@ -120,7 +120,6 @@ Reading, cheapest first:
 | `list_notes`    | The corpus; with `outline: true`, every note's heading tree |
 | `outline_note`  | One note's heading tree                                     |
 | `read_note`     | A whole note, or one **section** of it                      |
-| `read_canvas`   | What is on a board, without the ink stroke coordinates      |
 | `list_projects` | What is visible, and at what grant                          |
 | `doctor`        | What this process resolved                                  |
 
@@ -130,7 +129,6 @@ Writing:
 | ---------------- | --------------------------------------------------------------- |
 | `write_section`  | Replace one heading's body                                      |
 | `append_to_note` | Add to a note or a section — **and create a note**, in one call |
-| `write_canvas`   | Write a board, validated first                                  |
 | `write_settings` | A JSON merge patch, never touching `mcp`                        |
 | `append_todo`    | A correctly shaped TODO item under today's heading              |
 | `new_decision`   | A dated decision entry from the template                        |
@@ -162,10 +160,9 @@ never a guess, because a guess writes into the wrong part of someone's file.
 Reads take a section, writes replace one, and a listing carries heading trees, so
 an agent that wants two paragraphs never has to carry the whole note.
 
-**No whole-file write for notes.** `write_section` plus `append_to_note` covers
-what agents need, and a replace-the-file call is the one shape that can silently
-destroy work the agent never read. Canvases are the exception — they have no
-sections to address — so overwriting one _requires_ `expectUnchanged`.
+**No whole-file write.** `write_section` plus `append_to_note` covers what agents
+need, and a replace-the-file call is the one shape that can silently destroy work
+the agent never read.
 
 `expectUnchanged` is the mtime a read hands back. Pass it on the write and a file
 that moved in between refuses the write instead of clobbering it. The user may
