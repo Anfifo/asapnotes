@@ -11,6 +11,17 @@ import { resolvePath } from "./paths";
 // output needs no sanitizer.
 const md = new MarkdownIt({ linkify: true });
 
+// Every block carries the source line it starts on, so the rendered pane can
+// open on the line the editor was showing and report which line it shows when
+// the editor comes back.
+md.core.ruler.push("source_line", (state) => {
+  for (const token of state.tokens) {
+    if (token.map && token.nesting >= 0 && token.type !== "inline") {
+      token.attrSet("data-line", String(token.map[0] + 1));
+    }
+  }
+});
+
 const defaultImage =
   md.renderer.rules.image ??
   ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));

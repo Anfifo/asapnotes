@@ -50,6 +50,11 @@ export interface EditorHandle {
   /** Put the cursor at the start of `line` (1-based) and scroll it into view —
    * the jump-to behind a search result. */
   revealLine: (line: number) => void;
+  /** The line (1-based) at the top edge of the viewport — what a pane swap
+   * hands over so the other pane opens on the same place. */
+  topLine: () => number;
+  /** Scroll so `line` (1-based) sits at the top edge; the cursor stays put. */
+  scrollToLine: (line: number) => void;
 }
 
 interface EditorProps {
@@ -369,6 +374,20 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           effects: EditorView.scrollIntoView(from, { y: "center" }),
         });
         view.focus();
+      },
+      topLine: () => {
+        const view = viewRef.current;
+        if (!view) return 1;
+        // Block heights are measured from the document's top, below the
+        // scroller's padding.
+        const top = view.scrollDOM.scrollTop - view.documentPadding.top;
+        return view.state.doc.lineAt(view.lineBlockAtHeight(top).from).number;
+      },
+      scrollToLine: (line: number) => {
+        const view = viewRef.current;
+        if (!view) return;
+        const { from } = view.state.doc.line(Math.min(Math.max(line, 1), view.state.doc.lines));
+        view.dispatch({ effects: EditorView.scrollIntoView(from, { y: "start" }) });
       },
     }),
     [],

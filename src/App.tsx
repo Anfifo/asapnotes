@@ -458,6 +458,12 @@ function App() {
   draftsRef.current = drafts;
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  // The source line at the top edge of whichever pane was left last, so the
+  // other pane opens on the same place. The flag marks a return from preview:
+  // the editor also comes back to edit mode when a tab opens or closes, and
+  // those must not scroll.
+  const paneLineRef = useRef(1);
+  const resumeEditorRef = useRef(false);
   const projectPathsRef = useRef<Record<string, string>>({});
   projectPathsRef.current = projectPaths;
   // Resolution reads live mounts only, longest mount point first — the same
@@ -1025,9 +1031,11 @@ function App() {
     const cur = openRef.current;
     if (!cur || isDiffTab(cur.id) || !hasFeature(cur.id, "preview")) return;
     if (modeRef.current === "edit") {
+      paneLineRef.current = editorRef.current?.topLine() ?? 1;
       setInitialDoc(contentRef.current);
       setMode("preview");
     } else {
+      if (modeRef.current === "preview") resumeEditorRef.current = true;
       setMode("edit");
     }
   }, []);
@@ -1596,9 +1604,16 @@ function App() {
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
 
-  // Returning from preview: the editor was hidden, not remounted — refocus it.
+  // Returning from preview: the editor was hidden, not remounted — refocus it,
+  // and put back the place the preview was read to (an element hidden with
+  // display:none forgets its scroll position).
   useEffect(() => {
-    if (mode === "edit") editorRef.current?.focus();
+    if (mode !== "edit") return;
+    if (resumeEditorRef.current) {
+      resumeEditorRef.current = false;
+      editorRef.current?.scrollToLine(paneLineRef.current);
+    }
+    editorRef.current?.focus();
   }, [mode]);
 
   // A floating (unpinned) explorer closes on any click outside it; the rail is
@@ -3263,7 +3278,17 @@ function App() {
                 features={featuresOf(open.id)}
               />
             )}
-            {open && mode === "preview" && <Preview doc={initialDoc} noteDir={noteDir} />}
+            {open && mode === "preview" && (
+              <Preview
+                doc={initialDoc}
+                noteDir={noteDir}
+                line={paneLineRef.current}
+                onLeave={(line) => {
+                  paneLineRef.current = line;
+                }}
+                onOpenLink={openLink}
+              />
+            )}
             {!open && welcome && (
               <WelcomePanel
                 actions={welcomeActions}
