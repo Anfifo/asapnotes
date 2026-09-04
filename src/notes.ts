@@ -372,11 +372,11 @@ export const setOpenFilesExternally = (on: boolean) =>
 export const setMeetingFolder = (folder: string | null) =>
   invoke<void>("set_meeting_folder", { folder });
 
-/** What a finished meeting recording left behind: the two asset paths (base-
- * relative, like every asset path) and how long it ran. */
+/** What a finished meeting recording left behind: an asset path (base-
+ * relative, like every asset path) per recorded side, and how long it ran. */
 export interface MeetingFiles {
-  mic: string;
-  system: string;
+  mic?: string | null;
+  system?: string | null;
   seconds: number;
 }
 
@@ -387,10 +387,11 @@ export interface MeetingState {
   note?: string | null;
 }
 
-/** Start recording the microphone and the system playback into the note's
- * `assets/`. Fails if either capture can't open or one is already running. */
-export const startMeetingRecording = (note: string) =>
-  invoke<void>("start_meeting_recording", { note });
+/** Start recording the chosen sides — the microphone and/or the system
+ * playback — into the note's `assets/`. Fails if a chosen capture can't open,
+ * neither side was chosen, or a recording is already running. */
+export const startMeetingRecording = (note: string, mic: boolean, system: boolean) =>
+  invoke<void>("start_meeting_recording", { note, mic, system });
 /** Stop the running recording; the returned paths are already on disk. */
 export const stopMeetingRecording = () => invoke<MeetingFiles>("stop_meeting_recording");
 /** Whether a recording is running — what a fresh window load asks. */

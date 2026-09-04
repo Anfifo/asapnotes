@@ -33,14 +33,18 @@ const FRAME: usize = 960;
 /// of audio around 15 MB per track.
 const BITRATE: i32 = 32_000;
 
+/// One side being recorded: its thread and where its file will be linked from.
+struct Track {
+    side: Side,
+    handle: std::thread::JoinHandle<Result<(), String>>,
+    rel: String,
+}
+
 struct Session {
     stop: Arc<AtomicBool>,
     started: Instant,
-    mic: std::thread::JoinHandle<Result<(), String>>,
-    sys: std::thread::JoinHandle<Result<(), String>>,
+    tracks: Vec<Track>,
     note: String,
-    rel_mic: String,
-    rel_sys: String,
 }
 
 /// The one recording this process will run at a time. A second start while
@@ -51,19 +55,37 @@ fn session() -> &'static Mutex<Option<Session>> {
 }
 
 /// Which end of the call a track captures.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Side {
     Mic,
     System,
 }
 
-/// What a finished recording left behind: the two asset paths, relative to
-/// the note's base the way every asset path is, and how long it ran.
+impl Side {
+    /// File-name suffix, so a recording's files read as a pair in a listing.
+    fn suffix(self) -> &'static str {
+        match self {
+            Side::Mic => "mic",
+            Side::System => "sys",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Side::Mic => "microphone",
+            Side::System => "system audio",
+        }
+    }
+}
+
+/// What a finished recording left behind: the asset paths of the sides that
+/// were recorded, relative to the note's base the way every asset path is,
+/// and how long it ran.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingFiles {
-    pub mic: String,
-    pub system: String,
+    pub mic: Option<String>,
+    pub system: Option<String>,
     pub seconds: u64,
 }
 
@@ -77,12 +99,26 @@ pub struct MeetingState {
     pub note: Option<String>,
 }
 
-/// Start recording into the note's `assets/`. Fails — with the reason — if a
-/// recording is already running or either capture can't open, so a microphone
-/// the OS has blocked is a visible error at the moment of starting, not a
-/// silent empty file discovered after the meeting.
+/// Start recording the chosen sides into the note's `assets/`. Fails — with
+/// the reason — if a recording is already running, no side was chosen, or any
+/// chosen capture can't open, so a microphone the OS has blocked is a visible
+/// error at the moment of starting, not a silent empty file discovered after
+/// the meeting.
 #[tauri::command]
-pub fn start_meeting_recording(app: AppHandle, note: String) -> Result<(), String> {
+pub fn start_meeting_recording(
+    app: AppHandle,
+    note: String,
+    mic: bool,
+    system: bool,
+) -> Result<(), String> {
+    let sides: Vec<Side> = [(mic, Side::Mic), (system, Side::System)]
+        .into_iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, s)| s)
+        .collect();
+    if sides.is_empty() {
+        return Err("pick at least one source to record".into());
+    }
     let mut slot = session().lock().map_err(|e| e.to_string())?;
     if slot.is_some() {
         return Err("a recording is already running".into());
@@ -93,47 +129,48 @@ pub fn start_meeting_recording(app: AppHandle, note: String) -> Result<(), Strin
         .and_then(|s| s.to_str())
         .ok_or("that note has no name to derive file names from")?
         .to_string();
-    let (mic_path, rel_mic) = crate::notes::unique_asset(&dir, &format!("{stem}-mic"), "opus");
-    let (sys_path, rel_sys) = crate::notes::unique_asset(&dir, &format!("{stem}-sys"), "opus");
     let stop = Arc::new(AtomicBool::new(false));
     let started = Instant::now();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-    let spawn = |side: Side, path: PathBuf| {
+    let mut tracks = Vec::new();
+    let mut paths = Vec::new();
+    for side in sides {
+        let (path, rel) =
+            crate::notes::unique_asset(&dir, &format!("{stem}-{}", side.suffix()), "opus");
         let job = TrackJob {
             side,
-            path,
+            path: path.clone(),
             stop: stop.clone(),
             started,
         };
         let ready = ready_tx.clone();
-        std::thread::spawn(move || run_track(job, &ready))
-    };
-    let mic = spawn(Side::Mic, mic_path.clone());
-    let sys = spawn(Side::System, sys_path.clone());
+        let handle = std::thread::spawn(move || run_track(job, &ready));
+        tracks.push(Track { side, handle, rel });
+        paths.push(path);
+    }
     drop(ready_tx);
-    // Both captures must come up before this counts as recording.
-    for _ in 0..2 {
+    // Every chosen capture must come up before this counts as recording.
+    for _ in 0..tracks.len() {
         let up = ready_rx
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| "a capture didn't start in time".to_string())
             .and_then(|r| r);
         if let Err(e) = up {
             stop.store(true, Ordering::Relaxed);
-            let _ = mic.join();
-            let _ = sys.join();
-            let _ = fs::remove_file(&mic_path);
-            let _ = fs::remove_file(&sys_path);
+            for t in tracks {
+                let _ = t.handle.join();
+            }
+            for p in paths {
+                let _ = fs::remove_file(p);
+            }
             return Err(e);
         }
     }
     *slot = Some(Session {
         stop,
         started,
-        mic,
-        sys,
+        tracks,
         note,
-        rel_mic,
-        rel_sys,
     });
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_tooltip(Some("asapnotes — recording a meeting"));
@@ -141,9 +178,9 @@ pub fn start_meeting_recording(app: AppHandle, note: String) -> Result<(), Strin
     Ok(())
 }
 
-/// Stop the recording and hand back what it wrote. Encoding errors from
-/// either track surface here — stopping is the first moment there is a caller
-/// to tell.
+/// Stop the recording and hand back what it wrote. Encoding errors from any
+/// track surface here — stopping is the first moment there is a caller to
+/// tell.
 #[tauri::command]
 pub fn stop_meeting_recording(app: AppHandle) -> Result<MeetingFiles, String> {
     let taken = session().lock().map_err(|e| e.to_string())?.take();
@@ -151,13 +188,27 @@ pub fn stop_meeting_recording(app: AppHandle) -> Result<MeetingFiles, String> {
         return Err("no recording is running".into());
     };
     s.stop.store(true, Ordering::Relaxed);
-    let join = |h: std::thread::JoinHandle<Result<(), String>>, side: &str| {
-        h.join()
-            .map_err(|_| format!("the {side} capture crashed"))?
-            .map_err(|e| format!("the {side} capture failed: {e}"))
+    let mut files = MeetingFiles {
+        mic: None,
+        system: None,
+        seconds: 0,
     };
-    let mic = join(s.mic, "microphone");
-    let sys = join(s.sys, "system audio");
+    let mut failed = Ok(());
+    for t in s.tracks {
+        let label = t.side.label();
+        let outcome = t
+            .handle
+            .join()
+            .map_err(|_| format!("the {label} capture crashed"))
+            .and_then(|r| r.map_err(|e| format!("the {label} capture failed: {e}")));
+        match outcome {
+            Ok(()) => match t.side {
+                Side::Mic => files.mic = Some(t.rel),
+                Side::System => files.system = Some(t.rel),
+            },
+            Err(e) => failed = failed.and(Err(e)),
+        }
+    }
     if let Some(tray) = app.tray_by_id("main") {
         // Back to the resting tooltip: the app name and its summon chord.
         let chord = crate::settings::settings(&app)
@@ -166,13 +217,9 @@ pub fn stop_meeting_recording(app: AppHandle) -> Result<MeetingFiles, String> {
             .unwrap_or_else(|| crate::desktop::DEFAULT_SUMMON.to_string());
         let _ = tray.set_tooltip(Some(format!("asapnotes ({chord})")));
     }
-    mic?;
-    sys?;
-    Ok(MeetingFiles {
-        mic: s.rel_mic,
-        system: s.rel_sys,
-        seconds: s.started.elapsed().as_secs(),
-    })
+    failed?;
+    files.seconds = s.started.elapsed().as_secs();
+    Ok(files)
 }
 
 /// Whether a recording is running, and for how long — what a freshly loaded

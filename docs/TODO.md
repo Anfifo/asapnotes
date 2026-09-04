@@ -82,9 +82,21 @@ The AI (or anyone) working on this repo keeps this file current while working:
         toggle) was not exercised. Build note: the Rust tree now needs cmake (Opus builds
         from source) — a user-scoped `CMAKE` env var was set pointing at the VS Build
         Tools copy; new shells pick it up, already-open ones need it set or a restart.
+        **Source choice added 2026-09-04** (asked the same day): the dialog has a
+        checkbox per source, both on every time and not remembered — a mic-only pick
+        carried over would silently drop the other voices from a real meeting. The
+        backend records the chosen sides only; the stop line links what exists.
+        Verified live: none checked disables Start, mic-only writes one file and one link.
+  - [ ] **Export the recording as WAV** (asked 2026-09-04): reachable from the app in an
+        obvious way, a single mixed WAV by default (both tracks summed, decoded from the
+        Opus files after the fact, so the split on disk is never lost) with the separate
+        per-track WAVs and the raw `.opus` files also available. Decode path exists
+        already (the test suite's probe). **Open: where it lives** — options are a
+        palette/File-menu verb over the active note's recording links, or an action on
+        the audio link itself in the editor. Awaiting the pick.
   - [ ] **2 — transcription**: helper process + whisper.cpp; consented model download;
         transcript appended as markdown with `[hh:mm:ss]` per paragraph, speaker by
-        track; opus→wav export verb.
+        track.
   - [ ] **3 — live timestamps**: while recording, stamp elapsed time on new bullets so
         hand notes align with the recording and transcript.
   - [ ] **Later — volume control per track** (asked 2026-08-31): a gain slider for each

@@ -2554,7 +2554,7 @@ function App() {
 
   /** Create (or reopen) the meeting note and start recording into it. A
    * rejection surfaces inside the dialog, which stays open. */
-  const startMeeting = async (folder: string, name: string) => {
+  const startMeeting = async (folder: string, name: string, mic: boolean, system: boolean) => {
     const file = isNoteFile(name) ? name : `${name}.md`;
     const id = folder ? `${folder}/${file}` : file;
     if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
@@ -2567,7 +2567,7 @@ function App() {
       setNotes(await api.listNotes());
     }
     openFromExplorer(note, true);
-    await api.startMeetingRecording(note);
+    await api.startMeetingRecording(note, mic, system);
     setRecording({ note, startedAt: Date.now() });
     setMeetingDialog(false);
     editorRef.current?.focus();
@@ -2597,7 +2597,11 @@ function App() {
       const target = assetLinkFor(rec.note, rel);
       return /[\s()]/.test(target) ? `[${label}](<${target}>)` : `[${label}](${target})`;
     };
-    const line = `\n- Meeting recording (${formatElapsed(files.seconds)}): ${link("microphone", files.mic)} · ${link("system audio", files.system)}\n`;
+    const links = [
+      files.mic ? link("microphone", files.mic) : null,
+      files.system ? link("system audio", files.system) : null,
+    ].filter((l) => l !== null);
+    const line = `\n- Meeting recording (${formatElapsed(files.seconds)}): ${links.join(" · ")}\n`;
     if (openRef.current?.id === rec.note) {
       editorRef.current?.insertText(line);
     } else {
