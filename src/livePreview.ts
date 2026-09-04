@@ -182,16 +182,12 @@ const linkTip = (target: string) => Decoration.mark({ attributes: { "data-tip": 
 /**
  * A list indents by how deeply it nests, not by however many spaces were typed
  * — which is what the rendered pane does, and two spaces or four make the same
- * level there. `hang` pulls the marker back into the step it opens, so wrapped
- * lines line up under the item's text instead of under its bullet.
+ * level there. The marker's cell pulls itself back into the step it opens
+ * (App.css), so wrapped lines line up under the item's text, not its bullet.
  */
-const listLine = (depth: number, hang: boolean) =>
+const listLine = (depth: number) =>
   Decoration.line({
-    attributes: {
-      style:
-        `padding-left:calc(var(--md-list-step) * ${depth})` +
-        (hang ? ";text-indent:calc(var(--md-list-step) * -1)" : ""),
-    },
+    attributes: { style: `padding-left:calc(var(--md-list-step) * ${depth})` },
   });
 
 /** Structural type, so the depth walk needs no direct @lezer/common dependency. */
@@ -331,7 +327,7 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
             for (let n = first + 1; n <= last; n++) {
               if (nested.some(([a, b]) => n >= a && n <= b)) continue;
               const line = doc.line(n);
-              decos.push(listLine(depth, false).range(line.from));
+              decos.push(listLine(depth).range(line.from));
               const indent = line.text.length - line.text.trimStart().length;
               if (indent > 0) decos.push(hidden.range(line.from, line.from + indent));
             }
@@ -340,7 +336,7 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
           case "ListMark": {
             const line = doc.lineAt(node.from);
             const mark = doc.sliceString(node.from, node.to);
-            decos.push(listLine(listDepth(node.node), true).range(line.from));
+            decos.push(listLine(listDepth(node.node)).range(line.from));
             // The typed indent gave the depth; the cell draws it from here on.
             if (node.from > line.from) decos.push(hidden.range(line.from, node.from));
             decos.push((/^[-*+]$/.test(mark) ? listBullet : listMark).range(node.from, node.to));

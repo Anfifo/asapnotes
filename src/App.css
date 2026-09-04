@@ -1749,11 +1749,16 @@ body,
 /* A list marker keeps the note's own character and takes the cell the rendered
    pane hangs its bullet in: the cell ends one gap short of the text, so `-`,
    `*` and `10.` all finish on the same edge and the item's words start on it.
-   Unscoped, unlike the markers above: the line's own indent rides on the
-   decoration, so the cell has to follow live preview wherever it is mounted. */
+   The cell backs into the step its line indents by with a negative margin, not
+   a hanging text-indent on the line: text-indent inherits into every block box
+   on the line, so a stacked `**` right after the marker had each of its glyphs
+   start the line over. Unscoped, unlike the markers above: the line's own
+   indent rides on the decoration, so the cell has to follow live preview
+   wherever it is mounted. */
 .cm-list-mark {
   display: inline-block;
   width: calc(var(--md-list-step) - var(--md-list-gap));
+  margin-left: calc(var(--md-list-step) * -1);
   margin-right: var(--md-list-gap);
   text-align: right;
 }
@@ -1883,6 +1888,30 @@ body,
   padding-left: var(--md-quote-pad);
   border-left: 3px solid var(--mk-quote-rule);
   color: var(--syn-quote);
+}
+
+/* Tables rule every cell and set the header in the heading weight. Displayed as
+   a block so a table wider than the measure scrolls inside its own box instead
+   of widening the pane. */
+.preview table {
+  display: block;
+  width: fit-content;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: var(--md-block-gap) 0;
+}
+
+.preview th,
+.preview td {
+  border: 1px solid var(--mk-quote-rule);
+  padding: 0.25em 0.65em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.preview th {
+  font-weight: var(--md-h-weight);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 /* Titlebar controls */
@@ -3858,6 +3887,10 @@ body,
 
   .preview pre {
     background: rgba(255, 255, 255, 0.08);
+  }
+
+  .preview th {
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .editor .cm-codeline {
