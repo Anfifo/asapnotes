@@ -158,6 +158,10 @@ export const recentChanges = (days: number = CHANGES_DAYS) =>
  * window (its changes have aged out since the ledger was read). */
 export const noteLens = (note: string, days: number = CHANGES_DAYS) =>
   invoke<NoteLens | null>("note_lens", { note, days });
+/** A named note's unsaved edits against its file, in the lens shape. `content`
+ * is the live buffer when the caller has one; otherwise the draft on disk. */
+export const draftLens = (name: string, content?: string) =>
+  invoke<NoteLens>("draft_lens", { name, content });
 /** Mark (or unmark) changes as read in the seen ledger. */
 export const setChangesSeen = (items: { note: string; atMs: number }[], seen: boolean) =>
   invoke<void>("set_changes_seen", { items, seen });

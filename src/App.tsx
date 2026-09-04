@@ -314,7 +314,9 @@ function App() {
     error: string | null;
   } | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [mode, setMode] = useState<"edit" | "preview">("edit");
+  // What the main area shows for the open note: the editor, the rendered
+  // preview, or its unsaved edits marked against the file.
+  const [mode, setMode] = useState<"edit" | "preview" | "unsaved">("edit");
   const [paletteOpen, setPaletteOpen] = useState<"notes" | "commands" | null>(null);
   // Pinned = docked beside the editor; survives restarts (default on). Unpinned
   // the panel floats over the editor and closes on select / Esc / click-away.
@@ -2407,6 +2409,62 @@ function App() {
     return true;
   };
 
+  /** Whether a named note carries edits its file doesn't have: the live flag
+   * for the open note, the draft list for everything else. */
+  const hasUnsaved = (id: string) =>
+    openRef.current?.id === id ? dirtyRef.current : draftIds.has(id);
+
+  /** Read a named note's unsaved edits marked against its file. A background
+   * note activates first — the lens reads the open buffer, which is fresher
+   * than the draft on disk by up to one autosave. */
+  const openUnsavedLens = async (id: string) => {
+    if (openRef.current?.id !== id && !(await openTabItem(id))) return;
+    setMode("unsaved");
+  };
+
+  /** Throw away a named note's unsaved edits: the draft goes to the recycle
+   * bin and the buffer reloads from the file, so the tab reads clean again.
+   * Confirmed, since the edits exist nowhere else. */
+  const discardUnsaved = async (id: string) => {
+    const ok = await confirmDialog(
+      `Discard the unsaved changes to "${fileOf(id)}"? The note goes back to what its file holds.`,
+      { title: "Discard unsaved changes", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      const isOpen = openRef.current?.id === id;
+      if (isOpen) {
+        // The bin should hold exactly what is being thrown away.
+        cancelAutosave();
+        await api.writeDraft(id, contentRef.current);
+      }
+      await api.discardDraft(id);
+      setDrafts((d) => d.filter((x) => x.name !== id));
+      if (isOpen) {
+        const content = await api.readNote(id);
+        contentRef.current = content;
+        baselineRef.current = content;
+        setInitialDoc(content);
+        editorRef.current?.setDoc(content);
+        setDirty(false);
+        trackMtime(id);
+        if (modeRef.current === "unsaved") setMode("edit");
+      }
+    } catch (err) {
+      toast(`Couldn't discard those changes — ${errText(err)}`);
+    }
+  };
+
+  /** The unsaved-edits verbs a dirty named note offers from its tab or row. */
+  const unsavedOps = (id: string): MenuEntry[] =>
+    hasUnsaved(id)
+      ? [
+          { label: "Show unsaved changes", run: () => void openUnsavedLens(id) },
+          { label: "Discard unsaved changes…", run: () => void discardUnsaved(id) },
+          "sep",
+        ]
+      : [];
+
   /** Throw away an unsaved untitled draft — unlike deleteNote, this content
    * exists nowhere else, hence its own sterner confirm (and the recycle bin
    * underneath it, like every other deletion). */
@@ -2513,7 +2571,7 @@ function App() {
       { label: "Close others", run: () => closeOtherTabs(t.id) },
       { label: "Close saved", run: closeSavedTabs },
       { label: "Close all", run: closeAllTabs },
-      ...(t.name ? ["sep" as const, ...noteOps(t.name)] : []),
+      ...(t.name ? ["sep" as const, ...unsavedOps(t.id), ...noteOps(t.name)] : []),
     ]);
 
   /** Rename from the explorer: open the note, then edit its name in the tab. */
@@ -2696,6 +2754,7 @@ function App() {
             // label names the folder, since the target is implicit here.
             ...convertFolderEntries(dirOf(id), true),
             "sep" as const,
+            ...unsavedOps(id),
             ...noteOps(id),
           ]
         : ["sep" as const, { label: "Discard draft", run: () => void discardDraft(id) }]),
@@ -3125,8 +3184,17 @@ function App() {
                     )}
                     {(active ? dirty : draftIds.has(t.id)) && (
                       <span
-                        className="dirty"
-                        data-tip={`Unsaved — autosaved as draft. ${kb("save")} to save.`}
+                        className={t.name ? "dirty dirty-btn" : "dirty"}
+                        data-tip={
+                          t.name
+                            ? `Unsaved — autosaved as draft. Click to compare with the file; ${kb("save")} to save.`
+                            : `Unsaved — autosaved as draft. ${kb("save")} to save.`
+                        }
+                        onClick={(e) => {
+                          if (!t.name) return;
+                          e.stopPropagation();
+                          void openUnsavedLens(t.id);
+                        }}
                       />
                     )}
                     <button
@@ -3273,7 +3341,7 @@ function App() {
                 mentionLink={mentionLink}
                 onOpenLink={openLink}
                 onStatus={handleStatus}
-                hidden={mode === "preview"}
+                hidden={mode !== "edit"}
                 view={viewOf(open.id)}
                 features={featuresOf(open.id)}
               />
@@ -3287,6 +3355,56 @@ function App() {
                   paneLineRef.current = line;
                 }}
                 onOpenLink={openLink}
+              />
+            )}
+            {open && open.name && mode === "unsaved" && (
+              <DiffLens
+                note={open.name}
+                order={[]}
+                events={[]}
+                seen={false}
+                source={() => api.draftLens(open.name!, contentRef.current)}
+                heading={`Unsaved changes to ${fileOf(open.name)}, against the file`}
+                throughLabel="Back to editing ›"
+                emptyText="No unsaved changes — the note matches its file."
+                actions={
+                  <>
+                    <button
+                      className="chg-through"
+                      style={{ marginLeft: 0 }}
+                      onClick={() => void discardUnsaved(open.id)}
+                    >
+                      Discard unsaved changes…
+                    </button>
+                    <button
+                      className="chg-through"
+                      style={{ marginLeft: 0 }}
+                      data-tip={`Save (${kb("save")})`}
+                      onClick={() =>
+                        void save()
+                          .then((saved) => {
+                            if (saved) setMode("edit");
+                          })
+                          .catch((err: unknown) =>
+                            toast(`Couldn't save that note — ${errText(err)}`),
+                          )
+                      }
+                    >
+                      Save
+                    </button>
+                  </>
+                }
+                resolveImage={resolveImage}
+                onOpenLens={() => {}}
+                onOpenNote={(_note, line) => {
+                  setMode("edit");
+                  // The editor is shown by the next paint; the jump waits for it.
+                  if (line) requestAnimationFrame(() => editorRef.current?.revealLine(line));
+                }}
+                onOpenLink={openLink}
+                onMarkSeen={() => {}}
+                onClose={() => setMode("edit")}
+                onError={(message) => toast(`Couldn't compare with the file — ${message}`)}
               />
             )}
             {!open && welcome && (

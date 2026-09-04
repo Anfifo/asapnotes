@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { EditorState, StateEffect, StateField, type Range, type Text } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
@@ -91,13 +91,15 @@ function buildMarks(added: LensLine[], dels: LensDel[], doc: Text, open: Set<num
 }
 
 /** The marks as an extension. The document never changes (the lens is
- * read-only), so the only thing that rebuilds them is expanding a pill. */
+ * read-only), so the only thing that rebuilds them is collapsing or expanding
+ * a run of removed lines. They start expanded: what left is as much the change
+ * as what arrived, and a pill hides it behind a click. */
 function lensMarks(lens: NoteLens) {
   const field = StateField.define<{ open: Set<number>; decos: DecorationSet }>({
-    create: (state) => ({
-      open: new Set(),
-      decos: buildMarks(lens.added, lens.dels, state.doc, new Set()),
-    }),
+    create: (state) => {
+      const open = new Set(lens.dels.keys());
+      return { open, decos: buildMarks(lens.added, lens.dels, state.doc, open) };
+    },
     update(value, tr) {
       const flips = tr.effects.filter((e) => e.is(toggleDel));
       if (flips.length === 0) return value;
@@ -142,6 +144,16 @@ interface DiffLensProps {
   onMarkSeen: (items: SeenTarget[], seen: boolean) => void;
   onClose: () => void;
   onError: (message: string) => void;
+  /** Where the marked document comes from; the history store by default. */
+  source?: () => Promise<NoteLens | null>;
+  /** The strip's lead, in place of the note's file name. */
+  heading?: ReactNode;
+  /** The through-button's text, in place of "Open note ›". */
+  throughLabel?: string;
+  /** Verbs for this reading of the note, at the strip's end. */
+  actions?: ReactNode;
+  /** Shown when the source has nothing to mark. */
+  emptyText?: string;
 }
 
 /** One note's changes read as the note itself: the same live-preview surface
@@ -158,6 +170,11 @@ export function DiffLens({
   onMarkSeen,
   onClose,
   onError,
+  source,
+  heading,
+  throughLabel = "Open note ›",
+  actions,
+  emptyText = "Nothing here anymore — this note's changes have left the window.",
 }: DiffLensProps) {
   const [lens, setLens] = useState<NoteLens | null>(null);
   const [loading, setLoading] = useState(true);
@@ -167,6 +184,8 @@ export function DiffLens({
   // App hands fresh arrows every render; the load must not re-run for that.
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
   const resolveImageRef = useRef(resolveImage);
   resolveImageRef.current = resolveImage;
   const onOpenLinkRef = useRef(onOpenLink);
@@ -180,7 +199,7 @@ export function DiffLens({
   useEffect(() => {
     let stale = false;
     setLoading(true);
-    void noteLens(note)
+    void (sourceRef.current ?? (() => noteLens(note)))()
       .then((l) => {
         if (stale) return;
         setLens(l);
@@ -281,7 +300,7 @@ export function DiffLens({
     <div className="lens">
       <div className="changes-strip">
         <span className="chg-totals muted">
-          {fileOf(note)}
+          {heading ?? fileOf(note)}
           {lens && " · "}
           {lens && <span className="chg-add-count">+{lens.addedN}</span>}
           {lens && " "}
@@ -293,8 +312,9 @@ export function DiffLens({
           data-tip="Open the note itself, at the change on screen"
           onClick={() => onOpenNote(note, stops[at])}
         >
-          Open note ›
+          {throughLabel}
         </button>
+        {actions}
         {events.length > 0 && (
           <button
             className="chg-through"
@@ -308,9 +328,7 @@ export function DiffLens({
       {loading ? (
         <p className="chg-empty muted">Loading…</p>
       ) : !lens ? (
-        <p className="chg-empty muted">
-          Nothing here anymore — this note's changes have left the window.
-        </p>
+        <p className="chg-empty muted">{emptyText}</p>
       ) : (
         <>
           <div className="lens-doc" ref={containerRef} />

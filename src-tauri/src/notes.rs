@@ -587,6 +587,40 @@ pub fn discard_draft(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// A named note's unsaved edits, marked the way the changes lens marks an
+/// external edit: the file on disk is the "before", the draft the "after" —
+/// or the live buffer, when the caller holds one fresher than the draft.
+/// A file that is gone reads as empty, so every line shows as added. The
+/// file's line endings are normalised to the editor's, or a CRLF file would
+/// read as rewritten whole.
+#[tauri::command]
+pub fn draft_lens(
+    app: AppHandle,
+    name: String,
+    content: Option<String>,
+) -> Result<history::NoteLens, String> {
+    let s = settings::settings(&app)?;
+    let old = fs::read_to_string(resolve_note(&app, &name)?)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
+    let text = match content {
+        Some(text) => text,
+        None => fs::read_to_string(drafts_dir(&app)?.join(checked_name(&app, &s, &name)?))
+            .map_err(|e| e.to_string())?,
+    };
+    let (added, dels, added_n, removed_n) = history::lens_marks(&old, &text);
+    Ok(history::NoteLens {
+        note: name,
+        text,
+        added,
+        dels,
+        added_n,
+        removed_n,
+        at_ms: now_ms(),
+        own_edits_since: false,
+    })
+}
+
 fn assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = notes_root(app)?.join(ASSETS_DIR);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

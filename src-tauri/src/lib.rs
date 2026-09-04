@@ -293,6 +293,7 @@ pub fn run() {
             history::scan_changes,
             history::recent_changes,
             history::note_lens,
+            notes::draft_lens,
             history::set_changes_seen,
             notes::add_mount,
             notes::create_virtual_folder,

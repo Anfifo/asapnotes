@@ -479,7 +479,7 @@ pub struct NoteLens {
 /// Marks for the rendered document: which lines of `new` are additions (down
 /// to the changed words, where a line was edited rather than written), and
 /// where the removed lines sat.
-fn lens_marks(old: &str, new: &str) -> (Vec<LensLine>, Vec<LensDel>, u32, u32) {
+pub(crate) fn lens_marks(old: &str, new: &str) -> (Vec<LensLine>, Vec<LensDel>, u32, u32) {
     let diff = similar::TextDiff::from_lines(old, new);
     let mut added: Vec<LensLine> = Vec::new();
     let mut dels: Vec<LensDel> = Vec::new();
