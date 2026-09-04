@@ -1613,6 +1613,19 @@ function App() {
     return () => document.removeEventListener("pointerdown", onDown);
   }, [explorerOpen, explorerDocked]);
 
+  // The webview's own right-click menu (back, reload, inspect) means nothing in
+  // a notes app. Surfaces with a menu of their own already take the event;
+  // text fields keep the native cut/copy/paste; everything else gets nothing.
+  useEffect(() => {
+    const onMenu = (e: MouseEvent) => {
+      const t = e.target as Element;
+      if (t.closest("input, textarea, [contenteditable]")) return;
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", onMenu);
+    return () => document.removeEventListener("contextmenu", onMenu);
+  }, []);
+
   // Zoom: persisted factor is re-applied at startup; Ctrl+scroll adjusts it
   // (Ctrl+± / Ctrl+0 live in the app keydown handler).
   useEffect(() => {
@@ -1628,19 +1641,6 @@ function App() {
 
   // External-change detection (files are shared with other tools by design):
   // whenever the window regains focus — a summon included — re-list notes and
-  // The webview's own right-click menu (back, reload, inspect) means nothing in
-  // a notes app. Surfaces with a menu of their own already take the event;
-  // text fields keep the native cut/copy/paste; everything else gets nothing.
-  useEffect(() => {
-    const onMenu = (e: MouseEvent) => {
-      const t = e.target as Element;
-      if (t.closest("input, textarea, [contenteditable]")) return;
-      e.preventDefault();
-    };
-    document.addEventListener("contextmenu", onMenu);
-    return () => document.removeEventListener("contextmenu", onMenu);
-  }, []);
-
   // drafts, and re-sync the open note against its file. The rule: a
   // clean buffer reloads silently (in place, cursor kept); a dirty one keeps
   // editing and the stale mtime makes Ctrl+S raise the overwrite confirm.
