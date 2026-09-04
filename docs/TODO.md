@@ -92,8 +92,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
       Superseded when this lands, and a new entry records the why.
       **Order picked: candidate sheet first, then one slice** — the new map view and the
       deletion land together so the MAP chip never goes dark.
-      _2026-08-25: candidate sheet published, awaiting a pick_ —
-      (a private working page, since removed). Four
+      _2026-08-25: candidate sheet published, awaiting a pick._ Four
       treatments over the repo's own docs graph (21 notes, 15 referenced files, 101
       references, computed the way `projectMap.ts` computes a map), both themes at the
       app's tokens, every pane live (hover lifts a node's lines and shows its card, click
@@ -520,8 +519,6 @@ text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
       surfaces reading one token set, with the proposed values written out
       (`--md-base: 1rem`, `--md-line: 1.65`, h1/h2/h3 at 1.6/1.32/1.14em, weight 650,
       `--md-block-gap: 0.55em`, `--md-measure: 72ch`).
-      _The sheet (temporary working link, private to this account — delete with this item):_
-      (a private working page, since removed)
       _No code yet._ Candidates compose, and once picked the slice lands across
       `livePreview.ts` and `App.css` — the shared scale reaches all five surfaces at once
       (note editor, diff lens, file lens, preview pane, canvas text blocks).
@@ -954,10 +951,6 @@ text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
       color key square; in-folder packing tightens (≈20 gap in-folder, ≈110 between
       clusters, +14px vertical for tab headroom); folder-link edges retarget the
       folder's tab/cluster instead of the group backdrop.
-      _The approved sheet (temporary working link, delete with this item — private
-      to this account; rounds 1–3 with the picked F1 rendered at 100% and as a field
-      scene, both themes):_
-      (a private working page, since removed)
       _Reference metrics for F1, lifted from the approved sheet's CSS so the build
       matches the approved rendering (tab values in CSS px at zoom 1):_ tab height
       20, line-height 19, font 10.5px weight 650, radius 6px 6px 0 0, positioned at
@@ -1038,8 +1031,8 @@ text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
       — external-file editing stays the planned mappings item; (2) runs its own
       candidate pass (recorded above, awaiting a pick).
       **Implemented 2026-08-17, all gates + tests clean (36), verified live
-      over the devtools protocol; committed as `e21fc8d` (map surface) +
-      `d6944d8` (file lens).** What shipped: - `projectMap.ts`: non-markdown targets get compact cards (110×68,
+      over the devtools protocol; committed as `c1f0cba` (map surface) +
+      `8824495` (file lens).** What shipped: - `projectMap.ts`: non-markdown targets get compact cards (110×68,
       extension decides at compute time); cluster layout became row packing
       that mixes card sizes (a row is as tall as its tallest item). - `BoardView`: per-node in/out degrees computed from the document's own
       edges (a snapshot saved as a canvas keeps counting right); file cards
@@ -1166,9 +1159,7 @@ text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
       arrow (lean), 2 box-and-arrow (muddy at 12px, and notes open in-app),
       3 chevron (reads "expand"), 4 straight arrow (echoes the edge arrows).
       Scope stays the recorded lean — every canvas file card, not just the
-      map. _The sheet (temporary working link, delete with this item —
-      private to this account):_
-      (a private working page, since removed)
+      map.
       _Picked same day: **A with glyph 2** (hover-revealed corner button,
       box-and-arrow), the user adding explicitly that double-click keeps
       opening too — the button is an addition, never a replacement.

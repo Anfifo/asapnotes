@@ -6,7 +6,7 @@
 
 Instant-capture markdown notes for Windows. Hit a global keybind, the window is there, type,
 get back to what you were doing — built for the "I need to write this down _now_, I'm in a
-meeting" moment. An MCP server over the same notes is planned so an AI can go over them with you.
+meeting" moment. An MCP server over the same notes lets an AI go over them with you.
 
 ## How it stays instant
 
@@ -29,8 +29,29 @@ later cloud share / live collaboration.
 
 ## Status
 
-Runnable skeleton (2026-08-06): the window launches; no features yet. Build-out order lives in
-[docs/TODO.md](docs/TODO.md).
+Working and in daily use, Windows only. What exists today: tray summon on a global hotkey,
+a markdown editor with live preview, tabs, an explorer over projects and attached folders,
+cross-note search, `@`-mention links between notes, a computed project map, a recent-changes
+view, an MCP server over the same notes ([mcp/](mcp/README.md)), and meeting recording
+into the note's assets. What's next lives in [docs/TODO.md](docs/TODO.md); why things are
+the way they are lives in [docs/decisions/](docs/decisions/README.md).
+
+**No unrequested network connections.** The app never phones home: no telemetry, no
+analytics, no update checks unless you ask for them. You can verify this from the source.
+
+**Meeting recording captures other people.** It records your microphone and your system
+audio to files next to the note, locally, and nothing leaves the machine. Whether you may
+record a conversation depends on where you are and who has agreed; telling the other
+participants is on you. The app's part is a recording indicator that cannot be missed.
+
+This is a personal project built in the open, with substantial help from AI coding tools.
+Issues and pull requests are welcome; responses come when time allows.
+
+## Install
+
+There is no signed installer yet. Build it yourself (see below) or run `npm.cmd run tauri
+build` to produce an installer under `src-tauri/target/release/bundle/`. Windows will show an
+"unrecognized app" warning for unsigned installers; choose "More info" and then "Run anyway".
 
 ## Development
 
@@ -65,3 +86,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml
 | `src/`       | React/TypeScript UI (Vite)                                                                                              |
 | `src-tauri/` | Tauri 2 shell (Rust): window, tray, hotkey, commands                                                                    |
 | `docs/`      | Developer handbook: [TODO.md](docs/TODO.md) (live working file) + [decisions/](docs/decisions/README.md) (decision log) |
+
+## License
+
+[MIT](LICENSE). Use it, fork it, ship it; keep the copyright notice.

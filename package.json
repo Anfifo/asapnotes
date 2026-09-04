@@ -1,6 +1,8 @@
 {
   "name": "asapnotes",
   "private": true,
+  "license": "MIT",
+  "repository": "github:Anfifo/asapnotes",
   "version": "0.1.0",
   "type": "module",
   "scripts": {

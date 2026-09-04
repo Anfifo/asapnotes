@@ -3,6 +3,8 @@ name = "asapnotes"
 version = "0.1.0"
 description = "Instant-capture markdown notes: resident tray app summoned by a global hotkey"
 authors = ["Anfifo"]
+license = "MIT"
+repository = "https://github.com/Anfifo/asapnotes"
 edition = "2021"
 # The crate builds two binaries (app + MCP helper), so the bare `cargo run`
 # that `tauri dev` invokes has to be told which one is the app.
