@@ -1,0 +1,48 @@
+# Turns a version tag into a draft GitHub Release with the Windows installers attached.
+# Draft on purpose: the release is looked at before it is published. Tag with the version
+# the manifests carry (`v0.1.0` for version 0.1.0); the action reads the version from
+# tauri.conf.json and names the release after it.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      # The runner's PowerShell may block npm's .ps1 shim the same way a fresh Windows
+      # machine does; bash never asks.
+      - run: npm ci
+        shell: bash
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "asapnotes v__VERSION__"
+          releaseBody: >
+            Windows installer. Unsigned for now: Windows shows an "unrecognized app"
+            warning; choose "More info" and then "Run anyway".
+          releaseDraft: true
+          prerelease: false

@@ -31,6 +31,16 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Anfifo",
+    "copyright": "Copyright (c) 2026 Anfifo",
+    "shortDescription": "Instant-capture markdown notes",
+    "longDescription": "Always-resident tray app summoned by a global hotkey. Notes are plain markdown files you own.",
+    "licenseFile": "../LICENSE",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
