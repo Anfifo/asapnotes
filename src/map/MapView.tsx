@@ -10,6 +10,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { FileIcon } from "../fileIcons";
+import { Icon } from "../icons";
 import type { MenuEntry } from "../MenuBar";
 import { colorOf, iconOf } from "../noteTypes";
 import type { MapGraph, MapNode } from "./graph";
@@ -676,7 +677,7 @@ export default function MapView({
             data-tip="Close details"
             onClick={() => setDetail(null)}
           >
-            ×
+            <Icon name="x" />
           </button>
         </div>
         {folderChip(n.folder)}
@@ -738,7 +739,7 @@ export default function MapView({
             data-tip="Zoom out"
             onClick={() => zoomCenter((z) => z / 1.2)}
           >
-            −
+            <Icon name="minus" />
           </button>
           {/* Logarithmic, so the middle is 100% and each half covers a factor
               of ten — a whole map at one end, a card filling the view at the other. */}
@@ -764,7 +765,7 @@ export default function MapView({
             {Math.round(cam.z * 100)}%
           </button>
           <button className="map-btn" data-tip="Zoom in" onClick={() => zoomCenter((z) => z * 1.2)}>
-            +
+            <Icon name="plus" />
           </button>
           <button className="map-btn" data-tip="Fit every node in view" onClick={fit}>
             Fit

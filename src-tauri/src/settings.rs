@@ -164,9 +164,7 @@ pub struct ExplorerAppearance {
     /// Height of the current-project panel; absent means size-to-content.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pane: Option<f64>,
-    /// Panels closed from their header; the View menu reopens them.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hide_recent: Option<bool>,
+    /// Notes panel closed from its header; the View menu reopens it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hide_notes: Option<bool>,
 }

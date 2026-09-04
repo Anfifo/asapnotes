@@ -6,6 +6,7 @@ import {
   setMcpWriteScope,
   type McpStatus,
 } from "./notes";
+import { Icon } from "./icons";
 import { creatableTypes } from "./noteTypes";
 import type { Theme } from "./theme";
 import {
@@ -128,7 +129,7 @@ function ChordRow({
             data-tip="Reset to default"
             onClick={onReset}
           >
-            ↺
+            <Icon name="rotate-ccw" />
           </button>
         )}
       </td>
@@ -361,7 +362,8 @@ function McpSection() {
       ) : (
         <>
           <button className="mcp-disclose" onClick={() => setShowLog(!showLog)}>
-            {showLog ? "▾" : "▸"} {status.recentCalls.length} write
+            <Icon name={showLog ? "chevron-down" : "chevron-right"} /> {status.recentCalls.length}{" "}
+            write
             {status.recentCalls.length === 1 ? "" : "s"}, newest first
           </button>
           {showLog && (
@@ -611,7 +613,9 @@ export function Settings({
         )}
         <McpSection />
         <h2 ref={shortcutsRef}>Keyboard shortcuts</h2>
-        <p className="settings-note">Click a shortcut to change it; ↺ puts the default back.</p>
+        <p className="settings-note">
+          Click a shortcut to change it; the reset arrow beside a changed one puts the default back.
+        </p>
         <table>
           <tbody>
             <ChordRow

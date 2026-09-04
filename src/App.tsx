@@ -12,6 +12,7 @@ import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
+import { Icon } from "./icons";
 import { MeetingChip } from "./MeetingChip";
 import { StartMeeting } from "./Meeting";
 import { formatElapsed } from "./meetingTime";
@@ -221,16 +222,6 @@ const FORMAT_GROUPS: { kind: FormatKind; glyph: ReactNode; title: string }[][] =
 
 /** The network mark the map surfaces share — the explorer chip and the map
  * tab wear the same glyph, so the tab reads as what the chip opened. */
-const MAP_GLYPH = icon(
-  <>
-    <rect x="16" y="16" width="6" height="6" rx="1" />
-    <rect x="2" y="16" width="6" height="6" rx="1" />
-    <rect x="9" y="2" width="6" height="6" rx="1" />
-    <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
-    <path d="M12 12V8" />
-  </>,
-);
-
 interface NoteEntry extends PaletteItem {
   kind: "note";
   /** false = untitled draft that has no saved note yet */
@@ -350,10 +341,7 @@ function App() {
     const saved = Number(localStorage.getItem("explorerPane"));
     return saved > 0 ? saved : null;
   });
-  // Panels closed from their header ×; the View menu reopens them.
-  const [hideRecent, setHideRecentState] = useState(
-    () => localStorage.getItem("explorerHideRecent") === "1",
-  );
+  // Notes panel closed from its header ×; the View menu reopens it.
   const [hideNotes, setHideNotesState] = useState(
     () => localStorage.getItem("explorerHideNotes") === "1",
   );
@@ -527,7 +515,6 @@ function App() {
       width: explorerWidth,
       pinned: explorerPinned,
       pane: explorerPane,
-      hideRecent,
       hideNotes,
     },
     explorerTint,
@@ -573,12 +560,6 @@ function App() {
     setExplorerPinnedState(pinned);
     localStorage.setItem("explorerPinned", pinned ? "1" : "0");
     persistAppearance({ explorer: { ...appearanceRef.current.explorer, pinned } });
-  };
-
-  const setHideRecent = (hide: boolean) => {
-    setHideRecentState(hide);
-    localStorage.setItem("explorerHideRecent", hide ? "1" : "0");
-    persistAppearance({ explorer: { ...appearanceRef.current.explorer, hideRecent: hide } });
   };
 
   const setHideNotes = (hide: boolean) => {
@@ -1154,10 +1135,6 @@ function App() {
         setExplorerPane(explorer.pane);
         localStorage.setItem("explorerPane", String(explorer.pane)); // mirror only
       }
-      if (typeof explorer?.hideRecent === "boolean") {
-        setHideRecentState(explorer.hideRecent);
-        localStorage.setItem("explorerHideRecent", explorer.hideRecent ? "1" : "0"); // mirror only
-      }
       if (typeof explorer?.hideNotes === "boolean") {
         setHideNotesState(explorer.hideNotes);
         localStorage.setItem("explorerHideNotes", explorer.hideNotes ? "1" : "0"); // mirror only
@@ -1651,6 +1628,19 @@ function App() {
 
   // External-change detection (files are shared with other tools by design):
   // whenever the window regains focus — a summon included — re-list notes and
+  // The webview's own right-click menu (back, reload, inspect) means nothing in
+  // a notes app. Surfaces with a menu of their own already take the event;
+  // text fields keep the native cut/copy/paste; everything else gets nothing.
+  useEffect(() => {
+    const onMenu = (e: MouseEvent) => {
+      const t = e.target as Element;
+      if (t.closest("input, textarea, [contenteditable]")) return;
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", onMenu);
+    return () => document.removeEventListener("contextmenu", onMenu);
+  }, []);
+
   // drafts, and re-sync the open note against its file. The rule: a
   // clean buffer reloads silently (in place, cursor kept); a dirty one keeps
   // editing and the stale mtime makes Ctrl+S raise the overwrite confirm.
@@ -2108,10 +2098,6 @@ function App() {
           label: explorerOpen ? "Hide explorer" : "Show explorer",
           detail: kb("explorer"),
           run: () => setExplorerOpen((o) => !o),
-        },
-        {
-          label: hideRecent ? "Show Recent panel" : "Hide Recent panel",
-          run: () => setHideRecent(!hideRecent),
         },
         {
           label: hideNotes ? "Show Notes panel" : "Hide Notes panel",
@@ -2889,7 +2875,7 @@ function App() {
 
   // Welcome panel content: the target-less main actions, and the freshest
   // notes and drafts (computed only while it shows) merged to one entry per
-  // name at the newest timestamp — the explorer's Recent rule, shortened.
+  // name at the newest timestamp.
   const welcomeActions = [
     { label: "New note", detail: kb("new-note"), run: () => void newNote() },
     { label: "New project…", run: () => setCreatingProject(true) },
@@ -2961,7 +2947,7 @@ function App() {
             }
             onClick={() => setExplorerOpen((o) => !o)}
           >
-            {explorerOpen ? "«" : "»"}
+            <Icon name={explorerOpen ? "panel-left-close" : "panel-left-open"} />
           </button>
         )}
         {explorerOpen && (
@@ -3040,9 +3026,7 @@ function App() {
               localStorage.removeItem("explorerPane");
               persistAppearance({ explorer: { ...appearanceRef.current.explorer, pane: null } });
             }}
-            hideRecent={hideRecent}
             hideNotes={hideNotes}
-            onHideRecent={() => setHideRecent(true)}
             onHideNotes={() => setHideNotes(true)}
           />
         )}
@@ -3094,12 +3078,16 @@ function App() {
                       <span className="tab-label">
                         {isDiffTab(t.id) ? (
                           <>
-                            <span className="tab-diff">±</span>
+                            <span className="tab-diff">
+                              <Icon name="diff" />
+                            </span>
                             {diffNote && fileOf(diffNote)}
                           </>
                         ) : mapProject ? (
                           <>
-                            <span className="tab-map">{MAP_GLYPH}</span>
+                            <span className="tab-map">
+                              <Icon name="map" />
+                            </span>
                             {mapProject}
                           </>
                         ) : lensFile ? (
@@ -3120,9 +3108,7 @@ function App() {
                       <span
                         className="dirty"
                         data-tip={`Unsaved — autosaved as draft. ${kb("save")} to save.`}
-                      >
-                        ●
-                      </span>
+                      />
                     )}
                     <button
                       className="tab-close"
@@ -3133,7 +3119,7 @@ function App() {
                         requestCloseTab(t.id);
                       }}
                     >
-                      ×
+                      <Icon name="x" />
                     </button>
                   </div>
                 );
@@ -3144,7 +3130,7 @@ function App() {
                 data-tip={`New note (${kb("new-note")})`}
                 onClick={() => void newNote()}
               >
-                +
+                <Icon name="plus" />
               </button>
             </div>
             <header className="titlebar">

@@ -1,10 +1,9 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { FileIcon } from "./fileIcons";
+import { Icon } from "./icons";
 import { FileInfo, MountInfo } from "./notes";
 import { colorOf, iconOf } from "./noteTypes";
 import { fileOf, projectOf } from "./paths";
-
-const RECENT_COUNT = 5;
 
 /** Folder hierarchy of a project's notes (deep external projects). */
 interface TreeNode {
@@ -104,17 +103,15 @@ interface ExplorerProps {
   onPaneResizeEnd: () => void;
   /** Double-click on a split — back to size-to-content. */
   onPaneReset: () => void;
-  /** Panels closed from their header ×; the View menu reopens them. */
-  hideRecent: boolean;
+  /** Notes panel closed from its header ×; the View menu reopens it. */
   hideNotes: boolean;
-  onHideRecent: () => void;
   onHideNotes: () => void;
   /** Where a type's color lands on a row: icon + extension, or icon only. */
   tint: "full" | "icon";
 }
 
-/** Side panel: the open note's project first, then recent files (collapsed
- * by default) and the remaining notes grouped by project. */
+/** Side panel: the open note's project first, then the remaining notes
+ * grouped by project. */
 export function Explorer({
   notes,
   drafts,
@@ -150,9 +147,7 @@ export function Explorer({
   onPaneResize,
   onPaneResizeEnd,
   onPaneReset,
-  hideRecent,
   hideNotes,
-  onHideRecent,
   onHideNotes,
   tint,
 }: ExplorerProps) {
@@ -177,23 +172,13 @@ export function Explorer({
     }
   }, [creatingIn, currentProject]);
 
-  // A note with unsaved edits appears in both lists — keep the newest timestamp.
-  const latest = new Map<string, number>();
-  for (const f of [...notes, ...drafts]) {
-    latest.set(f.name, Math.max(latest.get(f.name) ?? 0, f.modified_ms));
-  }
-  const recent = [...latest.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, RECENT_COUNT)
-    .map(([name]) => name);
-
   const loose = notes.filter((n) => !projectOf(n.name));
   // Whether a pane is hoisted to the top slot: the open note's project, or —
   // for a projectless note — the loose files as a pseudo-project.
   const paneCurrent = currentProject !== null || looseCurrent;
   // The pseudo-project pane's files: every projectless note and draft merged
-  // to one entry per name, newest first like Recent — the root has no folder
-  // tree to impose another order.
+  // to one entry per name, newest first — the root has no folder tree to
+  // impose another order.
   let looseIds: string[] = [];
   if (looseCurrent) {
     const looseLatest = new Map<string, number>();
@@ -214,7 +199,7 @@ export function Explorer({
     ...newFolders.filter((d) => projectOf(d) === p).map((d) => d.slice(p.length + 1)),
   ];
 
-  const item = (id: string, showProject = false) => {
+  const item = (id: string) => {
     const file = fileOf(id);
     const dot = file.lastIndexOf(".");
     const stem = dot > 0 ? file.slice(0, dot) : file;
@@ -241,8 +226,7 @@ export function Explorer({
               </span>
             ))}
         </span>
-        {showProject && projectOf(id) && <span className="explorer-detail">{projectOf(id)}</span>}
-        {draftIds.has(id) && <span className="dirty">●</span>}
+        {draftIds.has(id) && <span className="dirty" />}
       </li>
     );
   };
@@ -254,13 +238,11 @@ export function Explorer({
       aria-label="Hide panel"
       data-tip="Hide panel — the View menu brings it back"
       onClick={(e) => {
-        // On the Recent summary this click would otherwise toggle the list.
-        e.preventDefault();
         e.stopPropagation();
         onHide();
       }}
     >
-      ×
+      <Icon name="x" />
     </button>
   );
 
@@ -280,20 +262,7 @@ export function Explorer({
         onOpenMap(p);
       }}
     >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="16" y="16" width="6" height="6" rx="1" />
-        <rect x="2" y="16" width="6" height="6" rx="1" />
-        <rect x="9" y="2" width="6" height="6" rx="1" />
-        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
-        <path d="M12 12V8" />
-      </svg>
+      <Icon name="map" />
       MAP
     </button>
   );
@@ -311,7 +280,7 @@ export function Explorer({
         onStartCreate(dir);
       }}
     >
-      +
+      <Icon name="plus" />
     </button>
   );
 
@@ -417,10 +386,7 @@ export function Explorer({
     </details>
   );
 
-  const recentVisible = recent.length > 0 && !hideRecent;
-
-  // Recent sizes to its content, so the only adjustable share is the current
-  // project's — either gap around Recent drags that same boundary.
+  // The gap between the two panels drags the current project's share.
   const split = (
     <div
       className="pane-split"
@@ -453,56 +419,60 @@ export function Explorer({
 
   return (
     <nav className={pinned ? "explorer" : "explorer floating"} style={{ width }}>
-      <header className="explorer-bar">
+      {/* The bar has no rows of its own, so its right-click is the panel body's. */}
+      <header className="explorer-bar" onContextMenu={onBodyContext}>
         <div className="explorer-views">
           <button
-            className={view === "files" ? "view-btn open" : "view-btn"}
+            className={view === "files" ? "bar-btn open" : "bar-btn"}
             aria-label="Files"
             data-tip="Files"
             onClick={() => onViewChange("files")}
           >
-            ▤
+            <Icon name="files" />
           </button>
           <button
-            className={view === "search" ? "view-btn open" : "view-btn"}
+            className={view === "search" ? "bar-btn open" : "bar-btn"}
             aria-label="Search in notes"
             data-tip="Search in notes (Ctrl+Shift+F)"
             onClick={() => onViewChange("search")}
           >
-            ⌕
+            <Icon name="search" />
           </button>
           <button
-            className={view === "changes" ? "view-btn open" : "view-btn"}
+            className={view === "changes" ? "bar-btn open" : "bar-btn"}
             aria-label="Recent changes"
             data-tip="Recent changes"
             onClick={() => onViewChange("changes")}
           >
-            ±{changesCount > 0 && <span className="view-count">{changesCount}</span>}
+            <Icon name="diff" />
+            {changesCount > 0 && <span className="view-count">{changesCount}</span>}
           </button>
         </div>
+        {/* Seam between what is looked at (the views) and what is done (the actions). */}
+        <span className="bar-sep" />
         <button
-          className="view-btn"
+          className="bar-btn"
           aria-label="New note"
           data-tip="New note"
           onClick={() => onStartCreate(currentProject ?? "")}
         >
-          +
+          <Icon name="plus" />
         </button>
         <button
-          className={pinned ? "pin-btn pinned" : "pin-btn"}
+          className={pinned ? "bar-btn pin pinned" : "bar-btn pin"}
           aria-label={pinned ? "Unpin explorer" : "Pin explorer"}
           data-tip={pinned ? "Unpin — float over the editor" : "Pin — dock beside the editor"}
           onClick={onTogglePin}
         >
-          📌
+          <Icon name="pin" />
         </button>
         <button
-          className="collapse-btn"
+          className="bar-btn"
           aria-label="Collapse explorer"
           data-tip="Collapse explorer (Ctrl+Shift+E)"
           onClick={onCollapse}
         >
-          «
+          <Icon name="panel-left-close" />
         </button>
       </header>
       {view === "search" && searchSlot}
@@ -561,21 +531,9 @@ export function Explorer({
             )}
           </section>
         )}
-        {recentVisible && (
-          <>
-            {paneCurrent && sep}
-            <details className="explorer-recent explorer-card">
-              <summary>
-                Recent
-                {hideBtn(onHideRecent)}
-              </summary>
-              <ul>{recent.map((id) => item(id, true))}</ul>
-            </details>
-          </>
-        )}
         {!hideNotes && (
           <>
-            {(paneCurrent || recentVisible) && sep}
+            {paneCurrent && sep}
             <section className="explorer-card notes">
               <h2 onContextMenu={(e) => onDirContext(e, "")}>
                 <span className="explorer-name">Notes</span>
@@ -595,7 +553,7 @@ export function Explorer({
             </section>
           </>
         )}
-        {!paneCurrent && !recentVisible && hideNotes && (
+        {!paneCurrent && hideNotes && (
           <div className="explorer-card">
             <p className="muted">Panels hidden — the View menu brings them back</p>
           </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import mark from "../assets/mark.svg";
+import { Icon } from "./icons";
 
 export type MenuEntry = { label: string; detail?: string; run: () => void } | "sep";
 
@@ -226,7 +227,9 @@ export function MenuBar({ menus, searchLabel, onSearch, status, onHide }: MenuBa
         onMouseDown={(e) => e.preventDefault()}
         onClick={onSearch}
       >
-        <span className="search-glyph">{""}</span>
+        <span className="search-glyph">
+          <Icon name="search" />
+        </span>
         <span className="search-label">{searchLabel}</span>
       </button>
       {status}

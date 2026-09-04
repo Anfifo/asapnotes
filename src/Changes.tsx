@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { Icon } from "./icons";
 import { ChangeSummary, CHANGES_DAYS } from "./notes";
 import { MenuEntry } from "./MenuBar";
 import { fileOf } from "./paths";
@@ -149,7 +150,7 @@ export function ChangesView({
                         toggleRow(r);
                       }}
                     >
-                      ✓
+                      <Icon name="check" />
                     </button>
                   </li>
                 ))}

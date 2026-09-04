@@ -7,6 +7,7 @@ import { LensDel, LensLine, NoteLens, noteLens } from "./notes";
 import { livePreview } from "./livePreview";
 import { linkify } from "./links";
 import { errText } from "./toasts";
+import { Icon } from "./icons";
 import { fileOf } from "./paths";
 import { SeenTarget } from "./changesLedger";
 
@@ -300,7 +301,7 @@ export function DiffLens({
             style={{ marginLeft: 0 }}
             onClick={() => onMarkSeen(events, !seen)}
           >
-            {seen ? "✓ Seen — mark unseen" : "✓ Mark as seen"}
+            <Icon name="check" /> {seen ? "Seen — mark unseen" : "Mark as seen"}
           </button>
         )}
       </div>
@@ -321,7 +322,7 @@ export function DiffLens({
                 data-tip={at > 0 ? "Previous change (Shift+F8)" : "Previous note (Shift+F8)"}
                 onClick={() => step(-1)}
               >
-                ‹
+                <Icon name="chevron-left" />
               </button>
               <span className="lens-jump-count">
                 Change {at + 1} of {stops.length}
@@ -332,7 +333,7 @@ export function DiffLens({
                 data-tip={at + 1 < stops.length ? "Next change (F8)" : "Next note (F8)"}
                 onClick={() => step(1)}
               >
-                ›
+                <Icon name="chevron-right" />
               </button>
             </div>
           )}
