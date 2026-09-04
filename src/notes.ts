@@ -339,6 +339,8 @@ export interface Settings {
   /** Double-clicking a referenced non-markdown file on the map opens it with
    * the system default app instead of the in-app read-only view. */
   openFilesExternally?: boolean | null;
+  /** Folder the meeting dialog offers first; absent means the notes root. */
+  meetingFolder?: string | null;
 }
 
 /** `error` is set when the file couldn't be parsed: shipped defaults are in
@@ -367,5 +369,32 @@ export const setMapView = (view: string) => invoke<void>("set_map_view", { view 
  * instead of the in-app read-only view. */
 export const setOpenFilesExternally = (on: boolean) =>
   invoke<void>("set_open_files_externally", { on });
+/** Folder the meeting dialog offers first; null goes back to the notes root. */
+export const setMeetingFolder = (folder: string | null) =>
+  invoke<void>("set_meeting_folder", { folder });
+
+/** What a finished meeting recording left behind: the two asset paths (base-
+ * relative, like every asset path) and how long it ran. */
+export interface MeetingFiles {
+  mic: string;
+  system: string;
+  seconds: number;
+}
+
+export interface MeetingState {
+  active: boolean;
+  seconds: number;
+  /** The note being recorded into, when active. */
+  note?: string | null;
+}
+
+/** Start recording the microphone and the system playback into the note's
+ * `assets/`. Fails if either capture can't open or one is already running. */
+export const startMeetingRecording = (note: string) =>
+  invoke<void>("start_meeting_recording", { note });
+/** Stop the running recording; the returned paths are already on disk. */
+export const stopMeetingRecording = () => invoke<MeetingFiles>("stop_meeting_recording");
+/** Whether a recording is running — what a fresh window load asks. */
+export const meetingRecordingState = () => invoke<MeetingState>("meeting_recording_state");
 
 export const quit = () => invoke<void>("quit");

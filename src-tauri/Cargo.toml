@@ -39,6 +39,12 @@ dirs = "6"
 # readability, which is exactly where a hand-rolled Myers would spend its
 # budget — same reasoning as `ignore` above.
 similar = { version = "2", features = ["inline"] }
+# Meeting recording. Capture (microphone + playback loopback), the Opus voice
+# codec, and its Ogg container. None of it runs — or holds memory — until a
+# recording starts. Building the codec needs cmake on PATH (see CLAUDE.md).
+cpal = "0.16"
+audiopus = "0.2"
+ogg = "0.9"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-global-shortcut = "2"

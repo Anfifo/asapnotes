@@ -12,6 +12,9 @@ import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
+import { MeetingChip } from "./MeetingChip";
+import { StartMeeting } from "./Meeting";
+import { formatElapsed } from "./meetingTime";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
 import { NewProject } from "./NewProject";
 import {
@@ -384,6 +387,12 @@ function App() {
     }
   }, [explorerNarrow, explorerPinned, explorerOpen]);
   const [creatingProject, setCreatingProject] = useState(false);
+  const [meetingDialog, setMeetingDialog] = useState(false);
+  // The running meeting recording, driving the titlebar chip. Resynced from
+  // the backend on load — the recording outlives a webview reload.
+  const [recording, setRecording] = useState<{ note: string; startedAt: number } | null>(null);
+  // Folder the meeting dialog offers first: wherever the last meeting went.
+  const [meetingFolder, setMeetingFolderState] = useState("");
   // Explorer-driven creation is name-first: the target dir ("" = notes root)
   // gets an inline input row in the tree, Enter creates the file — or, with
   // kind "folder", a real directory.
@@ -1057,17 +1066,22 @@ function App() {
    * `assets/`, so the link starts from wherever the note actually resolved;
    * everything under the root shares the root's. Same rule as
    * `assets_dir_for` in notes.rs, which is what chose the folder. */
+  const assetLinkFor = useCallback(
+    (noteId: string, rel: string) => {
+      const root = rootPathRef.current;
+      const { dir } = baseOf(noteId);
+      const below = relativePath(root, dir);
+      const owner = below !== null && !below.startsWith("../") ? root : dir;
+      return relativePath(noteDirOf(noteId), `${owner}/${rel}`) ?? rel;
+    },
+    [baseOf, noteDirOf],
+  );
   const assetLink = useCallback(
     (rel: string) => {
       const cur = openRef.current;
-      if (!cur) return rel;
-      const root = rootPathRef.current;
-      const { dir } = baseOf(cur.id);
-      const below = relativePath(root, dir);
-      const owner = below !== null && !below.startsWith("../") ? root : dir;
-      return relativePath(noteDirOf(cur.id), `${owner}/${rel}`) ?? rel;
+      return cur ? assetLinkFor(cur.id, rel) : rel;
     },
-    [baseOf, noteDirOf],
+    [assetLinkFor],
   );
 
   /** Markdown link for an `@`-mentioned note: relative to the open note's
@@ -1160,6 +1174,7 @@ function App() {
       setDefaultNoteTypeState(settings.defaultNoteType ?? null);
       setMapViewState(isViewKind(settings.mapView) ? settings.mapView : DEFAULT_VIEW);
       setOpenFilesExternallyState(settings.openFilesExternally ?? false);
+      setMeetingFolderState(settings.meetingFolder ?? "");
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
     },
@@ -1970,6 +1985,20 @@ function App() {
       detail: f.title.match(/\((.+)\)/)?.[1],
       run: () => editorRef.current?.applyFormat(f.kind),
     })),
+    recording
+      ? {
+          kind: "command" as const,
+          id: "cmd:meeting-stop",
+          label: "Stop the meeting recording",
+          run: () => void stopMeeting(),
+        }
+      : {
+          kind: "command" as const,
+          id: "cmd:meeting",
+          label: "New meeting…",
+          detail: "record mic + system audio",
+          run: () => setMeetingDialog(true),
+        },
     {
       kind: "command",
       id: "cmd:keybinds",
@@ -2025,6 +2054,9 @@ function App() {
       label: "File",
       items: [
         { label: "New note", detail: kb("new-note"), run: () => void newNote() },
+        ...(recording
+          ? [{ label: "Stop the meeting recording", run: () => void stopMeeting() }]
+          : [{ label: "New meeting…", run: () => setMeetingDialog(true) }]),
         { label: "Save note", detail: kb("save"), run: () => void save() },
         { label: "Rename note", run: startRename },
         ...(openName ? [{ label: "Delete note", run: () => void deleteNote(openName) }] : []),
@@ -2534,6 +2566,81 @@ function App() {
     openFromExplorer(id, true);
   };
 
+  /** Create (or reopen) the meeting note and start recording into it. A
+   * rejection surfaces inside the dialog, which stays open. */
+  const startMeeting = async (folder: string, name: string) => {
+    const file = isNoteFile(name) ? name : `${name}.md`;
+    const id = folder ? `${folder}/${file}` : file;
+    if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
+      throw new Error(`"${name}" isn't a valid note name`);
+    }
+    const lower = id.toLowerCase();
+    const note = notes.find((n) => n.name.toLowerCase() === lower)?.name ?? id;
+    if (note === id && !notes.some((n) => n.name.toLowerCase() === lower)) {
+      await api.saveNote(id, "");
+      setNotes(await api.listNotes());
+    }
+    openFromExplorer(note, true);
+    await api.startMeetingRecording(note);
+    setRecording({ note, startedAt: Date.now() });
+    setMeetingDialog(false);
+    editorRef.current?.focus();
+    if (folder !== meetingFolder) {
+      setMeetingFolderState(folder);
+      void api
+        .setMeetingFolder(folder || null)
+        .catch((err: unknown) => toast(`Couldn't save that setting — ${errText(err)}`));
+    }
+  };
+
+  /** Stop the running recording and write what it made into the meeting note —
+   * through the editor when that note is on screen, straight into the file
+   * when it isn't. */
+  const stopMeeting = async () => {
+    const rec = recording;
+    if (!rec) return;
+    setRecording(null);
+    let files: api.MeetingFiles;
+    try {
+      files = await api.stopMeetingRecording();
+    } catch (err) {
+      toast(`Couldn't stop the recording — ${errText(err)}`);
+      return;
+    }
+    const link = (label: string, rel: string) => {
+      const target = assetLinkFor(rec.note, rel);
+      return /[\s()]/.test(target) ? `[${label}](<${target}>)` : `[${label}](${target})`;
+    };
+    const line = `\n- Meeting recording (${formatElapsed(files.seconds)}): ${link("microphone", files.mic)} · ${link("system audio", files.system)}\n`;
+    if (openRef.current?.id === rec.note) {
+      editorRef.current?.insertText(line);
+    } else {
+      try {
+        const content = await api.readNote(rec.note);
+        await api.saveNote(rec.note, content + line);
+      } catch (err) {
+        toast(
+          `Recording saved, but its links couldn't be written into "${fileOf(rec.note)}" — ${errText(err)}`,
+        );
+        return;
+      }
+    }
+    toast(`Recorded ${formatElapsed(files.seconds)} into "${fileOf(rec.note)}"`);
+  };
+
+  // A recording started before this window loaded keeps running in the
+  // backend — pick its chip back up.
+  useEffect(() => {
+    void api
+      .meetingRecordingState()
+      .then((s) => {
+        if (s.active && s.note) {
+          setRecording({ note: s.note, startedAt: Date.now() - s.seconds * 1000 });
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   /** Inline creation of a real folder under the clicked heading. */
   const createNamedFolder = async (dir: string, name: string) => {
     setExplorerCreate(null);
@@ -2820,6 +2927,24 @@ function App() {
             : "Search"
         }
         onSearch={() => setPaletteOpen("commands")}
+        status={
+          recording ? (
+            <MeetingChip startedAt={recording.startedAt} onStop={() => void stopMeeting()} />
+          ) : (
+            <button
+              className="rec-start"
+              aria-label="New meeting"
+              data-tip="New meeting — record mic + system audio"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setMeetingDialog(true)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+              </svg>
+            </button>
+          )
+        }
         onHide={hideWindow}
       />
       <div className="app-body">
@@ -3190,6 +3315,18 @@ function App() {
           onAdd={addScannedProjects}
           onClose={() => {
             setScanResults(null);
+            editorRef.current?.focus();
+          }}
+        />
+      )}
+      {meetingDialog && (
+        <StartMeeting
+          projects={projects}
+          mounts={mounts}
+          defaultFolder={meetingFolder}
+          onStart={startMeeting}
+          onClose={() => {
+            setMeetingDialog(false);
             editorRef.current?.focus();
           }}
         />

@@ -70,6 +70,10 @@ pub struct Settings {
     /// Absent means the in-app view.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_files_externally: Option<bool>,
+    /// Folder the meeting dialog offers first — wherever the last meeting
+    /// went. Absent means the notes root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting_folder: Option<String>,
     /// What the MCP sidecar may reach. Defaults live in [`Mcp`]'s accessors, so
     /// an absent block behaves exactly like a written-out block of defaults.
     #[serde(skip_serializing_if = "Mcp::is_default")]
@@ -122,6 +126,7 @@ impl Default for Settings {
             default_note_type: None,
             map_view: None,
             open_files_externally: None,
+            meeting_folder: None,
             mcp: Mcp::default(),
         }
     }
@@ -677,6 +682,18 @@ pub fn set_map_view(app: AppHandle, view: String) -> Result<(), String> {
             "clusters" | "ledger" => Some(view),
             other => return Err(format!("not a map view: {other}")),
         };
+        Ok(())
+    })
+}
+
+/// Where the meeting dialog points first: the folder the last meeting note
+/// went to. The notes root is the default and is stored as absent. Not
+/// validated against existing folders — a folder that has since been removed
+/// just makes the dialog offer a name the user can change.
+#[tauri::command]
+pub fn set_meeting_folder(app: AppHandle, folder: Option<String>) -> Result<(), String> {
+    update(&app, |s| {
+        s.meeting_folder = folder.filter(|f| !f.is_empty());
         Ok(())
     })
 }

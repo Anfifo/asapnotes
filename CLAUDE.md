@@ -60,6 +60,9 @@ cargo clippy --manifest-path src-tauri/Cargo.toml
 ## Gotchas
 
 - **`npm.cmd`** (not `npm`) in PowerShell — the `.ps1` shim is blocked by execution policy.
+- **The Rust build needs cmake** (the Opus codec compiles from source). It need not be on
+  PATH: a `CMAKE` env var pointing at `cmake.exe` works — VS Build Tools ships one under
+  `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
 - Vite's port **1420 is fixed** (`strictPort`) — a second dev instance won't start.
 - First `tauri dev` build compiles the whole Rust tree (minutes); incremental is fast.
 - Frontend JS calling into Rust needs the matching grant in

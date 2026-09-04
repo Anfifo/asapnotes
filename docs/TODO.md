@@ -12,7 +12,61 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
-## Today (2026-08-25)
+## Today (2026-08-31)
+
+- [ ] **Meeting mode: record the meeting, transcribe it later, locally** (2026-08-31) —
+      asked and designed 2026-08-31. A meeting is captured as **two mono Opus tracks**
+      (microphone and system playback, via WASAPI loopback) in the meeting note's
+      `assets/`; keeping the tracks separate is what later attributes transcript lines to
+      "me" vs "them" with no diarization model. Record-first was picked over
+      live-transcription-only: the audio is always safe on disk, batch transcription beats
+      streaming on quality, and nothing runs during the call but the encoder.
+      Transcription is **Whisper via whisper.cpp, entirely local** (the no-network
+      invariant rules out cloud speech APIs); the model file is an **optional, consented
+      download on first use** — English, Portuguese (incl. European) and Spanish work in
+      every multilingual size. Recordings stay exportable: Opus is open and royalty-free,
+      and a decode-to-WAV verb can come whenever wanted. Recording legality/disclosure is
+      the user's responsibility; the app's part is an indicator that cannot be missed.
+      Slices:
+  - [x] **1 — recording** — built 2026-08-31, **verified live 2026-09-04**, committed.
+        What shipped: `src-tauri/src/meeting.rs` (capture threads, linear resample to
+        48 kHz mono, Opus at 32 kbps into Ogg, wall-clock silence padding so the two
+        tracks stay aligned when playback goes quiet; start refuses unless both captures
+        come up), `src/Meeting.tsx` (the dialog: prefilled name + folder select,
+        remembered as `meetingFolder`), `src/MeetingChip.tsx` (titlebar chip, whole
+        surface is the stop button), mic button in the menubar beside the search pill,
+        palette + File-menu entries, resync of a running recording after a webview
+        reload. Stop inserts the links at the cursor when the meeting note is the active
+        tab, else appends to the file (an unsaved background-tab draft could go stale —
+        known edge). **Verified** (headless second instance, 46-s and 4-s recordings):
+        both files decode packet-for-packet with page boundaries every 50 packets and a
+        clean end-of-stream, lengths within one 20-ms frame of each other, real playback
+        on the system track, a live noise floor on the mic track (nobody spoke); the chip
+        survives a reload; stopping from another tab appends to the file, from the meeting
+        tab inserts into the editor; a second recording gets `-2` file names; the dialog
+        lists projects and healthy mounts. Unit tests cover the Ogg/Opus writer round trip
+        and the resampler; `probe_recorded_file` (ignored, `ASAPNOTES_PROBE=<file>`)
+        reports what any recording holds. **Still owed a hand check:** a spoken word on
+        the mic track and a real player's seek; the mic-blocked path (Windows privacy
+        toggle) was not exercised. Build note: the Rust tree now needs cmake (Opus builds
+        from source) — a user-scoped `CMAKE` env var was set pointing at the VS Build
+        Tools copy; new shells pick it up, already-open ones need it set or a restart.
+  - [ ] **2 — transcription**: helper process + whisper.cpp; consented model download;
+        transcript appended as markdown with `[hh:mm:ss]` per paragraph, speaker by
+        track; opus→wav export verb.
+  - [ ] **3 — live timestamps**: while recording, stamp elapsed time on new bullets so
+        hand notes align with the recording and transcript.
+  - [ ] **Later — volume control per track** (asked 2026-08-31): a gain slider for each
+        track while recording, and a mute — one may notice their own microphone
+        overshadowing the other voices mid-meeting, or decide to keep only the computer
+        sound. The two-track split already makes this per-source; muting is just a track
+        writing silence, so the files stay aligned and the transcript unaffected.
+  - [ ] **Later — mic noise gate** (asked 2026-08-31): a configurable threshold under
+        which the microphone track records silence, so it isn't picking up background
+        noise the whole meeting. Explicitly future: a wrong default eats quiet speech,
+        so it wants tuning against real recordings once some exist.
+
+## 2026-08-25
 
 - [ ] **Remove the canvas engine; the project map becomes a purpose-built graph view**
       (2026-08-25) — **built the same day**; the record is at the foot of this item, the
@@ -94,7 +148,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
       `nameBase` went with it), `src/assetVersions.ts` (only the annotation flatten ever
       bumped a version), `corpus/canvas.rs`, the two MCP tools and their tests (Rust 116
       → 111, MCP 74 → 71), `overwrite_asset`, the `ink` feature, `ViewId` is `markdown |
-    text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
+text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
       Superseded; project-model.md, mcp-tool-surface.md and mcp/README.md reworded.
       _Verified live_ (second instance, own WebView2 profile, the real corpus — the
       `asapnotes` project: 43 nodes, 113 references, 11 folder halos): the MAP chip

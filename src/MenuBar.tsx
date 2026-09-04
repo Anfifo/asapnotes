@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import mark from "../assets/mark.svg";
 
@@ -30,6 +30,9 @@ interface MenuBarProps {
   searchLabel: string;
   /** Click on the search pill (opens the combined command/note palette). */
   onSearch: () => void;
+  /** Rendered beside the search pill, inside the flex row — where the meeting
+   * chip lives, so a running recording is visible whatever tab is up. */
+  status?: ReactNode;
   /** ✕ hides to the tray (residency invariant) — never exits the app. */
   onHide: () => void;
 }
@@ -38,7 +41,7 @@ interface MenuBarProps {
  * is undecorated, so this row *is* the OS title bar.
  * Keyboard-reachable: Alt toggles the first menu, Alt+letter opens one by
  * mnemonic, arrows navigate, Enter runs, Esc closes. */
-export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) {
+export function MenuBar({ menus, searchLabel, onSearch, status, onHide }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   // Keyboard highlight within the open dropdown (-1 = mouse only).
   const [selIdx, setSelIdx] = useState(-1);
@@ -226,6 +229,7 @@ export function MenuBar({ menus, searchLabel, onSearch, onHide }: MenuBarProps) 
         <span className="search-glyph">{""}</span>
         <span className="search-label">{searchLabel}</span>
       </button>
+      {status}
       <div className="menubar-drag" data-tauri-drag-region />
       {/* Segoe Fluent Icons caption glyphs: minimize / maximize / close */}
       <button

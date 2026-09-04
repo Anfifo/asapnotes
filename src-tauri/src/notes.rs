@@ -598,7 +598,7 @@ fn assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// files and travels with them; everything under the notes root shares the root
 /// `assets/`. Keyed on where the note actually resolved, since a mounted note
 /// falls outside its project's own folder.
-fn assets_dir_for(app: &AppHandle, note: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn assets_dir_for(app: &AppHandle, note: Option<&str>) -> Result<PathBuf, String> {
     let root = notes_root(app)?;
     let Some(note) = note else {
         return assets_dir(app);
@@ -613,7 +613,7 @@ fn assets_dir_for(app: &AppHandle, note: Option<&str>) -> Result<PathBuf, String
     Ok(dir)
 }
 
-fn unique_asset(dir: &Path, stem: &str, ext: &str) -> (PathBuf, String) {
+pub(crate) fn unique_asset(dir: &Path, stem: &str, ext: &str) -> (PathBuf, String) {
     let mut file = format!("{stem}.{ext}");
     let mut n = 2;
     while dir.join(&file).exists() {

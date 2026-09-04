@@ -217,6 +217,74 @@ body,
   }
 }
 
+/* Meeting recording lives in the titlebar so it's visible whatever tab is
+   up: a quiet mic button to start, and while recording a red chip whose
+   whole surface is the stop button. */
+.rec-start {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.45rem;
+  margin-left: 0.35rem;
+  flex-shrink: 0;
+  color: #9a9a9a;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.rec-start:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #d6d6d6;
+}
+
+.rec-start svg {
+  width: 13px;
+  height: 13px;
+}
+
+.rec-chip {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 1.45rem;
+  margin-left: 0.35rem;
+  padding: 0 0.6rem;
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: #ff8389;
+  background: rgba(232, 17, 35, 0.14);
+  border: 1px solid rgba(232, 17, 35, 0.5);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rec-chip:hover {
+  background: rgba(232, 17, 35, 0.28);
+  color: #ffb3b8;
+}
+
+.rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e81123;
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
 .menubar-mark {
   width: 16px;
   align-self: center;
@@ -2120,6 +2188,16 @@ body,
 
 .np-name:focus {
   border-color: #b8b8b8;
+}
+
+.meeting-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  opacity: 0.7;
+}
+
+.meeting-folder {
+  margin-bottom: 0.25rem;
 }
 
 .np-check {

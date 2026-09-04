@@ -1,5 +1,6 @@
 pub mod corpus;
 mod history;
+mod meeting;
 mod notes;
 mod project_config;
 mod settings;
@@ -299,6 +300,10 @@ pub fn run() {
             notes::delete_mount,
             notes::folder_to_real,
             notes::folder_to_virtual,
+            meeting::start_meeting_recording,
+            meeting::stop_meeting_recording,
+            meeting::meeting_recording_state,
+            settings::set_meeting_folder,
         ])
         .setup(|app| {
             #[cfg(desktop)]
