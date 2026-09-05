@@ -12,37 +12,6 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
-## Today (2026-09-04)
-
-- [ ] **Explorer bar rework: stroke icons, spacing, right-click** (2026-09-04) — feedback:
-      the bar's text-character controls (▤ ⌕ ± + 📌 «) render small and uneven, the
-      buttons touch, and right-click on the bar opens the webview's default page menu.
-      Done same day: the Recent panel is removed (it only took space; the welcome panel
-      keeps its own recent list) with its View-menu toggle, `hideRecent` setting field
-      and CSS. Candidate sheet: A today / B stroke icons in 22px squares / C B + seam
-      between views and actions, amber active view / D segmented switcher. **Picked C,
-      implemented same day** (gates clean, not yet checked by hand): `src/icons.tsx` holds
-      the shared stroke glyphs (Lucide, inlined like `fileIcons.tsx`); the bar's six
-      controls are `.bar-btn` 22px squares with 16px glyphs, a `.bar-sep` hairline
-      between views and actions, the open view in amber, the pin tilted while floating.
-      Right-click: the bar now raises the panel body's menu, and a document-level
-      `contextmenu` handler silences the webview's default menu everywhere but text
-      fields (inputs, textareas, contenteditable — the editor keeps its Edit menu). Known
-      consequence: the preview and lens panes lose the native Copy menu item; Ctrl+C
-      still works. Round 2, **picked "all" and implemented same day** (gates clean, not
-      yet checked by hand): every other text-character control moved onto the same
-      stroke set — tab close/new, the lens tab's marker (now the changes glyph), the
-      unsaved dot (a drawn 7px circle on tabs and rows), the explorer headings' hover
-      +/×, the menubar search glyph (was Segoe Fluent Icons, now matches the mic beside
-      it), settings reset and write-log disclosure, lens jump chevrons and the seen
-      check, map zoom −/+, the collapsed-explorer rail's «/» (panel open/close), and
-      the changes rows' per-row ✓, the map details panel's ×. The MAP glyph moved into
-      `icons.tsx` too (chip + tab).
-      Kept on purpose: Windows caption glyphs, palette key hints, changes-row count
-      digits, toolbar letters. Pending hands-on: both themes, tab strip with a dirty
-      tab + lens tab + map tab, heading hover, settings row with an override, lens
-      jump pill, map zoom bar, right-click on bar / titlebar / preview.
-
 ## Today (2026-09-05)
 
 - [ ] **Distribution — releases, winget, signing, updater** (2026-09-05) — the repo is
