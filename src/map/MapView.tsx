@@ -67,12 +67,18 @@ const DRAG_SLOP = 3;
  * every folder color. */
 const PIN_COLORS = ["#c8402f", "#c8762f", "#c8a72f", "#4f9e4f", "#3f8fbf", "#8f5fbf"];
 
-/** Which of the stylesheet's six folder colors a folder wears — a stable hash
- * of its path, so a folder keeps its color across recomputes. */
-const folderColor = (path: string) => {
-  let h = 5381;
-  for (let i = 0; i < path.length; i++) h = (h * 33 + path.charCodeAt(i)) >>> 0;
-  return `var(--folder-${h % 6})`;
+/** A folder's hue: the project's folders (and their ancestors, which the
+ * breadcrumb tabs color too) sorted, then spread evenly round the wheel, so no
+ * two folders share a color and the spacing is the widest the count allows.
+ * Lightness and chroma come from the stylesheet, which re-tunes them per theme. */
+const folderHues = (nodes: readonly MapNode[]) => {
+  const paths = new Set<string>();
+  for (const n of nodes) {
+    const segs = n.folder.split("/");
+    for (let i = 1; i <= segs.length; i++) paths.add(segs.slice(0, i).join("/"));
+  }
+  const sorted = [...paths].sort();
+  return new Map(sorted.map((f, i) => [f, Math.round(20 + (i * 360) / sorted.length)]));
 };
 
 /** The last constellation's dot centres per project, so the next open starts
@@ -95,6 +101,10 @@ export default function MapView({
   fileVerbs,
   emptyHint,
 }: MapViewProps) {
+  const hues = useMemo(() => folderHues(graph?.nodes ?? []), [graph]);
+  const folderColor = (path: string) =>
+    `oklch(var(--folder-l) var(--folder-c) ${hues.get(path) ?? 0})`;
+
   const layout = useMemo<Layout | null>(() => {
     if (!graph) return null;
     switch (view) {
@@ -137,6 +147,8 @@ export default function MapView({
   const [pins, setPins] = useState<string[]>([]);
   /** The node whose details are open — the one pinned most recently. */
   const [detail, setDetail] = useState<string | null>(null);
+  /** Whether the last press panned the camera — the click it ends with is not one. */
+  const dragged = useRef(false);
   const drag = useRef<{ x: number; y: number; cx: number; cy: number; moved: boolean } | null>(
     null,
   );
@@ -217,12 +229,14 @@ export default function MapView({
   };
 
   // Left or middle button drags the camera; a press that never travels is a
-  // click, which on the background clears every pin.
+  // click, which on the background clears every pin. The pointer is captured
+  // only once the press has become a drag: capturing on the press itself
+  // would pull the pointer off the node under it, so the node lost its hover
+  // and the click that followed went to the surface instead of the node.
   const onSurfaceDown = (e: React.PointerEvent) => {
     if (scrolls || (e.button !== 0 && e.button !== 1)) return;
     const c = camRef.current;
     drag.current = { x: e.clientX, y: e.clientY, cx: c.x, cy: c.y, moved: false };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
   const onSurfaceMove = (e: React.PointerEvent) => {
     const d = drag.current;
@@ -233,6 +247,7 @@ export default function MapView({
     if (!d.moved) {
       d.moved = true;
       setPanning(true);
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     }
     setCam((c) => ({ ...c, x: d.cx + dx, y: d.cy + dy }));
   };
@@ -240,7 +255,10 @@ export default function MapView({
     const d = drag.current;
     drag.current = null;
     setPanning(false);
-    if (d && !d.moved && e.button === 0) clearPins();
+    // A drag that ends over a node still fires a click there; swallow it.
+    dragged.current = d?.moved ?? false;
+    const onNode = (e.target as Element | null)?.closest(".map-node") !== null;
+    if (d && !d.moved && e.button === 0 && !onNode) clearPins();
   };
 
   const clearPins = () => {
@@ -361,7 +379,7 @@ export default function MapView({
     onPointerLeave: () => leave(n.key),
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (drag.current?.moved) return;
+      if (dragged.current) return;
       toggle(n.key);
     },
     onDoubleClick: (e: React.MouseEvent) => {
@@ -534,26 +552,19 @@ export default function MapView({
     </div>
   );
 
+  /** A note's name sits inside its dot on one line, at whatever size fits the
+   * disc's width: a long name in a small dot is a hairline, and that is fine —
+   * zooming in brings it up, and the hover card carries the readable name. */
   const renderDot = (n: MapNode, r: Rect) => {
-    const spot = layout?.labels?.get(n.key);
-    const soft = spot === undefined;
-    const label: CSSProperties = spot
-      ? {
-          left: r.w / 2 + spot.dx,
-          top: r.h / 2 + spot.dy,
-          transform:
-            spot.anchor === "middle"
-              ? "translateX(-50%)"
-              : spot.anchor === "end"
-                ? "translateX(-100%)"
-                : undefined,
-        }
-      : { left: r.w / 2, top: r.h + 3, transform: "translateX(-50%)" };
+    const width = r.w * 0.88;
+    const fit = Math.min(width / (n.name.length * 0.65), r.h * 0.45);
     return (
       <div key={n.key} className={nodeClass(n, "dot")} style={nodeStyle(n, r)} {...nodeHandlers(n)}>
-        <span className={soft ? "map-label soft" : "map-label"} style={label}>
-          {n.name}
-        </span>
+        {n.kind === "note" && (
+          <span className="map-dot-name" style={{ width, fontSize: fit }}>
+            {n.name}
+          </span>
+        )}
       </div>
     );
   };

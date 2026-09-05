@@ -2,7 +2,7 @@
  * The three ways a project map lays its graph out. Each takes the computed
  * graph and answers with a rectangle per node in world units, which is all the
  * view needs to draw nodes, run edges between them and fit the camera; the
- * view-specific extras (label spots, folder halos, ledger headings) ride along.
+ * view-specific extras (folder halos, ledger headings) ride along.
  *
  * - Clusters: every note is a card with its opening text, packed into a grid
  *   per folder. The reference shape — what the map looked like first.
@@ -26,13 +26,6 @@ export interface Rect extends Point {
   h: number;
 }
 
-/** Where a dot's label sits, relative to the dot's centre. */
-export interface LabelSpot {
-  dx: number;
-  dy: number;
-  anchor: "start" | "middle" | "end";
-}
-
 export interface Halo {
   folder: string;
   /** Convex hull of the folder's dot centres — one or two points for a
@@ -51,7 +44,6 @@ export interface Layout {
   rects: Map<string, Rect>;
   /** World bounds, for the fit. */
   bounds: Rect;
-  labels?: Map<string, LabelSpot>;
   halos?: Halo[];
   headings?: Heading[];
   /** Ledger geometry: the column the dots sit on, and the page's size. */
@@ -199,15 +191,10 @@ const convexHull = (points: Point[]): Point[] => {
   return lower.concat(upper);
 };
 
-/** Label width estimate for the collision pass, in world units. */
-const LABEL_CHARS = 24;
-const LABEL_CHAR_W = 5.7;
-const LABEL_H = 12;
-
 /**
  * Place the dots by force. References pull their two ends together, every
- * dot pushes every other apart (further when both carry a label), and a soft
- * pull toward the folder's own centroid keeps a folder together without a box.
+ * dot pushes every other apart, and a soft pull toward the folder's own
+ * centroid keeps a folder together without a box.
  * `warm` is the previous layout's centres: a node that has them starts there
  * and the simulation only settles, so a new note lands near its folder and
  * nothing else moves; without them the start is seeded, hence still stable.
@@ -262,12 +249,7 @@ export function layoutConstellation(g: MapGraph, warm: ReadonlyMap<string, Point
         }
         const d = Math.sqrt(d2);
         let f = 2200 / d2;
-        // Two labelled notes need label room between them; small marks don't.
-        const labelled = Number(nodes[i].kind === "note") + Number(nodes[j].kind === "note");
-        const minD =
-          R.get(nodes[i].key)! +
-          R.get(nodes[j].key)! +
-          (labelled === 2 ? 30 : labelled === 1 ? 16 : 12);
+        const minD = R.get(nodes[i].key)! + R.get(nodes[j].key)! + 12;
         if (d < minD) f += (minD - d) * 0.4;
         f = Math.min(f, 8);
         const fx = (dx / d) * f;
@@ -323,16 +305,7 @@ export function layoutConstellation(g: MapGraph, warm: ReadonlyMap<string, Point
   }
 
   // Folder halos: the hull of each folder's centres, named above its top dot.
-  // The names are claimed first so no dot's label lands on one.
   const halos: Halo[] = [];
-  const taken: Rect[] = [...rects.values()].map((r) => ({
-    x: r.x - 2,
-    y: r.y - 2,
-    w: r.w + 4,
-    h: r.h + 4,
-  }));
-  const hit = (b: Rect) =>
-    taken.some((t) => b.x < t.x + t.w && b.x + b.w > t.x && b.y < t.y + t.h && b.y + b.h > t.y);
   for (const [folder, items] of folders) {
     if (items.length === 0) continue;
     const pts = items.map((n) => centerOf(rects.get(n.key)!));
@@ -341,44 +314,13 @@ export function layoutConstellation(g: MapGraph, warm: ReadonlyMap<string, Point
       x: pts.reduce((a, q) => a + q.x, 0) / pts.length,
       y: rects.get(top.key)!.y - 22,
     };
-    const w = Math.max(4, folder.length) * 6.6;
-    taken.push({ x: label.x - w / 2, y: label.y - 10, w, h: 13 });
     halos.push({ folder, hull: convexHull(pts), label });
-  }
-
-  // Label placement: hubs pick first; each label tries below, above, right and
-  // left of its dot and takes the first spot clear of every dot and every
-  // label already placed. The last resort is below, overlap and all.
-  const labels = new Map<string, LabelSpot>();
-  const notes = nodes
-    .filter((n) => n.kind === "note")
-    .sort((a, b) => b.in + b.out - (a.in + a.out));
-  for (const n of notes) {
-    const c = centerOf(rects.get(n.key)!);
-    const r = R.get(n.key)!;
-    const w = Math.min(n.name.length, LABEL_CHARS) * LABEL_CHAR_W;
-    const h = LABEL_H;
-    const spots: (LabelSpot & { box: Rect })[] = [
-      { dx: 0, dy: r + 3, anchor: "middle", box: { x: c.x - w / 2, y: c.y + r + 2, w, h } },
-      {
-        dx: 0,
-        dy: -r - 3 - h,
-        anchor: "middle",
-        box: { x: c.x - w / 2, y: c.y - r - 3 - h, w, h },
-      },
-      { dx: r + 5, dy: -h / 2, anchor: "start", box: { x: c.x + r + 5, y: c.y - h / 2, w, h } },
-      { dx: -r - 5, dy: -h / 2, anchor: "end", box: { x: c.x - r - 5 - w, y: c.y - h / 2, w, h } },
-    ];
-    const pick = spots.find((s) => !hit(s.box)) ?? spots[0];
-    taken.push(pick.box);
-    labels.set(n.key, { dx: pick.dx, dy: pick.dy, anchor: pick.anchor });
   }
 
   return {
     rects,
-    // Room around the dots for their labels and the halos' blur.
+    // Room around the dots for the folder names and the halos' blur.
     bounds: boundsOf(rects.values(), { x: 90, top: 60, bottom: 40 }),
-    labels,
     halos,
   };
 }

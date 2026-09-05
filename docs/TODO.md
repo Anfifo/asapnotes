@@ -202,13 +202,27 @@ text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
       panel is a fixed-height flex column, so its excerpt shrank to a sliver until its
       children got `flex-shrink: 0`; and the excerpt repeated the heading line the title
       already shows, so the leading heading is stripped at compute time.
-      _Pending hands-on:_ **label density on the constellation** — labels live in world
-      units and shrink with the fit (82 % on 43 nodes; a bigger project will be worse),
-      and the dense middle overlaps even so; the honest fix is screen-space labels
-      (counter-scaled by 1/z) plus a "hubs only past N nodes" rule, which wants the app
-      in front of a human before picking numbers. Also: whether referenced non-markdown
-      files should be nodes at all or a count chip (they are 15 of the 43 here); folder
-      colors as the six-hue hash vs hue families; whether the details panel should also
+      _2026-09-05, from hands-on:_ the constellation's outside labels were the clutter —
+      big captions under small dots, shoving neighbours apart — and the six-hue hash put
+      near-identical colors on different folders. **Picked and built same day:** the
+      name now sits _inside_ the dot at whatever size fits (dots keep their degree-based
+      size; tiny dots get tiny type, the hover label stays readable), which also retired
+      the label-collision pass in `layouts.ts`; folder colors are one hue per folder
+      (folders and their breadcrumb ancestors sorted, spread evenly round the wheel, a
+      shared lightness/chroma per theme in `App.css`), so no two match. Trade accepted: a
+      new folder shifts every folder's hue. Second pass the same day from hands-on: the
+      name is one line across the disc (the multi-line fit overflowed on hyphenated
+      names), the hover-only caption under the dot is gone (invisible, it was still a
+      hit target the width of the name — the "hover zone" complaint), and **clicking a
+      node never pinned on a real pointer**: the surface took pointer capture on every
+      press, which pulled the pointer off the node (hover dropped, everything dimmed)
+      and sent the click to the surface. Capture now starts only once a press becomes
+      a drag, and a press released over a node no longer clears the pins. Verified over
+      CDP with real pointer input: hover lights, click pins and opens details with the
+      node's 24 edges in the pin color, the panel stays when the pointer leaves, a
+      background click clears, a drag that ends on a node does not pin it.
+      _Pending hands-on:_ whether referenced non-markdown files should be nodes at all
+      or a count chip (they are 15 of the 43 here); whether the details panel should also
       open on hover-dwell; the ledger's long arcs at real corpus heights; and the warm
       start, which only exists within a session (a fresh launch lays out from the seed).
 

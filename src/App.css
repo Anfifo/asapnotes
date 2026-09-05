@@ -70,17 +70,13 @@
   --tint-gray: #6e6e6e;
   --tint-teal: #10736b;
 
-  /* Folder palette for the project map: six hand-tuned pairs (the dark block
-     re-tunes them), assigned to a folder by a stable hash of its path so it
-     keeps its color across recomputes. --tab-mix is how much folder color a
-     tab's fill borrows over the card surface; parent breadcrumb segments sit
-     one step stronger. */
-  --folder-0: #2f7f93;
-  --folder-1: #5c7d2a;
-  --folder-2: #a04f6a;
-  --folder-3: #7a4fa0;
-  --folder-4: #9c6f1d;
-  --folder-5: #3f6fa5;
+  /* Folder colors for the project map: the map hands each folder a hue (spread
+     evenly over the project's folders, so no two match); these fix the
+     lightness and chroma every folder shares, and the dark block re-tunes them.
+     --tab-mix is how much folder color a tab's fill borrows over the card
+     surface; parent breadcrumb segments sit one step stronger. */
+  --folder-l: 0.55;
+  --folder-c: 0.13;
   --tab-card: #ffffff;
   --tab-mix: 10%;
   --tab-mix-parent: 14%;
@@ -3009,39 +3005,26 @@ body,
     0 0 0 4px var(--pin);
 }
 
-.map-label {
+/* The name inside a dot: one line across the disc, sized by the renderer to
+   the dot's width; the type is whatever fits, however small. */
+.map-dot-name {
   position: absolute;
-  font-size: 10.5px;
-  line-height: 12px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  line-height: 1.2;
+  font-weight: 500;
+  color: #f6f6f6;
   white-space: nowrap;
-  color: #0f0f0f;
-  text-shadow:
-    0 0 3px #f6f6f6,
-    0 0 3px #f6f6f6;
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  pointer-events: none;
 }
 
-.map-label.soft {
-  font-size: 10px;
-  color: #6f6f6f;
-  opacity: 0;
-}
-
-.map-node.hot .map-label.soft {
-  opacity: 1;
-}
-
-/* While something is lit the bystanders step back: dimmed, and on the
-   constellation unnamed, so the lit node's neighbourhood is what reads. */
+/* While something is lit the bystanders step back, dimmed, so the lit node's
+   neighbourhood is what reads. */
 .map-constellation.dim .map-node:not(.hot):not(.adj):not(.pinned),
 .map-ledger.dim .map-node:not(.hot):not(.adj):not(.pinned) {
   opacity: 0.35;
-}
-
-.map-constellation.dim .map-node:not(.hot):not(.adj):not(.pinned) .map-label {
-  opacity: 0;
 }
 
 /* --- Rows (ledger): the map as a document — it scrolls, no camera. --- */
@@ -3549,12 +3532,8 @@ body,
   --tint-gray: #a0a0a0;
   --tint-teal: #5cc7bb;
 
-  --folder-0: #7cc3d6;
-  --folder-1: #b3cf7e;
-  --folder-2: #e0a0b8;
-  --folder-3: #c4a3e2;
-  --folder-4: #dcc07a;
-  --folder-5: #9dc0e8;
+  --folder-l: 0.8;
+  --folder-c: 0.1;
   --tab-card: #3a3a3a;
   --tab-mix: 22%;
   --tab-mix-parent: 26%;
@@ -3673,15 +3652,8 @@ body,
       0 0 0 4px var(--pin);
   }
 
-  .map-label {
-    color: #f6f6f6;
-    text-shadow:
-      0 0 3px #2f2f2f,
-      0 0 3px #2f2f2f;
-  }
-
-  .map-label.soft {
-    color: #a8a8a8;
+  .map-dot-name {
+    color: #2f2f2f;
   }
 
   .map-heading {
