@@ -1954,14 +1954,6 @@ body,
   align-self: flex-start;
 }
 
-.tool-btn.open {
-  background: rgba(0, 0, 0, 0.07);
-}
-
-.titlebar .tool-btn {
-  align-self: center;
-}
-
 /* Settings overlay (File → Settings / Ctrl+K → Settings) — shares the palette backdrop */
 
 .settings {
@@ -2354,14 +2346,15 @@ body,
   padding: 0 0.3rem;
 }
 
-/* Always-on formatting bar — strictly one row; overflow scrolls sideways
-   behind a hairline scrollbar instead of wrapping the bar taller. */
+/* Always-on formatting bar — the explorer bar's squares and hairlines, strictly
+   one row; overflow scrolls sideways behind a hairline scrollbar instead of
+   wrapping the bar taller. */
 
 .fmt-inline {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 0.6rem;
+  gap: 4px;
   flex: 1;
   min-width: 0;
   overflow-x: auto;
@@ -2372,44 +2365,26 @@ body,
   height: 4px;
 }
 
-.toolbar-group {
-  display: flex;
-  flex-shrink: 0;
-  gap: 0.15rem;
-}
-
-.toolbar-group + .toolbar-group {
-  border-left: 1px solid #e3e3e3;
-  padding-left: 0.6rem;
-}
-
-.fmt-inline button {
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 0.8rem;
-  color: inherit;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  padding: 0.15rem 0.45rem;
-  cursor: pointer;
-}
-
-.fmt-inline button:hover {
+/* Edit/read switch: both states in one pill at the row's right end, the
+   current one lifted onto the panel color. */
+.mode-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-left: auto;
+  border-radius: 6px;
   background: rgba(0, 0, 0, 0.07);
+  flex: none;
 }
 
-.fmt-inline .fmt-bold {
-  font-weight: 700;
+.mode-switch .bar-btn {
+  height: 20px;
+  min-width: 24px;
 }
 
-.fmt-inline .fmt-italic {
-  font-style: italic;
-}
-
-.fmt-inline button svg {
-  width: 15px;
-  height: 15px;
-  display: block;
+.mode-switch .bar-btn.open {
+  background: #f6f6f6;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 /* Shared data-tip tooltip (see Tooltip.tsx) — fixed-position so the
@@ -3921,10 +3896,6 @@ body,
     border-color: #6a6a6a;
   }
 
-  .tool-btn.open {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
   .settings {
     background: #383838;
     border-color: rgba(255, 255, 255, 0.08);
@@ -4002,12 +3973,12 @@ body,
     border-color: #4a4a4a;
   }
 
-  .toolbar-group + .toolbar-group {
-    border-left-color: #444444;
+  .mode-switch {
+    background: rgba(255, 255, 255, 0.08);
   }
 
-  .fmt-inline button:hover {
-    background: rgba(255, 255, 255, 0.1);
+  .mode-switch .bar-btn.open {
+    background: #2f2f2f;
   }
 
   .tooltip {

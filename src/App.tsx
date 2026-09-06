@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -12,7 +12,7 @@ import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
 import { Explorer } from "./Explorer";
-import { Icon } from "./icons";
+import { Icon, type IconName } from "./icons";
 import { MeetingChip } from "./MeetingChip";
 import { StartMeeting } from "./Meeting";
 import { formatElapsed } from "./meetingTime";
@@ -115,109 +115,29 @@ const POPUP_SCALES = [85, 100, 115];
 const clampExplorerWidth = (w: number) =>
   Math.min(Math.max(EXPLORER_MIN_W, w), Math.max(EXPLORER_MIN_W, window.innerWidth - EDITOR_MIN_W));
 
-// Stroke-path icons for the symbolic buttons — text glyphs like ``` and ❝ read
-// poorly at toolbar size, and emoji render in color that ignores the theme.
-// Letters (H1–H3, B, I) stay letters.
-const icon = (paths: ReactNode) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    {paths}
-  </svg>
-);
-
-const FORMAT_GROUPS: { kind: FormatKind; glyph: ReactNode; title: string }[][] = [
+// The formatting bar, in its groups. Stroke glyphs throughout — text glyphs
+// render at uneven weights next to each other and emoji ignore the theme — and
+// the title doubles as the tooltip, menu label and palette entry.
+const FORMAT_GROUPS: { kind: FormatKind; icon: IconName; title: string }[][] = [
   [
-    { kind: "h1", glyph: "H1", title: "Heading 1 (Ctrl+1)" },
-    { kind: "h2", glyph: "H2", title: "Heading 2 (Ctrl+2)" },
-    { kind: "h3", glyph: "H3", title: "Heading 3 (Ctrl+3)" },
+    { kind: "h1", icon: "heading-1", title: "Heading 1 (Ctrl+1)" },
+    { kind: "h2", icon: "heading-2", title: "Heading 2 (Ctrl+2)" },
+    { kind: "h3", icon: "heading-3", title: "Heading 3 (Ctrl+3)" },
   ],
   [
-    { kind: "bold", glyph: "B", title: "Bold (Ctrl+B)" },
-    { kind: "italic", glyph: "I", title: "Italic (Ctrl+I)" },
+    { kind: "bold", icon: "bold", title: "Bold (Ctrl+B)" },
+    { kind: "italic", icon: "italic", title: "Italic (Ctrl+I)" },
   ],
   [
-    {
-      kind: "code",
-      glyph: icon(
-        <>
-          <polyline points="16 18 22 12 16 6" />
-          <polyline points="8 6 2 12 8 18" />
-        </>,
-      ),
-      title: "Inline code (Ctrl+Shift+C)",
-    },
-    {
-      kind: "codeblock",
-      glyph: icon(
-        <>
-          <path d="m10 9-3 3 3 3" />
-          <path d="m14 15 3-3-3-3" />
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-        </>,
-      ),
-      title: "Code block",
-    },
+    { kind: "code", icon: "code", title: "Inline code (Ctrl+Shift+C)" },
+    { kind: "codeblock", icon: "code-block", title: "Code block" },
   ],
   [
-    {
-      kind: "bullet",
-      glyph: icon(
-        <>
-          <line x1="9" y1="6" x2="21" y2="6" />
-          <line x1="9" y1="12" x2="21" y2="12" />
-          <line x1="9" y1="18" x2="21" y2="18" />
-          <circle cx="4" cy="6" r="1" fill="currentColor" stroke="none" />
-          <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
-          <circle cx="4" cy="18" r="1" fill="currentColor" stroke="none" />
-        </>,
-      ),
-      title: "Bullet list (Ctrl+Shift+8)",
-    },
-    {
-      kind: "numbered",
-      glyph: icon(
-        <>
-          <line x1="10" y1="6" x2="21" y2="6" />
-          <line x1="10" y1="12" x2="21" y2="12" />
-          <line x1="10" y1="18" x2="21" y2="18" />
-          <path d="M4 6h1v4" />
-          <path d="M4 10h2" />
-          <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" />
-        </>,
-      ),
-      title: "Numbered list (Ctrl+Shift+7)",
-    },
-    {
-      kind: "quote",
-      glyph: icon(
-        <>
-          <path d="M17 6H3" />
-          <path d="M21 12H8" />
-          <path d="M21 18H8" />
-          <path d="M3 12v6" />
-        </>,
-      ),
-      title: "Quote (Ctrl+Shift+9)",
-    },
+    { kind: "bullet", icon: "list", title: "Bullet list (Ctrl+Shift+8)" },
+    { kind: "numbered", icon: "list-ordered", title: "Numbered list (Ctrl+Shift+7)" },
+    { kind: "quote", icon: "quote", title: "Quote (Ctrl+Shift+9)" },
   ],
-  [
-    {
-      kind: "link",
-      glyph: icon(
-        <>
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.72" />
-        </>,
-      ),
-      title: "Link (Ctrl+Shift+L)",
-    },
-  ],
+  [{ kind: "link", icon: "link", title: "Link (Ctrl+Shift+L)" }],
 ];
 
 /** The network mark the map surfaces share — the explorer chip and the map
@@ -3221,39 +3141,56 @@ function App() {
               </button>
             </div>
             <header className="titlebar">
-              {canPreview && (
-                <button
-                  className={mode === "preview" ? "tool-btn open" : "tool-btn"}
-                  data-tip={
-                    mode === "edit" ? "Open reading preview (Ctrl+E)" : "Back to editor (Ctrl+E)"
-                  }
-                  aria-label={
-                    mode === "edit" ? "Open reading preview (Ctrl+E)" : "Back to editor (Ctrl+E)"
-                  }
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={togglePreview}
-                >
-                  {mode === "edit" ? "👁" : "✎"}
-                </button>
-              )}
               {mode === "edit" && canFormat && (
                 <div className="fmt-inline">
                   {FORMAT_GROUPS.map((group, i) => (
-                    <div className="toolbar-group" key={i}>
+                    <Fragment key={i}>
+                      {i > 0 && <span className="bar-sep" />}
                       {group.map((f) => (
                         <button
                           key={f.kind}
-                          className={`fmt-${f.kind}`}
+                          className="bar-btn"
                           data-tip={f.title}
                           aria-label={f.title}
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => editorRef.current?.applyFormat(f.kind)}
                         >
-                          {f.glyph}
+                          <Icon name={f.icon} />
                         </button>
                       ))}
-                    </div>
+                    </Fragment>
                   ))}
+                </div>
+              )}
+              {/* Edit/read as a two-state switch at the row's end: both modes
+                  stay visible and the target never changes glyph under the
+                  pointer. Clicking the lit segment does nothing. */}
+              {canPreview && (
+                <div className="mode-switch" role="group" aria-label="Edit or read">
+                  <button
+                    className={mode === "edit" ? "bar-btn open" : "bar-btn"}
+                    data-tip={`Edit (${kb("preview")})`}
+                    aria-label="Edit"
+                    aria-pressed={mode === "edit"}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (mode !== "edit") togglePreview();
+                    }}
+                  >
+                    <Icon name="pencil" />
+                  </button>
+                  <button
+                    className={mode === "preview" ? "bar-btn open" : "bar-btn"}
+                    data-tip={`Read (${kb("preview")})`}
+                    aria-label="Read"
+                    aria-pressed={mode === "preview"}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (mode !== "preview") togglePreview();
+                    }}
+                  >
+                    <Icon name="book-open" />
+                  </button>
                 </div>
               )}
             </header>

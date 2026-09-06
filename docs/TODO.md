@@ -14,6 +14,19 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Today (2026-09-05)
 
+- [ ] **Titlebar toolbar joins the stroke-icon family** (2026-09-05) — feedback: the
+      preview toggle's eye emoji renders as a color glyph and the format buttons mix
+      monospace letters with stroke icons in a bordered/borderless row. Candidate sheet
+      published, awaiting a pick: A today / B the explorer bar's 22px squares with letters
+      kept / C all strokes (heading, bold, italic glyphs too) / D C plus an edit-read
+      segmented switch at the right end; glyph ladders for the read (eye, book, glasses)
+      and write (pencil, pen-line, square-pen) states. **Picked D, implemented same day**
+      (gates clean, not yet checked by hand): the format buttons are `.bar-btn` squares
+      with `.bar-sep` hairlines between groups, every glyph lives in `icons.tsx`, and the
+      preview toggle is a `.mode-switch` pill at the row's right end — pencil | book, the
+      current mode lifted onto the panel color. Pending hands-on: both themes, the switch
+      in preview mode, the bar scrolling in a narrow window.
+
 - [ ] **Distribution — releases, winget, signing, updater** (2026-09-05) — the repo is
       public-ready (MIT, README, history clean) and `tauri build` emits an NSIS setup and an
       MSI, but nothing turns a tag into a download. Decided order: (a) **GitHub Releases**
