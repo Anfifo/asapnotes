@@ -35,6 +35,24 @@ The AI (or anyone) working on this repo keeps this file current while working:
       update-policy item under Pending: a "Check for updates" button that connects on
       click, a toggle for a throttled check, nothing before consent. Bundled third-party
       license notices join the installer with (a) or soon after.
+- [ ] **Unsaved-changes lens: louder added/removed marks** (2026-09-05) — feedback on the
+      new lens (dot / right-click → "Show unsaved changes"): removed runs should open
+      expanded, and the marks are too quiet to read as a decision aid. Expanded-by-default
+      is done (also applies to the Recent Changes lens; a click still collapses a run to
+      its pill). Candidate sheet for the marks: A same shapes turned up / B gutter +/−
+      signs on full-line fills / C ink instead of wash. **Picked B, implemented same day**:
+      signs sit in the scroller's padding so list indents never displace them; removed
+      lines keep the body ink and size on a rose fill; the +/− share the changes lens.
+
+## Today (2026-09-04)
+
+- [ ] **Tray menu shows the summon chord next to Open** (2026-09-04) — requested; the
+      chord is only in the hover tooltip today. Design pending a pick: accelerator column
+      on the "Open" item (kept live on rebind) vs. the chord baked into the label.
+- [ ] **Tables in the live-preview editor** (2026-09-04) — the rendered pane now rules
+      tables (done with the bullet-bold marker and Ctrl+E scroll hand-off fixes); the
+      editor itself still shows a table as raw pipes. Open: whether to render it in place
+      (widget) or leave the editor to the raw text and lean on Ctrl+E.
 
 ## Today (2026-08-31)
 
