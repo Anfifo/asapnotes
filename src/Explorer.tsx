@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
 import { FileIcon } from "./fileIcons";
 import { Icon } from "./icons";
 import { FileInfo, MountInfo } from "./notes";
@@ -159,18 +159,34 @@ export function Explorer({
   const paneDrag = useRef<{ y: number; h: number } | null>(null);
   const paneRef = useRef<HTMLElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
-  // Non-current projects start collapsed; a project's tree isn't built until
-  // its first expand, so big external projects cost nothing while closed.
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Fold state per section, keyed by project name; "" is the "No project"
+  // section, the id the root already has everywhere else here. Loose notes are
+  // the capture inbox, so that one starts open; projects start collapsed, and
+  // a project's tree isn't built until its first expand, so big external
+  // projects cost nothing while closed.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
+  const toggleFold = (key: string) => (e: SyntheticEvent<HTMLDetailsElement>) => {
+    const open = e.currentTarget.open;
+    setExpanded((s) => {
+      if (s.has(key) === open) return s;
+      const next = new Set(s);
+      if (open) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
 
-  // Creation targeting a collapsed project expands it so the input is visible.
+  // Creation targeting a collapsed section expands it so the input is visible.
+  // A hoisted section (the current project, or the loose files while a
+  // projectless note is open) renders in the top pane, which has no fold.
   useEffect(() => {
     if (creatingIn === null) return;
     const p = creatingIn.split("/")[0];
-    if (p && p !== currentProject) {
+    const hoisted = p === "" ? looseCurrent : p === currentProject;
+    if (!hoisted) {
       setExpanded((s) => (s.has(p) ? s : new Set(s).add(p)));
     }
-  }, [creatingIn, currentProject]);
+  }, [creatingIn, currentProject, looseCurrent]);
 
   const loose = notes.filter((n) => !projectOf(n.name));
   // Whether a pane is hoisted to the top slot: the open note's project, or —
@@ -352,21 +368,27 @@ export function Explorer({
     );
   };
 
+  // The loose notes as a section of the Notes card, first among the projects:
+  // one row per projectless note, no MAP chip since the map is per project.
+  // Shown even when empty so its + is always a target, like a project with
+  // no notes yet.
+  const looseSection = (
+    <details key="" open={expanded.has("")} onToggle={toggleFold("")}>
+      <summary onContextMenu={(e) => onDirContext(e, "")}>
+        <span className="explorer-name">No project</span>
+        {addBtn("")}
+      </summary>
+      {(loose.length > 0 || creatingIn === "") && (
+        <ul>
+          {creatingIn === "" && createRow("")}
+          {loose.map((n) => item(n.name))}
+        </ul>
+      )}
+    </details>
+  );
+
   const projectSection = (p: string) => (
-    <details
-      key={p}
-      open={expanded.has(p)}
-      onToggle={(e) => {
-        const open = e.currentTarget.open;
-        setExpanded((s) => {
-          if (s.has(p) === open) return s;
-          const next = new Set(s);
-          if (open) next.add(p);
-          else next.delete(p);
-          return next;
-        });
-      }}
-    >
+    <details key={p} open={expanded.has(p)} onToggle={toggleFold(p)}>
       <summary
         onContextMenu={(e) => onDirContext(e, p)}
         // Double-click moves into the project: its map opens, which also
@@ -542,12 +564,7 @@ export function Explorer({
               </h2>
               {/* Hoisted to the top pane while a projectless note is open —
                   the same exclusion the current project gets below. */}
-              {!looseCurrent && (loose.length > 0 || creatingIn === "") && (
-                <ul>
-                  {creatingIn === "" && createRow("")}
-                  {loose.map((n) => item(n.name))}
-                </ul>
-              )}
+              {!looseCurrent && looseSection}
               {projects.filter((p) => p !== currentProject).map(projectSection)}
               {notes.length === 0 && <p className="muted">No saved notes yet</p>}
             </section>

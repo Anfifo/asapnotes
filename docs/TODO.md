@@ -26,6 +26,19 @@ The AI (or anyone) working on this repo keeps this file current while working:
       preview toggle is a `.mode-switch` pill at the row's right end — pencil | book, the
       current mode lifted onto the panel color. Pending hands-on: both themes, the switch
       in preview mode, the bar scrolling in a narrow window.
+- [ ] **Loose notes fold under a "No project" section in the Notes panel** (2026-09-05) —
+      feedback: the projectless notes sat as a bare list straight under the "Notes"
+      heading while every project had its own fold, so the panel read as two kinds of
+      thing. **Implemented same day** (gates clean, not yet checked by hand): the loose
+      list is now a `<details>` section titled "No project" (the hoisted pane's and the
+      project selector's wording), first before the project sections, same summary row
+      minus the MAP chip. It starts open — the capture inbox shouldn't hide behind a
+      click on launch — while projects still start collapsed; root-targeted creation
+      unfolds it the way it does a collapsed project. Hoisting is unchanged: while a
+      projectless note is open the section leaves the panel and the top pane shows the
+      loose files. Pending hands-on: fold/unfold, the `+` on its row and on the Notes
+      heading, the create row landing inside, the empty-notes state with the muted line
+      below, both themes.
 
 - [ ] **Distribution — releases, winget, signing, updater** (2026-09-05) — the repo is
       public-ready (MIT, README, history clean) and `tauri build` emits an NSIS setup and an
