@@ -321,7 +321,7 @@ export function DiffLens({
             style={{ marginLeft: 0 }}
             onClick={() => onMarkSeen(events, !seen)}
           >
-            <Icon name="check" /> {seen ? "Seen — mark unseen" : "Mark as seen"}
+            <Icon name="check" /> {seen ? "Read — mark unread" : "Mark as read"}
           </button>
         )}
       </div>

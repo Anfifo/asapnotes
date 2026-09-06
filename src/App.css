@@ -696,8 +696,8 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
-/* The totals strip is the constant across all three states: the totals, the
-   way back, and (from the ledger) the way into the stream. */
+/* The strip is the constant across all three states: what is here and the one
+   action on all of it (the ledger), or the totals and the way back (a lens). */
 .changes-strip {
   flex: none;
   display: flex;
@@ -775,8 +775,42 @@ body,
   background: rgba(0, 0, 0, 0.08);
 }
 
-.changes-project:first-child {
-  margin-top: 0.1rem;
+/* The way into the stream sits where the stream starts: a row above the first
+   project, in the row's own type but muted, so it reads as a door and not a
+   note. */
+.chg-read-through {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  font: inherit;
+  font-size: 0.78rem;
+  color: #7a7a7a;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0.12rem 0.25rem;
+  cursor: pointer;
+}
+
+.chg-read-through:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: inherit;
+}
+
+.chg-read-through svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.chg-read-through svg:last-child {
+  margin-left: auto;
+}
+
+.chg-read-through + .changes-project {
+  margin-top: 0.3rem;
 }
 
 /* Ledger rows: one line each, name left, +n −n chips right. */
@@ -3722,8 +3756,14 @@ body,
   }
 
   .changes-project,
-  .chg-seen-btn {
+  .chg-seen-btn,
+  .chg-read-through {
     color: #9a9a9a;
+  }
+
+  .chg-read-through:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: inherit;
   }
 
   .chg-row.seen .chg-seen-btn {

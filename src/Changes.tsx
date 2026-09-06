@@ -30,9 +30,8 @@ export function ChangesView({
   onMenu,
 }: ChangesViewProps) {
   const noteCount = new Set(summaries.map((s) => s.note)).size;
-  const added = summaries.reduce((n, s) => n + s.added, 0);
-  const removed = summaries.reduce((n, s) => n + s.removed, 0);
   const unseen = summaries.filter((s) => !s.seen);
+  const unreadNotes = new Set(unseen.map((s) => s.note)).size;
 
   /** Toggle a row: an unseen row marks its unseen events, a seen row unmarks
    * all of them — so Ctrl+Z restores exactly what one click did. */
@@ -48,27 +47,22 @@ export function ChangesView({
   const isSeen = (ev: SeenTarget) =>
     summaries.some((s) => s.note === ev.note && s.atMs === ev.atMs && s.seen);
 
+  const markAll = () =>
+    onMarkSeen(
+      unseen.map(({ note, atMs }) => ({ note, atMs })),
+      true,
+    );
+
   const markAllEntry = (): MenuEntry[] =>
-    unseen.length > 0
-      ? [
-          {
-            label: "Mark all as seen",
-            run: () =>
-              onMarkSeen(
-                unseen.map(({ note, atMs }) => ({ note, atMs })),
-                true,
-              ),
-          },
-        ]
-      : [];
+    unseen.length > 0 ? [{ label: "Mark all as read", run: markAll }] : [];
 
   const sectionEntries = (section: Section): MenuEntry[] => {
     const pending = section.rows.flatMap((r) => r.events.filter((ev) => !isSeen(ev)));
     return pending.length > 0
-      ? [{ label: `Mark ${section.project} as seen`, run: () => onMarkSeen(pending, true) }]
+      ? [{ label: `Mark ${section.project} as read`, run: () => onMarkSeen(pending, true) }]
       : [
           {
-            label: `Mark ${section.project} as unseen`,
+            label: `Mark ${section.project} as unread`,
             run: () =>
               onMarkSeen(
                 section.rows.flatMap((r) => r.events),
@@ -84,8 +78,8 @@ export function ChangesView({
       { label: "Open note", run: () => onOpenNote(row.note) },
       "sep",
       row.seen
-        ? { label: "Mark as unseen", detail: "Ctrl+Z", run: () => toggleRow(row) }
-        : { label: "Mark as seen", run: () => toggleRow(row) },
+        ? { label: "Mark as unread", detail: "Ctrl+Z", run: () => toggleRow(row) }
+        : { label: "Mark as read", run: () => toggleRow(row) },
       ...sectionEntries(section),
       ...markAllEntry(),
     ]);
@@ -96,14 +90,12 @@ export function ChangesView({
         <span className="chg-totals muted">
           {noteCount === 0
             ? `No changes in ${CHANGES_DAYS} days`
-            : `${noteCount} ${noteCount === 1 ? "note" : "notes"} · `}
-          {noteCount > 0 && <span className="chg-add-count">+{added}</span>}
-          {noteCount > 0 && " "}
-          {noteCount > 0 && <span className="chg-del-count">−{removed}</span>}
+            : `${noteCount} ${noteCount === 1 ? "file" : "files"}`}
+          {unreadNotes > 0 && ` · ${unreadNotes} unread`}
         </span>
-        {noteCount > 0 && (
-          <button className="chg-through" onClick={() => onOpenLens(null)}>
-            Read through ›
+        {unreadNotes > 0 && (
+          <button className="chg-through" onClick={markAll}>
+            <Icon name="check-check" /> Mark all as read
           </button>
         )}
       </div>
@@ -119,44 +111,51 @@ export function ChangesView({
             Nothing has changed in the last {CHANGES_DAYS} days.
           </p>
         ) : (
-          groupByProject(summaries).map((section) => (
-            <Fragment key={section.project}>
-              <div
-                className="changes-project"
-                onContextMenu={(e) => onMenu(e, sectionEntries(section))}
-              >
-                {section.project}
-              </div>
-              <ul>
-                {section.rows.map((r) => (
-                  <li
-                    key={r.note}
-                    className={r.seen ? "chg-row seen" : "chg-row"}
-                    onClick={() => onOpenLens(r.note)}
-                    onContextMenu={(e) => rowMenu(e, section, r)}
-                  >
-                    <span className="explorer-name">{fileOf(r.note)}</span>
-                    <span className="explorer-detail">{stamp(r.atMs)}</span>
-                    <span className="chg-chips">
-                      <span className="chg-add-count">+{r.added}</span>
-                      <span className="chg-del-count">−{r.removed}</span>
-                    </span>
-                    <button
-                      className="chg-seen-btn"
-                      aria-label={r.seen ? "Mark as unseen" : "Mark as seen"}
-                      data-tip={r.seen ? "Mark as unseen (Ctrl+Z)" : "Mark as seen"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleRow(r);
-                      }}
+          <>
+            <button className="chg-read-through" onClick={() => onOpenLens(null)}>
+              <Icon name="book-open" />
+              Read through all changes
+              <Icon name="chevron-right" />
+            </button>
+            {groupByProject(summaries).map((section) => (
+              <Fragment key={section.project}>
+                <div
+                  className="changes-project"
+                  onContextMenu={(e) => onMenu(e, sectionEntries(section))}
+                >
+                  {section.project}
+                </div>
+                <ul>
+                  {section.rows.map((r) => (
+                    <li
+                      key={r.note}
+                      className={r.seen ? "chg-row seen" : "chg-row"}
+                      onClick={() => onOpenLens(r.note)}
+                      onContextMenu={(e) => rowMenu(e, section, r)}
                     >
-                      <Icon name="check" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </Fragment>
-          ))
+                      <span className="explorer-name">{fileOf(r.note)}</span>
+                      <span className="explorer-detail">{stamp(r.atMs)}</span>
+                      <span className="chg-chips">
+                        <span className="chg-add-count">+{r.added}</span>
+                        <span className="chg-del-count">−{r.removed}</span>
+                      </span>
+                      <button
+                        className="chg-seen-btn"
+                        aria-label={r.seen ? "Mark as unread" : "Mark as read"}
+                        data-tip={r.seen ? "Mark as unread (Ctrl+Z)" : "Mark as read"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleRow(r);
+                        }}
+                      >
+                        <Icon name="check" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </Fragment>
+            ))}
+          </>
         )}
       </div>
     </div>

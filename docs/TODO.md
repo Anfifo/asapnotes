@@ -39,6 +39,17 @@ The AI (or anyone) working on this repo keeps this file current while working:
       loose files. Pending hands-on: fold/unfold, the `+` on its row and on the Notes
       heading, the create row landing inside, the empty-notes state with the muted line
       below, both themes.
+- [ ] **Changes strip: "Mark all as read" leads, totals demoted** (2026-09-05) — feedback:
+      the header's totals are as large as the rows and take the width; the header button
+      should mark everything read, with "Read through" kept as a secondary way in. Sheet
+      published, awaiting a pick: A today / B two lines, text only / C two lines with the
+      unread count and check/book glyphs / D totals leave the header, "Read through" as
+      the list's first row. **Picked D, implemented same day** (gates clean, not yet
+      checked by hand): the header reads "N files · M unread" with a double-check "Mark
+      all as read" (hidden once everything is read); "Read through all changes" is the
+      first row of the list; the totals are gone from the header, the per-row chips
+      carry them. Every user-facing "seen" became "read" (rows, menus, lens strip); the
+      identifiers stayed.
 
 - [ ] **Distribution — releases, winget, signing, updater** (2026-09-05) — the repo is
       public-ready (MIT, README, history clean) and `tauri build` emits an NSIS setup and an
