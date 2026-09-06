@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import mark from "../assets/mark.svg";
-import { Icon } from "./icons";
+import { Icon, type IconName } from "./icons";
 
-export type MenuEntry = { label: string; detail?: string; run: () => void } | "sep";
+/** `checked` makes the item one of a set of states: a check column appears on
+ * every item of that menu, ticked where it is true. */
+export type MenuEntry =
+  { label: string; detail?: string; checked?: boolean; run: () => void } | "sep";
 
 export interface MenuDef {
   label: string;
   /** Alt-shortcut letter; defaults to the label's first letter. */
   mnemonic?: string;
+  /** Render as a value chip instead of a menu title: a glyph and the current
+   * value, a hairline after it. The label stays the menu's name for the
+   * keyboard; bare Alt skips chips and opens the first real menu. */
+  chip?: { icon: IconName; text: string };
   items: MenuEntry[];
 }
 
@@ -135,7 +142,10 @@ export function MenuBar({ menus, searchLabel, onSearch, status, onHide }: MenuBa
         altPending.current = false;
         e.preventDefault();
         if (openRef.current) close();
-        else if (menusRef.current.length > 0) openViaKeyboard(menusRef.current[0].label);
+        else {
+          const first = menusRef.current.find((m) => !m.chip);
+          if (first) openViaKeyboard(first.label);
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -172,51 +182,72 @@ export function MenuBar({ menus, searchLabel, onSearch, status, onHide }: MenuBa
   return (
     <div className="menubar">
       <img className="menubar-mark" src={mark} alt="" draggable={false} />
-      {menus.map((menu) => (
-        <div className="menu" key={menu.label}>
-          <button
-            className={openMenu === menu.label ? "menu-btn open" : "menu-btn"}
-            // preventDefault keeps editor focus/selection — formatting items need it
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              setSelIdx(-1);
-              setOpenMenu((o) => (o === menu.label ? null : menu.label));
-            }}
-            onPointerEnter={() => {
-              setOpenMenu((o) => {
-                if (o === null || o === menu.label) return o;
+      {menus.map((menu) => {
+        const base = menu.chip ? "menu-chip" : "menu-btn";
+        const checkable = menu.items.some((it) => it !== "sep" && it.checked !== undefined);
+        return (
+          <div className="menu" key={menu.label}>
+            <button
+              className={openMenu === menu.label ? `${base} open` : base}
+              aria-label={menu.chip ? `${menu.label}: ${menu.chip.text}` : undefined}
+              // preventDefault keeps editor focus/selection — formatting items need it
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
                 setSelIdx(-1);
-                return menu.label;
-              });
-            }}
-          >
-            <MnemonicLabel label={menu.label} letter={menu.mnemonic ?? menu.label[0]} />
-          </button>
-          {openMenu === menu.label && (
-            <div className="menu-drop">
-              {menu.items.map((item, i) =>
-                item === "sep" ? (
-                  <hr key={i} />
-                ) : (
-                  <button
-                    key={item.label}
-                    className={i === selIdx ? "menu-item selected" : "menu-item"}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setOpenMenu(null);
-                      setSelIdx(-1);
-                      item.run();
-                    }}
-                  >
-                    <span>{item.label}</span>
-                    {item.detail && <span className="menu-detail">{item.detail}</span>}
-                  </button>
-                ),
+                setOpenMenu((o) => (o === menu.label ? null : menu.label));
+              }}
+              onPointerEnter={() => {
+                setOpenMenu((o) => {
+                  if (o === null || o === menu.label) return o;
+                  setSelIdx(-1);
+                  return menu.label;
+                });
+              }}
+            >
+              {menu.chip ? (
+                <>
+                  <span className="chip-icon">
+                    <Icon name={menu.chip.icon} />
+                  </span>
+                  <span className="chip-text">{menu.chip.text}</span>
+                  <span className="chip-chevron">
+                    <Icon name="chevron-down" />
+                  </span>
+                </>
+              ) : (
+                <MnemonicLabel label={menu.label} letter={menu.mnemonic ?? menu.label[0]} />
               )}
-            </div>
-          )}
-        </div>
-      ))}
+            </button>
+            {menu.chip && <span className="menu-vsep" />}
+            {openMenu === menu.label && (
+              <div className="menu-drop">
+                {menu.items.map((item, i) =>
+                  item === "sep" ? (
+                    <hr key={i} />
+                  ) : (
+                    <button
+                      key={item.label}
+                      className={i === selIdx ? "menu-item selected" : "menu-item"}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setOpenMenu(null);
+                        setSelIdx(-1);
+                        item.run();
+                      }}
+                    >
+                      {checkable && (
+                        <span className="menu-check">{item.checked && <Icon name="check" />}</span>
+                      )}
+                      <span className="menu-label">{item.label}</span>
+                      {item.detail && <span className="menu-detail">{item.detail}</span>}
+                    </button>
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
       {/* Command center: the search pill sits IN the flex row
           between two drag regions, so it can never cross the menus — it
           centers in the leftover space and shrinks (label ellipsizes) first. */}

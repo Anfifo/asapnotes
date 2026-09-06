@@ -15,13 +15,16 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { corpus, type Corpus, type Hits, type Listing, type NoteRow } from "./harness.js";
-import type { Outlined, ProjectRow, Read } from "./harness.js";
+import type { Outlined, ProjectRow, Read, Workspaces } from "./harness.js";
 
 let c: Corpus;
 
 before(async () => {
   c = await corpus({
     projects: { work: "write", reading: "read", private: "off" },
+    // A workspace naming a project that is off, and it is the current one.
+    workspaces: { focus: ["work", "private"] },
+    currentWorkspace: "focus",
     files: {
       "work/plan.md":
         "Intro paragraph.\n\n# Design\n\ndesign body\n\n## Decisions\n\nwe picked A\n\n## Notes\n\nnotes body\n",
@@ -101,6 +104,29 @@ describe("the access boundary", () => {
     const fake = await c.refusal("read_note", { note: "private/nothing.md" });
     assert.equal(real, "no such note: private/secret.md");
     assert.equal(fake, "no such note: private/nothing.md");
+  });
+
+  it("scopes by workspace without ever naming a hidden member", async () => {
+    const ws = await c.call<Workspaces>("list_workspaces");
+    assert.equal(ws.current, "focus");
+    assert.deepEqual(ws.workspaces, [{ workspace: "focus", projects: ["work"] }]);
+
+    const projects = await c.call<ProjectRow[]>("list_projects", { workspace: "focus" });
+    assert.deepEqual(
+      projects.map((p) => p.project),
+      ["work"],
+    );
+    const listed = await c.call<Listing<NoteRow>>("list_notes", { workspace: "focus" });
+    assert.ok(listed.notes.length > 0);
+    assert.ok(listed.notes.every((n) => n.note.startsWith("work/")));
+    const { hits } = await c.call<Hits>("search_notes", { query: "hunter2", workspace: "focus" });
+    assert.equal(hits.length, 0);
+
+    // Default is everything visible; an unknown name says what does exist.
+    const all = await c.call<Listing<NoteRow>>("list_notes", { workspace: "Default" });
+    assert.ok(all.notes.some((n) => n.note === "reading/ref.md"));
+    const message = await c.refusal("list_notes", { workspace: "nope" });
+    assert.match(message, /focus/);
   });
 
   it("keeps a hidden project out of every listing shape", async () => {

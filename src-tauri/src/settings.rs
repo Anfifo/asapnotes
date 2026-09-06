@@ -74,6 +74,16 @@ pub struct Settings {
     /// went. Absent means the notes root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meeting_folder: Option<String>,
+    /// Named sets of projects, workspace name → project names. A view over the
+    /// registry: nothing on disk moves, a project may sit in any number of
+    /// sets, and "Default" — every project — is implicit, so an absent map
+    /// means the switcher offers nothing but Default. Personal because the
+    /// grouping is this person's, not the project's.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub workspaces: BTreeMap<String, Vec<String>>,
+    /// The workspace the app is on; absent means Default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_workspace: Option<String>,
     /// What the MCP sidecar may reach. Defaults live in [`Mcp`]'s accessors, so
     /// an absent block behaves exactly like a written-out block of defaults.
     #[serde(skip_serializing_if = "Mcp::is_default")]
@@ -127,6 +137,8 @@ impl Default for Settings {
             map_view: None,
             open_files_externally: None,
             meeting_folder: None,
+            workspaces: BTreeMap::new(),
+            current_workspace: None,
             mcp: Mcp::default(),
         }
     }
@@ -696,6 +708,57 @@ pub fn set_meeting_folder(app: AppHandle, folder: Option<String>) -> Result<(), 
     })
 }
 
+/// The workspace table, replaced whole — the editing surface holds all of it,
+/// so rename, add and remove are one write each. Names are trimmed; an empty
+/// one, or "Default" (the implicit all-projects workspace), is refused rather
+/// than stored. Project names are not checked against the registry: a project
+/// can be unlinked and come back, and a name matching nothing shows nothing.
+#[tauri::command]
+pub fn set_workspaces(
+    app: AppHandle,
+    workspaces: BTreeMap<String, Vec<String>>,
+) -> Result<(), String> {
+    update(&app, |s| {
+        let mut next = BTreeMap::new();
+        for (name, mut projects) in workspaces {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err("a workspace needs a name".to_string());
+            }
+            if name.eq_ignore_ascii_case("default") {
+                return Err("\"Default\" is every project and can't be redefined".to_string());
+            }
+            projects.sort();
+            projects.dedup();
+            next.insert(name, projects);
+        }
+        // A workspace that is gone can't stay current.
+        if s.current_workspace
+            .as_ref()
+            .is_some_and(|c| !next.contains_key(c))
+        {
+            s.current_workspace = None;
+        }
+        s.workspaces = next;
+        Ok(())
+    })
+}
+
+/// Which workspace the app is on; `None` is Default. A name the table doesn't
+/// hold is refused, so the file never points at nothing.
+#[tauri::command]
+pub fn set_current_workspace(app: AppHandle, name: Option<String>) -> Result<(), String> {
+    update(&app, |s| {
+        if let Some(n) = &name {
+            if !s.workspaces.contains_key(n) {
+                return Err(format!("no workspace named \"{n}\""));
+            }
+        }
+        s.current_workspace = name;
+        Ok(())
+    })
+}
+
 /// Whether referenced non-markdown files open with the system default app
 /// instead of the in-app read-only view. Off is the default, so off is stored
 /// as absent — the file never holds shipped behavior.
@@ -776,6 +839,19 @@ mod tests {
         // Unknown extension: not a note at all.
         assert!(!s.is_note("main.rs"));
         assert!(!s.is_listed("main.rs"));
+    }
+
+    #[test]
+    fn workspaces_are_absent_until_defined() {
+        // Default writes nothing about workspaces, so an untouched file stays
+        // as it was; a written table and the current name read back as-is.
+        let data = serde_json::to_string(&Settings::default()).expect("serializes");
+        assert!(!data.contains("workspaces"));
+        assert!(!data.contains("currentWorkspace"));
+        let json = r#"{"workspaces":{"Work":["acme","asapnotes"]},"currentWorkspace":"Work"}"#;
+        let s: Settings = serde_json::from_str(json).expect("parses");
+        assert_eq!(s.workspaces["Work"], vec!["acme", "asapnotes"]);
+        assert_eq!(s.current_workspace.as_deref(), Some("Work"));
     }
 
     #[test]

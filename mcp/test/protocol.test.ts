@@ -35,6 +35,7 @@ describe("what the server advertises", () => {
     const { tools } = await c.client.listTools();
     const names = tools.map((t) => t.name).sort();
     assert.ok(names.includes("search_notes"));
+    assert.ok(names.includes("list_workspaces"));
     assert.ok(names.includes("write_section"));
     assert.ok(names.includes("append_todo"));
     assert.equal(new Set(names).size, names.length, "tool names must be unique");

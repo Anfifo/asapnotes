@@ -1145,6 +1145,10 @@ fn tool_fixture() -> Fixture {
         .insert("reading".into(), granted(Some("read"), false, &secret));
     s.projects
         .insert("secret".into(), granted(Some("off"), true, &secret));
+    // A workspace holding a project the caller may not see, and it is current.
+    s.workspaces
+        .insert("focus".into(), vec!["work".into(), "secret".into()]);
+    s.current_workspace = Some("focus".into());
     f.save_settings(&s);
     f
 }
@@ -1164,6 +1168,62 @@ fn doctor_reports_what_this_process_resolved() {
     assert_eq!(out["grants"]["secret"], json!("off"));
     // Three projects exist; the `off` one is not one of the visible ones.
     assert_eq!(out["visibleProjects"], json!(2));
+}
+
+#[test]
+fn a_workspace_scopes_the_listings_and_never_names_an_off_project() {
+    let f = tool_fixture();
+    let notes_of = |v: &serde_json::Value, key: &str| -> Vec<String> {
+        v[key]
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|n| n["note"].as_str().expect("note").to_string())
+            .collect()
+    };
+
+    // The workspace holds `secret`, which is off: it is not named.
+    let ws = call(&f, "list_workspaces", json!({})).expect("workspaces");
+    assert_eq!(ws["current"], json!("focus"));
+    assert_eq!(
+        ws["workspaces"],
+        json!([{ "workspace": "focus", "projects": ["work"] }])
+    );
+
+    let projects = call(&f, "list_projects", json!({ "workspace": "focus" })).expect("projects");
+    assert_eq!(projects.as_array().expect("array").len(), 1);
+    assert_eq!(projects[0]["project"], json!("work"));
+
+    let listed = call(&f, "list_notes", json!({ "workspace": "focus" })).expect("notes");
+    let listed = notes_of(&listed, "notes");
+    assert!(listed.contains(&"work/plan.md".to_string()));
+    assert!(listed.iter().all(|n| n.starts_with("work/")));
+
+    // "about A" is in reading/ and secret/ too; only work/ answers.
+    let hits = call(
+        &f,
+        "search_notes",
+        json!({ "query": "a", "workspace": "focus" }),
+    )
+    .expect("search");
+    let hits = notes_of(&hits, "hits");
+    assert!(!hits.is_empty());
+    assert!(hits.iter().all(|n| n.starts_with("work/")));
+    let found = call(
+        &f,
+        "find_notes",
+        json!({ "pattern": ".md", "workspace": "focus" }),
+    )
+    .expect("find");
+    let found = notes_of(&found, "notes");
+    assert!(!found.is_empty());
+    assert!(found.iter().all(|n| n.starts_with("work/")));
+
+    // "Default" is every visible project; an unknown name lists what exists.
+    let all = call(&f, "list_notes", json!({ "workspace": "Default" })).expect("notes");
+    assert!(notes_of(&all, "notes").contains(&"reading/ref.md".to_string()));
+    let err = call(&f, "list_notes", json!({ "workspace": "nope" })).expect_err("unknown");
+    assert!(err.contains("focus"), "{err}");
 }
 
 #[test]

@@ -37,6 +37,9 @@ export interface CorpusOptions {
   projects?: Record<string, string>;
   /** The `mcp` block of settings — settings access, the write pin, defaults. */
   mcp?: Record<string, unknown>;
+  /** Named sets of projects, and the one the app is on. */
+  workspaces?: Record<string, string[]>;
+  currentWorkspace?: string;
   /** What the app publishes about itself: the current project, mainly. */
   state?: Record<string, unknown>;
 }
@@ -84,7 +87,17 @@ export async function corpus(options: CorpusOptions = {}): Promise<Corpus> {
   }
   writeFileSync(
     path.join(appData, "settings.json"),
-    JSON.stringify({ version: 1, projects, ...(options.mcp ? { mcp: options.mcp } : {}) }, null, 2),
+    JSON.stringify(
+      {
+        version: 1,
+        projects,
+        ...(options.mcp ? { mcp: options.mcp } : {}),
+        ...(options.workspaces ? { workspaces: options.workspaces } : {}),
+        ...(options.currentWorkspace ? { currentWorkspace: options.currentWorkspace } : {}),
+      },
+      null,
+      2,
+    ),
     "utf8",
   );
   if (options.state) {
@@ -143,5 +156,9 @@ export type Outlined = NoteRow & { headings: { section: string; depth: number }[
 export type Read = { note: string; text: string; mtimeMs: number; section?: string };
 export type Hit = { note: string; line: number; section: string; text: string };
 export type ProjectRow = { project: string; grant: string; notes: number };
+export type Workspaces = {
+  current: string | null;
+  workspaces: { workspace: string; projects: string[] }[];
+};
 export type Listing<T> = { notes: T[]; truncated: boolean };
 export type Hits = { hits: Hit[]; truncated: boolean };

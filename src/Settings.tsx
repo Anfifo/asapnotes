@@ -54,7 +54,7 @@ const FIXED_ROWS: [string, string][] = [
   ["Ctrl+Shift+K", "Delete line"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["Tab / Shift+Tab", "Indent / outdent list"],
-  ["Alt", "Menu bar (Alt+F/E/O/V/S open a menu)"],
+  ["Alt", "Menu bar (Alt+W/F/E/O/V/S open a menu)"],
   ["Esc", "Hide window"],
 ];
 
@@ -416,9 +416,64 @@ interface SettingsProps {
    * the in-app read-only view, true the system default app. */
   openFilesExternally: boolean;
   onOpenFilesExternallyChange: (on: boolean) => void;
-  /** Where to land on open — "shortcuts" scrolls to that table. */
-  section: "top" | "shortcuts";
+  /** Named sets of projects; "Default" (every project) is implicit and not
+   * listed here. Names are unique keys — a rename is remove-and-add to App. */
+  workspaces: Record<string, string[]>;
+  onAddWorkspace: (name: string) => void;
+  onRenameWorkspace: (from: string, to: string) => void;
+  onRemoveWorkspace: (name: string) => void;
+  onToggleWorkspaceProject: (workspace: string, project: string, on: boolean) => void;
+  /** Where to land on open — "shortcuts" scrolls to that table, "workspaces"
+   * to that section, "new-workspace" into its name box. */
+  section: SettingsSection;
   onClose: () => void;
+}
+
+export type SettingsSection = "top" | "shortcuts" | "workspaces" | "new-workspace";
+
+/** A workspace name, in place: an empty name, "Default", or a taken one
+ * reverts rather than saves — the row stays what it was. */
+function nameProblem(name: string, taken: string[]): string | null {
+  const n = name.trim();
+  if (!n) return "A workspace needs a name";
+  if (n.toLowerCase() === "default") return "Default is every project";
+  if (taken.includes(n)) return `There is already a workspace named ${n}`;
+  return null;
+}
+
+function WorkspaceName({
+  value,
+  taken,
+  onCommit,
+}: {
+  value: string;
+  taken: string[];
+  onCommit: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const commit = () => {
+    const n = draft.trim();
+    if (n === value || nameProblem(n, taken)) setDraft(value);
+    else onCommit(n);
+  };
+  return (
+    <input
+      className="ws-name"
+      value={draft}
+      spellCheck={false}
+      aria-label="Workspace name"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setDraft(value);
+          e.currentTarget.blur();
+          e.stopPropagation();
+        }
+      }}
+    />
+  );
 }
 
 export function Settings({
@@ -440,15 +495,36 @@ export function Settings({
   onDefaultNoteTypeChange,
   openFilesExternally,
   onOpenFilesExternallyChange,
+  workspaces,
+  onAddWorkspace,
+  onRenameWorkspace,
+  onRemoveWorkspace,
+  onToggleWorkspaceProject,
   section,
   onClose,
 }: SettingsProps) {
   // "Keyboard shortcuts" opens straight onto its table — it's the last
-  // section, buried below the fold at any window size.
+  // section, buried below the fold at any window size. Workspaces likewise,
+  // and "New workspace…" from the switcher lands in the name box.
   const shortcutsRef = useRef<HTMLHeadingElement>(null);
+  const workspacesRef = useRef<HTMLHeadingElement>(null);
+  const newWorkspaceRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (section === "shortcuts") shortcutsRef.current?.scrollIntoView();
+    if (section === "workspaces") workspacesRef.current?.scrollIntoView();
+    if (section === "new-workspace") {
+      workspacesRef.current?.scrollIntoView();
+      newWorkspaceRef.current?.focus();
+    }
   }, [section]);
+  const [newWorkspace, setNewWorkspace] = useState("");
+  const workspaceNames = Object.keys(workspaces);
+  const addWorkspace = () => {
+    const n = newWorkspace.trim();
+    if (nameProblem(n, workspaceNames)) return;
+    onAddWorkspace(n);
+    setNewWorkspace("");
+  };
 
   return (
     <div className="palette-backdrop" onClick={onClose}>
@@ -611,6 +687,82 @@ export function Settings({
             </table>
           </>
         )}
+        <h2 ref={workspacesRef}>Workspaces</h2>
+        <p className="settings-note">
+          A workspace is a set of projects; the switcher in the title bar shows one at a time.
+          Default is every project. A project can be in any number of workspaces, and nothing moves
+          on disk.
+        </p>
+        <table>
+          <tbody>
+            {workspaceNames.map((name) => (
+              <tr key={name}>
+                <td>
+                  <WorkspaceName
+                    value={name}
+                    taken={workspaceNames.filter((n) => n !== name)}
+                    onCommit={(to) => onRenameWorkspace(name, to)}
+                  />
+                </td>
+                <td>
+                  <div className="ws-members">
+                    {projects.map((p) => {
+                      const on = workspaces[name].includes(p.name);
+                      return (
+                        <label key={p.name} className={on ? "ws-project on" : "ws-project"}>
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={(e) =>
+                              onToggleWorkspaceProject(name, p.name, e.target.checked)
+                            }
+                          />
+                          {on && <Icon name="check" />}
+                          {p.name}
+                        </label>
+                      );
+                    })}
+                    {projects.length === 0 && <span className="muted">No projects yet</span>}
+                    <button
+                      className="settings-remove"
+                      aria-label={`Remove workspace ${name}`}
+                      data-tip="Remove — the projects stay where they are"
+                      onClick={() => onRemoveWorkspace(name)}
+                    >
+                      <Icon name="x" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            <tr>
+              <td>
+                <input
+                  ref={newWorkspaceRef}
+                  className="ws-name ws-new"
+                  value={newWorkspace}
+                  placeholder="New workspace"
+                  spellCheck={false}
+                  aria-label="New workspace name"
+                  onChange={(e) => setNewWorkspace(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addWorkspace();
+                  }}
+                />
+              </td>
+              <td>
+                <button
+                  className="tool-btn"
+                  disabled={nameProblem(newWorkspace, workspaceNames) !== null}
+                  data-tip={nameProblem(newWorkspace, workspaceNames) ?? undefined}
+                  onClick={addWorkspace}
+                >
+                  Add
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
         <McpSection />
         <h2 ref={shortcutsRef}>Keyboard shortcuts</h2>
         <p className="settings-note">

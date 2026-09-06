@@ -59,6 +59,12 @@ const SECTION_ARG = str(
     "than falling back to a whole-note read.",
 );
 
+const WORKSPACE_ARG = str(
+  "Restrict to one workspace — a named set of projects the user keeps; " +
+    "list_workspaces names them. Top-level notes are in every workspace. " +
+    '"Default" means every project. Leave it out to see everything you can.',
+);
+
 const EXPECT_ARG = int(
   "The mtimeMs you got from reading this note. When given, the write is " +
     "refused if the file changed in between, instead of overwriting an edit " +
@@ -87,6 +93,17 @@ export const TOOLS: ToolDef[] = [
     "The projects this server can see, each with its access grant (read or " +
       "write) and note count. Projects the user has not granted access to do " +
       "not appear here at all.",
+    object({ workspace: WORKSPACE_ARG }),
+    true,
+  ),
+
+  forward(
+    "list_workspaces",
+    "The user's workspaces — named sets of projects — with the projects in " +
+      "each, and which one the app is on (current; null means Default, every " +
+      "project). Pass a name as workspace to list_projects, list_notes, " +
+      "find_notes or search_notes to scope to it. A workspace never widens " +
+      "what you can see: a project without a grant is left out of it here too.",
     object({}),
     true,
   ),
@@ -102,6 +119,7 @@ export const TOOLS: ToolDef[] = [
       {
         pattern: str("Substring to match against note ids, case-insensitive."),
         limit: int("Maximum notes to return. Default 30."),
+        workspace: WORKSPACE_ARG,
       },
       ["pattern"],
     ),
@@ -119,6 +137,7 @@ export const TOOLS: ToolDef[] = [
       {
         query: str("Literal text to look for."),
         project: str("Restrict to one project. Much faster than searching everything."),
+        workspace: WORKSPACE_ARG,
         limit: int("Maximum hits overall. Default 50."),
         perNote: int(
           "Maximum hits from any one note, so a long file can't fill the result. Default 10.",
@@ -138,6 +157,7 @@ export const TOOLS: ToolDef[] = [
       "note content.",
     object({
       project: str("Restrict to one project."),
+      workspace: WORKSPACE_ARG,
       outline: bool(
         "Include each note's heading tree. Costs a read per note, and lowers " +
           "the default limit to 200 because the answer grows so much faster.",

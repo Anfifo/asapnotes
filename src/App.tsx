@@ -49,7 +49,7 @@ import { Preview } from "./Preview";
 import { Palette, PaletteItem } from "./Palette";
 import { ScanProjects } from "./ScanProjects";
 import { SearchView } from "./Search";
-import { Settings } from "./Settings";
+import { Settings, type SettingsSection } from "./Settings";
 import { getTheme, setTheme, type Theme } from "./theme";
 import { StatusBar } from "./StatusBar";
 import { ToastStack } from "./Toast";
@@ -314,7 +314,12 @@ function App() {
   // derives from note files, so these are remembered to stay visible.
   const [newFolders, setNewFolders] = useState<string[]>([]);
   // Which Settings section to land on — null = closed, "top" = the overlay as-is.
-  const [settingsOpen, setSettingsOpen] = useState<null | "top" | "shortcuts">(null);
+  const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
+  // Workspaces: named sets of projects, and the one the app is on (null is
+  // Default, every project). A view over the registry — nothing on disk moves,
+  // and a project may sit in any number of sets. Mirrors settings.json.
+  const [workspaces, setWorkspacesState] = useState<Record<string, string[]>>({});
+  const [currentWorkspace, setCurrentWorkspaceState] = useState<string | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   // App-shortcut overrides (action id → chord) and the global summon hotkey.
   // No boot mirror: until settings load, the shipped defaults handle keys.
@@ -1082,6 +1087,11 @@ function App() {
       setMapViewState(isViewKind(settings.mapView) ? settings.mapView : DEFAULT_VIEW);
       setOpenFilesExternallyState(settings.openFilesExternally ?? false);
       setMeetingFolderState(settings.meetingFolder ?? "");
+      const ws = settings.workspaces ?? {};
+      setWorkspacesState(ws);
+      // A current workspace the table no longer holds (a hand edit) is Default.
+      const cur = settings.currentWorkspace ?? null;
+      setCurrentWorkspaceState(cur !== null && cur in ws ? cur : null);
       // From here on an appearance change is the user's, and gets written back.
       appearanceSyncedRef.current = true;
     },
@@ -1098,6 +1108,78 @@ function App() {
         .catch((err: unknown) => toast(`Couldn't save that setting — ${errText(err)}`));
     },
     [toast],
+  );
+
+  /** Switch workspaces. The view changes at once; the setting follows, and a
+   * failed write says so without switching back. */
+  const switchWorkspace = useCallback(
+    (name: string | null) => {
+      setCurrentWorkspaceState(name);
+      void api
+        .setCurrentWorkspace(name)
+        .catch((err: unknown) => toast(`Couldn't save that setting — ${errText(err)}`));
+    },
+    [toast],
+  );
+
+  /** Replace the workspace table; false when the write failed (and toasted).
+   * The backend drops a current workspace the new table lacks, so the mirror
+   * does the same. */
+  const saveWorkspaces = useCallback(
+    async (next: Record<string, string[]>) => {
+      try {
+        await api.setWorkspaces(next);
+        setWorkspacesState(next);
+        setCurrentWorkspaceState((cur) => (cur !== null && cur in next ? cur : null));
+        return true;
+      } catch (err) {
+        toast(`Couldn't save workspaces — ${errText(err)}`);
+        return false;
+      }
+    },
+    [toast],
+  );
+
+  /** A new workspace becomes the current one: it was made to be used, and the
+   * Settings row it appears in is where its projects get ticked. */
+  const addWorkspace = useCallback(
+    async (name: string) => {
+      if (await saveWorkspaces({ ...workspaces, [name]: [] })) switchWorkspace(name);
+    },
+    [workspaces, saveWorkspaces, switchWorkspace],
+  );
+
+  /** A rename is remove-and-add in the table; the current name follows. */
+  const renameWorkspace = useCallback(
+    async (from: string, to: string) => {
+      const next: Record<string, string[]> = {};
+      for (const [name, members] of Object.entries(workspaces)) {
+        next[name === from ? to : name] = members;
+      }
+      if ((await saveWorkspaces(next)) && currentWorkspace === from) switchWorkspace(to);
+    },
+    [workspaces, currentWorkspace, saveWorkspaces, switchWorkspace],
+  );
+
+  const removeWorkspace = useCallback(
+    async (name: string) => {
+      const next = { ...workspaces };
+      delete next[name];
+      await saveWorkspaces(next);
+    },
+    [workspaces, saveWorkspaces],
+  );
+
+  const toggleWorkspaceProject = useCallback(
+    async (workspace: string, project: string, on: boolean) => {
+      const members = workspaces[workspace] ?? [];
+      if (members.includes(project) === on) return;
+      await saveWorkspaces({
+        ...workspaces,
+        [workspace]: on ? [...members, project] : members.filter((p) => p !== project),
+      });
+    },
+    [workspaces, saveWorkspaces],
   );
 
   /** Which format "New note" creates. */
@@ -1368,14 +1450,28 @@ function App() {
     }
   }, [toast]);
 
+  /** A project made while a workspace is on joins it — otherwise it would
+   * vanish from view the moment it was created. Default needs nothing. */
+  const joinCurrentWorkspace = useCallback(
+    async (names: string[]) => {
+      if (currentWorkspace === null) return;
+      const members = workspaces[currentWorkspace] ?? [];
+      const added = names.filter((n) => !members.includes(n));
+      if (added.length === 0) return;
+      await saveWorkspaces({ ...workspaces, [currentWorkspace]: [...members, ...added] });
+    },
+    [currentWorkspace, workspaces, saveWorkspaces],
+  );
+
   const addScannedProjects = useCallback(
     async (chosen: { name: string; path: string }[]) => {
       // Scanned repos root at their docs folder — notes, not the whole tree.
       await api.linkProjects(chosen.map((c) => ({ ...c, useDocs: true })));
       setScanResults(null);
+      await joinCurrentWorkspace(chosen.map((c) => c.name));
       await refreshProjects();
     },
-    [refreshProjects],
+    [refreshProjects, joinCurrentWorkspace],
   );
 
   /** Create a project wherever the sheet says it lives. Deliberately does not
@@ -1384,10 +1480,11 @@ function App() {
     async (project: api.NewProject) => {
       await api.createProject(project);
       setCreatingProject(false);
+      await joinCurrentWorkspace([project.name]);
       await refreshProjects();
       editorRef.current?.focus();
     },
-    [refreshProjects],
+    [refreshProjects, joinCurrentWorkspace],
   );
 
   const unlinkProject = useCallback(
@@ -1680,16 +1777,30 @@ function App() {
   const mentionItems = notes
     .filter((n) => n.name !== open?.name)
     .map((n) => ({ id: n.name, label: n.name }));
+  /** What the workspace shows. Notes in no project belong to every workspace;
+   * the open note is never filtered — it is open. Everything the workspace
+   * scopes (explorer headings, palette, search, changes) reads through here. */
+  const workspaceSet = currentWorkspace !== null ? new Set(workspaces[currentWorkspace]) : null;
+  const inWorkspace = (note: string) => {
+    if (!workspaceSet) return true;
+    const p = projectOf(note);
+    return p === null || workspaceSet.has(p);
+  };
+  const visibleProjects = workspaceSet ? projects.filter((p) => workspaceSet.has(p)) : projects;
+  const visibleChanges = workspaceSet ? changes.filter((c) => inWorkspace(c.note)) : changes;
+
   const noteEntries: NoteEntry[] = [
-    ...notes.map((n) => ({
-      kind: "note" as const,
-      id: n.name,
-      label: n.name,
-      detail: draftIds.has(n.name) ? "unsaved edits" : undefined,
-      isNote: true,
-    })),
+    ...notes
+      .filter((n) => inWorkspace(n.name))
+      .map((n) => ({
+        kind: "note" as const,
+        id: n.name,
+        label: n.name,
+        detail: draftIds.has(n.name) ? "unsaved edits" : undefined,
+        isNote: true,
+      })),
     ...drafts
-      .filter((d) => !noteNames.has(d.name))
+      .filter((d) => !noteNames.has(d.name) && inWorkspace(d.name))
       .map((d) => ({
         kind: "note" as const,
         id: d.name,
@@ -1976,7 +2087,35 @@ function App() {
       run: () => editorRef.current?.applyFormat(f.kind),
     })),
   ]);
+  // The workspace switcher: a value chip before the menus, listing the sets
+  // with a tick on the current one and how many of the registry's projects
+  // each holds. Both ways of making one lead to the Settings row.
+  const projectWord = (n: number) => `${n} ${n === 1 ? "project" : "projects"}`;
+  const workspaceMenu: MenuDef = {
+    label: "Workspace",
+    mnemonic: "w",
+    chip: { icon: "layers", text: currentWorkspace ?? "Default" },
+    items: [
+      {
+        label: "Default",
+        detail: `all ${projectWord(projects.length)}`,
+        checked: currentWorkspace === null,
+        run: () => switchWorkspace(null),
+      },
+      ...Object.entries(workspaces).map(([name, members]) => ({
+        label: name,
+        detail: projectWord(members.filter((p) => projects.includes(p)).length),
+        checked: currentWorkspace === name,
+        run: () => switchWorkspace(name),
+      })),
+      "sep" as const,
+      { label: "New workspace…", run: () => setSettingsOpen("new-workspace") },
+      { label: "Manage workspaces…", detail: "Settings", run: () => setSettingsOpen("workspaces") },
+    ],
+  };
+
   const menus: MenuDef[] = [
+    workspaceMenu,
     {
       label: "File",
       items: [
@@ -2087,7 +2226,7 @@ function App() {
 
   /** The changed notes as the ledger orders them — the lens steps through
    * this sequence when one note's changes run out. */
-  const changedOrder = changedNotes(changes);
+  const changedOrder = changedNotes(visibleChanges);
 
   /** Ledger row → that note's lens; "Read through" (null) starts at the top of
    * the ledger. Same floating-panel etiquette as opening a file: a floating
@@ -2801,9 +2940,27 @@ function App() {
     const mount = mounts.find((m) => m.project === project && m.at === rest.join("/"));
     openContextMenu(e, [
       // The map is per project, so only the project heading offers it — not
-      // subfolders or mounts.
+      // subfolders or mounts. So is workspace membership: while a workspace is
+      // on, its heading offers the one step that changes it. (A project outside
+      // the workspace is only ever visible as the open note's, hoisted.)
       ...(dir && rest.length === 0
-        ? [{ label: "Open project map", run: () => void openMapTab(dir) }, "sep" as const]
+        ? [
+            { label: "Open project map", run: () => void openMapTab(dir) },
+            ...(currentWorkspace !== null
+              ? [
+                  workspaceSet?.has(dir)
+                    ? {
+                        label: `Remove from ${currentWorkspace}`,
+                        run: () => void toggleWorkspaceProject(currentWorkspace, dir, false),
+                      }
+                    : {
+                        label: `Add to ${currentWorkspace}`,
+                        run: () => void toggleWorkspaceProject(currentWorkspace, dir, true),
+                      },
+                ]
+              : []),
+            "sep" as const,
+          ]
         : []),
       { label: "New note here", run: () => startExplorerCreate(dir) },
       // All three need a project to land in, which the notes-root heading ("")
@@ -2952,7 +3109,7 @@ function App() {
           <Explorer
             notes={notes}
             drafts={drafts}
-            projects={projects}
+            projects={visibleProjects}
             missingProjects={missingProjects}
             mounts={mounts}
             currentProject={currentProject}
@@ -2982,18 +3139,19 @@ function App() {
                 focusToken={searchFocus}
                 onOpenHit={openHit}
                 onError={(msg) => toast(`Search failed — ${msg}`)}
+                inScope={workspaceSet ? inWorkspace : undefined}
               />
             }
             changesSlot={
               <ChangesView
-                summaries={changes}
+                summaries={visibleChanges}
                 onOpenLens={openChangesLens}
                 onOpenNote={(note) => openFromExplorer(note, true)}
                 onMarkSeen={markSeen}
                 onMenu={openContextMenu}
               />
             }
-            changesCount={new Set(changes.filter((c) => !c.seen).map((c) => c.note)).size}
+            changesCount={new Set(visibleChanges.filter((c) => !c.seen).map((c) => c.note)).size}
             pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
             onCollapse={() => setExplorerOpen(false)}
@@ -3439,6 +3597,11 @@ function App() {
           onDefaultNoteTypeChange={setDefaultNoteType}
           openFilesExternally={openFilesExternally}
           onOpenFilesExternallyChange={setOpenFilesExternally}
+          workspaces={workspaces}
+          onAddWorkspace={(name) => void addWorkspace(name)}
+          onRenameWorkspace={(from, to) => void renameWorkspace(from, to)}
+          onRemoveWorkspace={(name) => void removeWorkspace(name)}
+          onToggleWorkspaceProject={(ws, p, on) => void toggleWorkspaceProject(ws, p, on)}
           section={settingsOpen}
           onClose={() => {
             setSettingsOpen(null);

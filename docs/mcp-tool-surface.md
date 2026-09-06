@@ -399,3 +399,18 @@ so `truncated` is a fact rather than an inference from the length.
 
 Deletes and renames, and a whole-file note write. Both for the reasons already given
 above, both unchanged by building the rest.
+
+### Workspaces (2026-09-05)
+
+The app gained workspaces — named sets of projects, personal, a view over the registry
+([project-model.md](project-model.md)). The sidecar sees them as a scope, never as a
+default: `list_workspaces` reports the sets and which one the app is on, and
+`list_projects`, `list_notes`, `find_notes` and `search_notes` take an optional
+`workspace` that narrows the answer to that set (top-level notes belong to every one;
+`"Default"` is every project). Absent, nothing changes. The filter lives in the helper and
+is applied after the grants — a workspace naming an `off` project neither shows it nor
+names it — so membership, like the rest of the project model, has one implementation.
+Rejected: scoping every call to the app's current workspace unless told otherwise. An
+implicit scope is how an agent concludes a note does not exist, and the sidecar runs with
+the app closed, so "current" would come from the file rather than the screen. The write
+pin stays per project.

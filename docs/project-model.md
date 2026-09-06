@@ -71,11 +71,17 @@ that must belong somewhere else lives in a folder that is mounted.
 
 ### The workspace level
 
-"User → project → notes" has, for now, exactly one workspace: this machine's notes root
-plus its registry. A named multi-workspace level is **not** introduced here — it buys
-nothing while everything is local, and it is the natural unit when cloud share and team
-sync arrive. Nothing in this model blocks adding it later; the registry simply gains an
-owning workspace per project.
+A workspace is a **named set of projects** — a personal view over the registry, nothing
+more. "Default" is every project and is implicit; any other workspace is a list of
+project names in the personal file (`workspaces`, with `currentWorkspace` naming the one
+the app is on), and a project can sit in any number of them. Switching scopes what the
+explorer, the palette's note list, search and the changes ledger show. Nothing on disk
+moves, capture still lands at the notes root, and the sidecar's per-project grants don't
+change. A project created while a workspace is on joins it.
+
+_Revised 2026-09-05._ The first draft of this doc reserved the word for a future sync
+unit — one machine's notes root plus its registry. That unit is still coming with cloud
+share and team sync; it will need another name.
 
 ## Where config lives
 
@@ -118,7 +124,9 @@ It absorbs `external_projects.json` and the settings currently sitting in `local
       "mcp": "off"
     },
     "recipes": {}
-  }
+  },
+  "workspaces": { "Work": ["asapnotes"], "Home": ["recipes"] },
+  "currentWorkspace": "Work"
 }
 ```
 

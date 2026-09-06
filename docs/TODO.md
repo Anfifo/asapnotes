@@ -50,6 +50,32 @@ The AI (or anyone) working on this repo keeps this file current while working:
       first row of the list; the totals are gone from the header, the per-row chips
       carry them. Every user-facing "seen" became "read" (rows, menus, lens strip); the
       identifiers stayed.
+- [ ] **Workspaces: named sets of projects** (2026-09-05) — requested: a switcher after the
+      mark and before File; a project can belong to several workspaces; "Default" holds
+      every project. Design pending (model, what a switch scopes, where editing lives,
+      and the naming clash with `project-model.md`, which reserves "workspace" for the
+      future sync unit). Menubar treatment on the same sheet, awaiting a pick: A a menu
+      among menus / B a chip like the search pill / C the name in brand amber.
+      **Picked B, implemented same day** (gates and `cargo test` clean, not yet checked by
+      hand). Model as settled: `settings.json` gains `workspaces` (name → project names)
+      and `currentWorkspace`; Default is implicit and refused as a name; a switch scopes
+      the explorer headings, the palette's note list, search hits and the changes ledger,
+      while capture, MCP grants and root-level notes are untouched; a project created or
+      scanned in while a workspace is on joins it. Surfaces: the `menu-chip` before File
+      (a `MenuDef` with `chip`, items with `checked`), Settings → Workspaces (name in
+      place, project toggle chips, remove, add), the project heading's right-click
+      "Add to / Remove from <workspace>". `project-model.md`'s workspace paragraph was
+      rewritten; the future sync unit needs another word. Deferred: per-workspace tab
+      sets. **MCP, same day (picked A over B):** the sidecar sees workspaces as a scope,
+      never a default — `list_workspaces` (sets, visible members only, which is current)
+      and an optional `workspace` on `list_projects`, `list_notes`, `find_notes`,
+      `search_notes`; "Default" means everything, an unknown name lists what exists, the
+      filter runs in the helper after the grants; `doctor` reports `currentWorkspace`.
+      Rejected: following the app's current workspace implicitly, and a `"current"`
+      shorthand. Recorded in `docs/mcp-tool-surface.md` and `mcp/README.md`; Rust and
+      sidecar tests cover it. Pending hands-on: chip and dropdown, switching with the explorer on each
+      view, Settings row in both themes, rename of the current workspace, "New
+      workspace…" landing in the name box, Alt still opening File.
 
 - [ ] **Distribution — releases, winget, signing, updater** (2026-09-05) — the repo is
       public-ready (MIT, README, history clean) and `tauri build` emits an NSIS setup and an

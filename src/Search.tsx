@@ -52,11 +52,15 @@ interface SearchViewProps {
   onOpenHit: (note: string, line: number) => void;
   /** Surface a failed scan — otherwise it reads as "no results". */
   onError: (message: string) => void;
+  /** The workspace's filter: hits in notes it rejects are dropped. Absent
+   * means every note. The scan itself stays whole-corpus, so switching
+   * workspaces never re-runs it. */
+  inScope?: (note: string) => boolean;
 }
 
 /** Content search across every note (Ctrl+Shift+F): query box on
  * top, matches grouped under the note they live in. */
-export function SearchView({ focusToken, onOpenHit, onError }: SearchViewProps) {
+export function SearchView({ focusToken, onOpenHit, onError, inScope }: SearchViewProps) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,7 +106,8 @@ export function SearchView({ focusToken, onOpenHit, onError }: SearchViewProps) 
     return () => window.clearTimeout(timer);
   }, [query]);
 
-  const groups = hits ? groupByNote(hits) : [];
+  const shown = hits && inScope ? hits.filter((h) => inScope(h.note)) : hits;
+  const groups = shown ? groupByNote(shown) : [];
 
   return (
     <div className="search-view">
@@ -114,12 +119,12 @@ export function SearchView({ focusToken, onOpenHit, onError }: SearchViewProps) 
         spellCheck={false}
         onChange={(e) => setQuery(e.target.value)}
       />
-      {hits !== null && (
+      {shown !== null && hits !== null && (
         <p className="search-count muted">
-          {hits.length === 0
+          {shown.length === 0
             ? "No results"
-            : `${hits.length}${hits.length === SEARCH_LIMIT ? "+" : ""} ${
-                hits.length === 1 ? "result" : "results"
+            : `${shown.length}${hits.length === SEARCH_LIMIT ? "+" : ""} ${
+                shown.length === 1 ? "result" : "results"
               } in ${groups.length} ${groups.length === 1 ? "note" : "notes"}`}
           {busy && " · searching…"}
         </p>

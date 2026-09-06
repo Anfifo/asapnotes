@@ -344,6 +344,10 @@ export interface Settings {
   openFilesExternally?: boolean | null;
   /** Folder the meeting dialog offers first; absent means the notes root. */
   meetingFolder?: string | null;
+  /** Named sets of projects; "Default" (every project) is implicit. */
+  workspaces?: Record<string, string[]>;
+  /** The workspace the app is on; absent means Default. */
+  currentWorkspace?: string | null;
 }
 
 /** `error` is set when the file couldn't be parsed: shipped defaults are in
@@ -375,6 +379,13 @@ export const setOpenFilesExternally = (on: boolean) =>
 /** Folder the meeting dialog offers first; null goes back to the notes root. */
 export const setMeetingFolder = (folder: string | null) =>
   invoke<void>("set_meeting_folder", { folder });
+/** Replace the workspace table. Rejects an empty name and "Default"; a current
+ * workspace missing from the new table falls back to Default. */
+export const setWorkspaces = (workspaces: Record<string, string[]>) =>
+  invoke<void>("set_workspaces", { workspaces });
+/** Which workspace the app is on; null is Default. */
+export const setCurrentWorkspace = (name: string | null) =>
+  invoke<void>("set_current_workspace", { name });
 
 /** What a finished meeting recording left behind: an asset path (base-
  * relative, like every asset path) per recorded side, and how long it ran. */

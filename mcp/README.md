@@ -113,15 +113,21 @@ not have a grant.
 
 Reading, cheapest first:
 
-| Tool            | For                                                         |
-| --------------- | ----------------------------------------------------------- |
-| `find_notes`    | By name. Opens no files                                     |
-| `search_notes`  | By content. Every hit names the heading path it fell under  |
-| `list_notes`    | The corpus; with `outline: true`, every note's heading tree |
-| `outline_note`  | One note's heading tree                                     |
-| `read_note`     | A whole note, or one **section** of it                      |
-| `list_projects` | What is visible, and at what grant                          |
-| `doctor`        | What this process resolved                                  |
+| Tool              | For                                                            |
+| ----------------- | -------------------------------------------------------------- |
+| `find_notes`      | By name. Opens no files                                        |
+| `search_notes`    | By content. Every hit names the heading path it fell under     |
+| `list_notes`      | The corpus; with `outline: true`, every note's heading tree    |
+| `outline_note`    | One note's heading tree                                        |
+| `read_note`       | A whole note, or one **section** of it                         |
+| `list_projects`   | What is visible, and at what grant                             |
+| `list_workspaces` | The user's named sets of projects, and which one the app is on |
+| `doctor`          | What this process resolved                                     |
+
+`find_notes`, `search_notes`, `list_notes` and `list_projects` take `workspace` to
+scope an answer to one of those sets (top-level notes are in every one; `"Default"`
+is every project). A workspace narrows, never widens: a project without a grant stays
+invisible whether or not a workspace names it.
 
 Writing:
 

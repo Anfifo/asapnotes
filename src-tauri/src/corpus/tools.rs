@@ -14,11 +14,13 @@
 
 use super::{edits, grants, ids, log, search, sections, store, walk, Roots};
 use serde_json::{json, Map, Value};
+use std::collections::BTreeSet;
 
 /// Every wire name this helper answers to, in the order the docs list them.
-pub const COMMANDS: [&str; 11] = [
+pub const COMMANDS: [&str; 12] = [
     "doctor",
     "list_projects",
+    "list_workspaces",
     "list_notes",
     "read_note",
     "outline_note",
@@ -77,7 +79,8 @@ fn settings(roots: &Roots) -> Result<crate::settings::Settings, String> {
 pub fn dispatch(roots: &Roots, command: &str, args: &Value) -> Result<Value, String> {
     match command {
         "doctor" => doctor(roots),
-        "list_projects" => list_projects(roots),
+        "list_projects" => list_projects(roots, args),
+        "list_workspaces" => list_workspaces(roots),
         "list_notes" => list_notes(roots, args),
         "read_note" => read_note(roots, args),
         "outline_note" => outline_note(roots, args),
@@ -123,6 +126,7 @@ fn doctor(roots: &Roots) -> Result<Value, String> {
         },
         "writeScope": if s.mcp.pinned_to_current() { "current" } else { "any" },
         "currentProject": state.current_project,
+        "currentWorkspace": s.current_workspace,
         "grants": grants_by_project,
         "visibleProjects": grants::visible_projects(roots, s)
             .map(|v| v.len())
@@ -130,11 +134,74 @@ fn doctor(roots: &Roots) -> Result<Value, String> {
     }))
 }
 
-fn list_projects(roots: &Roots) -> Result<Value, String> {
+/// The `workspace` argument, resolved to the project names it holds; `None`
+/// when the caller named none — or named "Default", which is every project —
+/// and so means everything visible. A name the table doesn't hold is an error
+/// that lists the workspaces, never a guess. A workspace is a filter over what
+/// the grants already allow and is applied after them, so it never widens what
+/// a caller can see.
+fn workspace_scope(
+    s: &crate::settings::Settings,
+    args: &Value,
+) -> Result<Option<BTreeSet<String>>, String> {
+    let Some(name) = opt_str(args, "workspace") else {
+        return Ok(None);
+    };
+    if name.eq_ignore_ascii_case("default") {
+        return Ok(None);
+    }
+    match s.workspaces.get(name) {
+        Some(projects) => Ok(Some(projects.iter().cloned().collect())),
+        None if s.workspaces.is_empty() => {
+            Err(format!("no workspace named \"{name}\"; none are defined"))
+        }
+        None => Err(format!(
+            "no workspace named \"{name}\"; workspaces: {}",
+            s.workspaces.keys().cloned().collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+/// In scope: no workspace named, or the note sits in one of its projects, or
+/// it is a top-level note — those belong to every workspace, as in the app.
+fn in_scope(scope: Option<&BTreeSet<String>>, note: &str) -> bool {
+    match (scope, ids::project_of(note)) {
+        (None, _) | (Some(_), None) => true,
+        (Some(set), Some(p)) => set.contains(p),
+    }
+}
+
+/// The workspaces, each with the projects in it this caller may see. A member
+/// the grants hide is left out, so a workspace never names a project that does
+/// not exist to the sidecar. `current` is the one the app is on; null means
+/// Default, which is every visible project and is not listed.
+fn list_workspaces(roots: &Roots) -> Result<Value, String> {
     let s = settings(roots)?;
+    let visible: BTreeSet<String> = grants::visible_projects(roots, &s)?
+        .into_iter()
+        .map(|(p, _)| p.name)
+        .collect();
+    let workspaces: Vec<Value> = s
+        .workspaces
+        .iter()
+        .map(|(name, projects)| {
+            let shown: Vec<&String> = projects.iter().filter(|p| visible.contains(*p)).collect();
+            json!({ "workspace": name, "projects": shown })
+        })
+        .collect();
+    Ok(json!({ "current": s.current_workspace, "workspaces": workspaces }))
+}
+
+fn list_projects(roots: &Roots, args: &Value) -> Result<Value, String> {
+    let s = settings(roots)?;
+    let scope = workspace_scope(&s, args)?;
     let notes = walk::list_notes(roots, &s, true)?;
     let out: Vec<Value> = grants::visible_projects(roots, &s)?
         .into_iter()
+        .filter(|(p, _)| match &scope {
+            None => true,
+            Some(set) => set.contains(&p.name),
+        })
         .map(|(p, grant)| {
             let count = notes
                 .iter()
@@ -159,6 +226,7 @@ fn list_projects(roots: &Roots) -> Result<Value, String> {
 fn list_notes(roots: &Roots, args: &Value) -> Result<Value, String> {
     let s = settings(roots)?;
     let project = opt_str(args, "project");
+    let scope = workspace_scope(&s, args)?;
     let want_outline = opt_bool(args, "outline");
     let limit = opt_usize(args, "limit").unwrap_or(if want_outline { OUTLINE_LIMIT } else { 2000 });
     let mut out = Vec::new();
@@ -169,7 +237,7 @@ fn list_notes(roots: &Roots, args: &Value) -> Result<Value, String> {
             truncated = true;
             break;
         }
-        if grants::check_read(&s, &note.name).is_err() {
+        if grants::check_read(&s, &note.name).is_err() || !in_scope(scope.as_ref(), &note.name) {
             continue;
         }
         if let Some(project) = project {
@@ -249,6 +317,7 @@ fn outline_note(roots: &Roots, args: &Value) -> Result<Value, String> {
 /// straight to a section read instead of pulling the whole note.
 fn search_notes(roots: &Roots, args: &Value) -> Result<Value, String> {
     let s = settings(roots)?;
+    let scope = workspace_scope(&s, args)?;
     let limit = opt_usize(args, "limit").unwrap_or(50);
     let mut q = search::Query::new(str_arg(args, "query")?);
     q.project = opt_str(args, "project").map(str::to_string);
@@ -266,7 +335,9 @@ fn search_notes(roots: &Roots, args: &Value) -> Result<Value, String> {
     }
     // The grant decides what may be searched, not what survives the search:
     // pass it down so an unreadable note is skipped before it spends a slot.
-    let readable = |note: &str| grants::check_read(&s, note).is_ok();
+    // The workspace rides the same check for the same reason.
+    let readable =
+        |note: &str| grants::check_read(&s, note).is_ok() && in_scope(scope.as_ref(), note);
     let mut found = search::search(roots, &s, &q, Some(&readable))?;
     let truncated = found.len() > limit;
     found.truncate(limit);
@@ -287,8 +358,10 @@ fn search_notes(roots: &Roots, args: &Value) -> Result<Value, String> {
 /// Name search: no file is opened, so this is the cheap half of finding things.
 fn find_notes(roots: &Roots, args: &Value) -> Result<Value, String> {
     let s = settings(roots)?;
+    let scope = workspace_scope(&s, args)?;
     let limit = opt_usize(args, "limit").unwrap_or(30);
-    let readable = |note: &str| grants::check_read(&s, note).is_ok();
+    let readable =
+        |note: &str| grants::check_read(&s, note).is_ok() && in_scope(scope.as_ref(), note);
     let mut found = search::find_notes(
         roots,
         &s,

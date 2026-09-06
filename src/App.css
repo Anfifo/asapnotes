@@ -358,6 +358,91 @@ body,
   color: #ffffff;
 }
 
+.menu-label {
+  flex: 1;
+}
+
+/* The check column of a menu whose items are states (the workspace list):
+   present on every item so labels align, ticked on the current one. */
+.menu-check {
+  display: inline-flex;
+  width: 14px;
+  flex: none;
+  align-self: center;
+  color: #f2c14e;
+}
+
+.menu-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* A value chip in the menu row (the workspace switcher): the one control there
+   that shows a value rather than naming a menu, so it wears the search pill's
+   material. The menubar is dark in both themes, so the brand amber is literal. */
+.menu-chip {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 1.45rem;
+  max-width: 12rem;
+  margin-left: 0.55rem;
+  padding: 0 0.55rem 0 0.45rem;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #d6d6d6;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: default;
+}
+
+.menu-chip:hover,
+.menu-chip.open {
+  background: rgba(255, 255, 255, 0.12);
+  color: #f0f0f0;
+}
+
+.menu-chip .chip-icon,
+.menu-chip .chip-chevron {
+  display: inline-flex;
+  flex: none;
+}
+
+.menu-chip .chip-icon {
+  color: #f2c14e;
+}
+
+.menu-chip .chip-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.menu-chip .chip-chevron {
+  color: #9a9a9a;
+}
+
+.menu-chip .chip-chevron svg {
+  width: 11px;
+  height: 11px;
+}
+
+.menu-chip .chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-vsep {
+  width: 1px;
+  height: 14px;
+  align-self: center;
+  background: rgba(255, 255, 255, 0.14);
+  margin: 0 0.35rem 0 0.4rem;
+}
+
 /* Alt-mnemonic letters (Alt+F/E/O/V/S) stay subtly underlined. */
 .menu-btn u {
   text-decoration-thickness: 1px;
@@ -2227,6 +2312,77 @@ body,
   color: #0f0f0f;
 }
 
+/* Settings → Workspaces: a row per set, the name editable in place, every
+   project a toggle chip so membership is read and changed in one glance. */
+.ws-name {
+  font: inherit;
+  font-size: 0.85rem;
+  color: inherit;
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  outline: none;
+  padding: 0.15rem 0.3rem;
+}
+
+.ws-name:hover,
+.ws-name:focus {
+  border-color: #d5d5d5;
+}
+
+.ws-name.ws-new {
+  border-color: #d5d5d5;
+}
+
+.ws-name:focus {
+  border-color: rgba(217, 154, 6, 0.75);
+}
+
+.ws-members {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.ws-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid #d5d5d5;
+  border-radius: 999px;
+  color: #7a7a7a;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ws-project:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.ws-project.on {
+  color: inherit;
+  border-color: rgba(217, 154, 6, 0.6);
+  background: rgba(217, 154, 6, 0.1);
+}
+
+.ws-project input {
+  display: none;
+}
+
+.ws-project svg {
+  width: 11px;
+  height: 11px;
+  color: #8a6a00;
+}
+
+.ws-members .settings-remove {
+  margin-left: auto;
+}
+
 /* Scan-results sheet (File → Scan folder for projects…) */
 
 .scan-list {
@@ -3928,8 +4084,28 @@ body,
   }
 
   .tool-btn,
-  .np-name {
+  .np-name,
+  .ws-name:hover,
+  .ws-name.ws-new,
+  .ws-project {
     border-color: #4a4a4a;
+  }
+
+  .ws-name:focus {
+    border-color: rgba(220, 191, 90, 0.75);
+  }
+
+  .ws-project:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .ws-project.on {
+    border-color: rgba(220, 191, 90, 0.6);
+    background: rgba(220, 191, 90, 0.12);
+  }
+
+  .ws-project svg {
+    color: var(--tint-amber);
   }
 
   .np-name:focus {

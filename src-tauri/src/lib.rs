@@ -305,6 +305,8 @@ pub fn run() {
             meeting::stop_meeting_recording,
             meeting::meeting_recording_state,
             settings::set_meeting_folder,
+            settings::set_workspaces,
+            settings::set_current_workspace,
         ])
         .setup(|app| {
             #[cfg(desktop)]
