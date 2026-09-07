@@ -12,6 +12,37 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-09-07)
+
+- [ ] **Collapsed link labels aren't link targets** (2026-09-07) — found while checking
+      the link menu headless: the live preview collapses `[label](target)` to its label
+      whenever the caret is elsewhere, and the linkable mark (`links.ts`) sits on the
+      hidden destination. So at rest a file link's label takes neither Ctrl+click nor the
+      right-click Open / Reveal / Copy path entries — right-click gives the edit menu and
+      Ctrl+click merely places the caret (which then expands the link, after which both
+      work on the destination text). Bare URLs are unaffected. Likely since the collapse
+      landed (2026-08-19), not new. Fix shape: when a link is collapsed, put the
+      `cm-linkable` mark on the label range with the destination as its `data-link`, so
+      the label is the target the reader sees; keep `data-tip` showing the destination.
+- [x] **Decision round, eight picks** (2026-09-07) — a decision page with mockups in both
+      themes was used instead of a chat menu; the picks, each recorded on its own item:
+      tray menu shows the chord baked into the "Open" label; tables render in place in
+      the editor; "Export as WAV" lives on both the link menu and the palette; the drag
+      pill gains a hint while over nothing droppable; "Move to…" gets both a right-click
+      submenu and a palette picker; the future sync unit is called a **library**; each
+      workspace keeps its own tab set; the release workflow is the next slice.
+- [x] **Headless check of everything shipped since 2026-09-05** (2026-09-07) — a second
+      app instance driven over the debug protocol, screenshots in both themes, real
+      pointer input, against a scratch project that was removed afterwards. Passed:
+      titlebar strokes and the mode switch (also at 640px wide, where the bar still fits
+      in one row), the "No project" fold, the changes strip header and first row, the
+      workspace chip, dropdown, switch, Settings row, in-place rename, "New workspace…"
+      focus and Alt → File, explorer drag in the light theme (selection tint, drop
+      highlight, ghost, both sheet paths), the link tip and menus, the dark-mode select,
+      hovered menu hints and go-to-line panel, the unsaved-changes lens marks. Drafts
+      survived an app restart mid-check. Still human-only: the empty "No project" state,
+      a native option list open, and the meeting items (spoken word, seek, mic-blocked).
+
 ## Today (2026-09-06)
 
 - [x] **Drag notes in the explorer: move, or link into the open note** (2026-09-06) —
@@ -38,10 +69,16 @@ The AI (or anyone) working on this repo keeps this file current while working:
       _Verified live over CDP_ with real pointer input against a scratch project: click
       still opens, a 2px press is still a click, Ctrl/Shift selection, single and
       two-note drags into a folder / to the root / onto a note row, both sheet paths,
-      the editor link, the clash toast, and that folder rows don't drag. _Pending
-      hands-on:_ the ghost and highlight colors in the light theme (only dark was
-      screenshotted); whether the pill should also show while over nothing droppable;
-      a right-click "Move to…" picker for keyboard reach was deliberately left out.
+      the editor link, the clash toast, and that folder rows don't drag. _Checked
+      headless 2026-09-07 in the light theme:_ selection tint, drop highlight and ghost
+      read fine; the pill does show over nothing droppable, carrying only the notes'
+      names. **Picked 2026-09-07:** the pill also gets a hint line there ("drop on a
+      folder, a project, or the note"), and moving gets keyboard reach two ways — a
+      right-click "Move to…" submenu (No project / each project → project folder,
+      virtual folders, new virtual folder…) and a palette command with a type-ahead
+      folder picker over the open note or the explorer selection. Both to build. Noted:
+      the "Notes" heading and the "No project" summary light up together during a drag
+      because they are the same destination (`dir:`).
 
 - [x] **Links in the editor get a right-click menu and a hover hint** (2026-09-06) —
       feedback: after a meeting the recording links were the only way to the audio and
@@ -50,7 +87,9 @@ The AI (or anyone) working on this repo keeps this file current while working:
       "Ctrl+click to open" tip, and right-clicking one prepends Open / Reveal in File
       Explorer / Copy path (Copy link for URLs) to the edit entries. Frontend only —
       `reveal_path` already existed. This menu is the natural home for the parked
-      "Export as WAV" verb below.
+      "Export as WAV" verb below. _Checked headless 2026-09-07:_ tip and menus behave on
+      URLs and on an expanded file destination (Open / Reveal / Copy path, Copy link for
+      a URL); a collapsed label does not take them — see the 2026-09-07 item.
 - [x] **Dark-mode readability pass over every dropdown** (2026-09-06) — feedback: the
       meeting dialog's folder select showed near-white text on a light option list.
       Root cause was the missing `color-scheme: dark` on the dark root (native widgets
@@ -60,8 +99,11 @@ The AI (or anyone) working on this repo keeps this file current while working:
       highlighted row sat at 2.1–3.1:1 (menu shortcut hints, explorer detail, palette
       muted), now lifted to ≥4.5:1 in both themes. Also found and fixed: the go-to-line
       panel's field and button used the library's light colors, so dark mode had
-      white-on-white — the find-panel override now covers every editor panel. Awaiting
-      a hand check in dark mode.
+      white-on-white — the find-panel override now covers every editor panel. _Checked
+      headless 2026-09-07:_ the meeting dialog's select paints dark with light text
+      (`color-scheme: dark` resolved on the root), hovered menu hints and the go-to-line
+      field read in both themes. The native option list itself can't be screenshotted
+      headless — one human glance still owed.
 
 ## Today (2026-09-05)
 
@@ -75,8 +117,9 @@ The AI (or anyone) working on this repo keeps this file current while working:
       (gates clean, not yet checked by hand): the format buttons are `.bar-btn` squares
       with `.bar-sep` hairlines between groups, every glyph lives in `icons.tsx`, and the
       preview toggle is a `.mode-switch` pill at the row's right end — pencil | book, the
-      current mode lifted onto the panel color. Pending hands-on: both themes, the switch
-      in preview mode, the bar scrolling in a narrow window.
+      current mode lifted onto the panel color. _Checked headless 2026-09-07:_ both
+      themes, the switch in preview mode (the format buttons leave, the pill stays
+      right), and the bar at 640px wide, where it still fits in one row.
 - [ ] **Loose notes fold under a "No project" section in the Notes panel** (2026-09-05) —
       feedback: the projectless notes sat as a bare list straight under the "Notes"
       heading while every project had its own fold, so the panel read as two kinds of
@@ -87,9 +130,9 @@ The AI (or anyone) working on this repo keeps this file current while working:
       click on launch — while projects still start collapsed; root-targeted creation
       unfolds it the way it does a collapsed project. Hoisting is unchanged: while a
       projectless note is open the section leaves the panel and the top pane shows the
-      loose files. Pending hands-on: fold/unfold, the `+` on its row and on the Notes
-      heading, the create row landing inside, the empty-notes state with the muted line
-      below, both themes.
+      loose files. _Checked headless 2026-09-07:_ fold/unfold, the `+` on hover, the
+      create row landing inside the section, both themes. Not checked: the empty-notes
+      state (it needs the real loose notes gone).
 - [ ] **Changes strip: "Mark all as read" leads, totals demoted** (2026-09-05) — feedback:
       the header's totals are as large as the rows and take the width; the header button
       should mark everything read, with "Read through" kept as a secondary way in. Sheet
@@ -100,7 +143,8 @@ The AI (or anyone) working on this repo keeps this file current while working:
       all as read" (hidden once everything is read); "Read through all changes" is the
       first row of the list; the totals are gone from the header, the per-row chips
       carry them. Every user-facing "seen" became "read" (rows, menus, lens strip); the
-      identifiers stayed.
+      identifiers stayed. _Checked headless 2026-09-07:_ header, first row and per-row
+      chips in both themes ("Mark all as read" was not pressed against the real ledger).
 - [ ] **Workspaces: named sets of projects** (2026-09-05) — requested: a switcher after the
       mark and before File; a project can belong to several workspaces; "Default" holds
       every project. Design pending (model, what a switch scopes, where editing lives,
@@ -124,11 +168,16 @@ The AI (or anyone) working on this repo keeps this file current while working:
       filter runs in the helper after the grants; `doctor` reports `currentWorkspace`.
       Rejected: following the app's current workspace implicitly, and a `"current"`
       shorthand. Recorded in `docs/mcp-tool-surface.md` and `mcp/README.md`; Rust and
-      sidecar tests cover it. Pending hands-on: chip and dropdown, switching with the explorer on each
-      view, Settings row in both themes, rename of the current workspace, "New
-      workspace…" landing in the name box, Alt still opening File.
+      sidecar tests cover it. _Checked headless 2026-09-07:_ chip and dropdown in both
+      themes, switching scopes the explorer, the Settings row in both themes, renaming
+      the current workspace in place updates the chip, "New workspace…" lands focus in
+      the name box, Alt alone still opens File. **Picked 2026-09-07:** per-workspace tab
+      sets (each workspace remembers its own strip, Default keeps everything; open
+      question: where a note opened from search lands when it is outside the workspace).
+      The future sync unit is called a **library** (`project-model.md` updated).
 
-- [ ] **Distribution — releases, winget, signing, updater** (2026-09-05) — the repo is
+- [ ] **Distribution — releases, winget, signing, updater** (2026-09-05) — **next
+      slice, picked 2026-09-07** over transcription and the polish items. The repo is
       public-ready (MIT, README, history clean) and `tauri build` emits an NSIS setup and an
       MSI, but nothing turns a tag into a download. Decided order: (a) **GitHub Releases**
       from a tag: `.github/workflows/release.yml` builds on `windows-latest` and attaches
@@ -157,16 +206,20 @@ The AI (or anyone) working on this repo keeps this file current while working:
       signs on full-line fills / C ink instead of wash. **Picked B, implemented same day**:
       signs sit in the scroller's padding so list indents never displace them; removed
       lines keep the body ink and size on a rose fill; the +/− share the changes lens.
+      _Checked headless 2026-09-07_ in both themes: gutter signs, rose removed line,
+      green added lines, runs open.
 
 ## Today (2026-09-04)
 
 - [ ] **Tray menu shows the summon chord next to Open** (2026-09-04) — requested; the
-      chord is only in the hover tooltip today. Design pending a pick: accelerator column
-      on the "Open" item (kept live on rebind) vs. the chord baked into the label.
+      chord is only in the hover tooltip today. **Picked 2026-09-07: the chord baked into
+      the label** ("Open (Ctrl+Alt+A)"), rewritten on rebind; the accelerator column and
+      a header row were the alternatives. To build.
 - [ ] **Tables in the live-preview editor** (2026-09-04) — the rendered pane now rules
       tables (done with the bullet-bold marker and Ctrl+E scroll hand-off fixes); the
-      editor itself still shows a table as raw pipes. Open: whether to render it in place
-      (widget) or leave the editor to the raw text and lean on Ctrl+E.
+      editor itself still shows a table as raw pipes. **Picked 2026-09-07: render in
+      place** — a grid while the caret is outside the block, raw pipes while it is inside,
+      the rule the rest of the live preview follows. Its own slice, after distribution.
 
 ## Today (2026-08-31)
 
@@ -218,7 +271,10 @@ The AI (or anyone) working on this repo keeps this file current while working:
         per-track WAVs and the raw `.opus` files also available. Decode path exists
         already (the test suite's probe). **Open: where it lives** — options are a
         palette/File-menu verb over the active note's recording links, or an action on
-        the audio link itself in the editor. Awaiting the pick.
+        the audio link itself in the editor. **Picked 2026-09-07: both** — an "Export as
+        WAV…" entry on the recording link's right-click menu and a palette / File verb
+        over the active note's recordings, opening one shared export sheet (mixed, per
+        track, or the raw files, then a save location).
   - [ ] **2 — transcription**: helper process + whisper.cpp; consented model download;
         transcript appended as markdown with `[hh:mm:ss]` per paragraph, speaker by
         track.

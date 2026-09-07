@@ -81,7 +81,8 @@ change. A project created while a workspace is on joins it.
 
 _Revised 2026-09-05._ The first draft of this doc reserved the word for a future sync
 unit — one machine's notes root plus its registry. That unit is still coming with cloud
-share and team sync; it will need another name.
+share and team sync; its name is **library** (picked 2026-09-07 over vault, space and
+notebook: it reads as the whole collection and no other tool owns the word).
 
 ## Where config lives
 
