@@ -51,6 +51,18 @@ The AI (or anyone) working on this repo keeps this file current while working:
       Explorer / Copy path (Copy link for URLs) to the edit entries. Frontend only —
       `reveal_path` already existed. This menu is the natural home for the parked
       "Export as WAV" verb below.
+- [x] **Dark-mode readability pass over every dropdown** (2026-09-06) — feedback: the
+      meeting dialog's folder select showed near-white text on a light option list.
+      Root cause was the missing `color-scheme: dark` on the dark root (native widgets
+      follow it, not the page colors); fixed. The audit then covered every custom list
+      (menus, context menu, palette, autocomplete, explorer rows, tab strip, find
+      panel): primary text was fine everywhere (≥8:1), but secondary text on a
+      highlighted row sat at 2.1–3.1:1 (menu shortcut hints, explorer detail, palette
+      muted), now lifted to ≥4.5:1 in both themes. Also found and fixed: the go-to-line
+      panel's field and button used the library's light colors, so dark mode had
+      white-on-white — the find-panel override now covers every editor panel. Awaiting
+      a hand check in dark mode.
+
 ## Today (2026-09-05)
 
 - [ ] **Titlebar toolbar joins the stroke-icon family** (2026-09-05) — feedback: the

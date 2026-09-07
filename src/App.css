@@ -463,6 +463,14 @@ body,
   font-size: 0.9em;
 }
 
+/* Secondary text lifts with its row: the resting gray falls under 3:1 on the
+   highlight, and a shortcut hint is read exactly when the row is under the
+   pointer. */
+.menu-item:hover .menu-detail,
+.menu-item.selected .menu-detail {
+  color: #c0c0c8;
+}
+
 .menubar-drag {
   /* Tauri's drag-region script handles mousedown (move) + dblclick (maximize).
      Never shrinks below a grabbable sliver — the search pill gives way first. */
@@ -1416,6 +1424,12 @@ body.note-drag * {
   cursor: grabbing !important;
 }
 
+/* Same lift as the menus: the detail gray sits near 2:1 on the current row. */
+.explorer li.current .explorer-detail,
+.explorer li.current .explorer-ext.mute {
+  color: #6a6a6a;
+}
+
 .explorer-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1973,12 +1987,14 @@ body.note-drag * {
   color: inherit;
 }
 
-.editor .cm-panel.cm-search {
+/* Every panel (find/replace, go to line): the library's own field and button
+   colors assume a light editor, so both get the panel's transparent chrome. */
+.editor .cm-panel {
   font-size: 0.8rem;
 }
 
-.editor .cm-panel.cm-search .cm-textfield,
-.editor .cm-panel.cm-search .cm-button {
+.editor .cm-panel .cm-textfield,
+.editor .cm-panel .cm-button {
   font: inherit;
   color: inherit;
   background: transparent;
@@ -3739,6 +3755,10 @@ body.note-drag * {
 :root[data-theme="dark"] {
   color: #f6f6f6;
   background-color: #2f2f2f;
+  /* Native widgets the stylesheet can't reach — a select's option list,
+     checkbox boxes — follow this, not the page colors. Without it the list
+     paints light behind text that inherited the dark theme's near-white. */
+  color-scheme: dark;
 
   --syn-link: #74aeff;
   --syn-quote: #a8adb4;
@@ -4059,6 +4079,11 @@ body.note-drag * {
     border-color: #555;
   }
 
+  .explorer li.current .explorer-detail,
+  .explorer li.current .explorer-ext.mute {
+    color: #c0c0c8;
+  }
+
   .explorer h2,
   .add-btn,
   .hide-btn {
@@ -4130,6 +4155,10 @@ body.note-drag * {
     background: #4a4a5e;
   }
 
+  .palette li.selected .muted {
+    color: #c0c0c8;
+  }
+
   ::-webkit-scrollbar-thumb {
     background-color: rgba(255, 255, 255, 0.18);
   }
@@ -4168,8 +4197,8 @@ body.note-drag * {
     border-color: #444444;
   }
 
-  .editor .cm-panel.cm-search .cm-textfield,
-  .editor .cm-panel.cm-search .cm-button {
+  .editor .cm-panel .cm-textfield,
+  .editor .cm-panel .cm-button {
     border-color: #4a4a4a;
   }
 
