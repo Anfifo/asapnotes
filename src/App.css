@@ -1374,6 +1374,48 @@ body,
   background: #e9e9f7;
 }
 
+/* Rows gathered with Ctrl/Shift+click — what a drag carries as one. */
+.explorer li.selected {
+  background: rgba(110, 110, 190, 0.18);
+}
+
+/* The heading or row a drag would land on right now. */
+.explorer .drop-over {
+  outline: 1.5px solid #7b7bc4;
+  outline-offset: -1.5px;
+  background: rgba(110, 110, 190, 0.14);
+}
+
+/* Follows the pointer during a note drag: what is carried, then where it
+   would land. Positioned by transform from the viewport origin, never hit —
+   the target lookup underneath must see through it. */
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 50;
+  pointer-events: none;
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.drag-ghost span {
+  color: #6a6a6a;
+}
+
+body.note-drag,
+body.note-drag * {
+  cursor: grabbing !important;
+}
+
 .explorer-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2462,6 +2504,35 @@ body,
 
 .close-discard:hover {
   color: #c0392b;
+}
+
+/* Move-into-project sheet: one button per destination, stacked. */
+.move-into-choices {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+}
+
+.move-into-choices .tool-btn {
+  text-align: left;
+  padding: 0.35rem 0.6rem;
+}
+
+.move-into-new {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.move-into-new input {
+  flex: 1;
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d5d5d5;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
 }
 
 /* New-project sheet */
@@ -3963,6 +4034,29 @@ body,
 
   .explorer li.current {
     background: #4a4a5e;
+  }
+
+  .explorer li.selected {
+    background: rgba(160, 160, 230, 0.22);
+  }
+
+  .explorer .drop-over {
+    outline-color: #9a9ad8;
+    background: rgba(160, 160, 230, 0.18);
+  }
+
+  .drag-ghost {
+    background: #3a3a3a;
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .drag-ghost span {
+    color: #b0b0b0;
+  }
+
+  .move-into-new input {
+    border-color: #555;
   }
 
   .explorer h2,

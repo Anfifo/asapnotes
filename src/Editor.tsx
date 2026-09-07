@@ -41,8 +41,9 @@ export interface EditorHandle {
   focus: () => void;
   applyFormat: (kind: FormatKind) => void;
   exec: (cmd: EditorCommand) => void;
-  /** Insert text at the cursor (used for image links from drag-drop). */
-  insertText: (text: string) => void;
+  /** Insert text at the cursor, or at the document position under viewport
+   * point `at` when one is given (a drop) — the cursor moves there first. */
+  insertText: (text: string, at?: { x: number; y: number }) => void;
   /** Replace the whole document in place (external-change reload): keeps the
    * editor mounted, clamps the cursor, and does NOT fire onChange — a reload
    * must not mark the buffer dirty or spawn a draft. */
@@ -277,8 +278,9 @@ function editorStatus(state: EditorState, words: number): EditorStatus {
   return { line: line.number, col: head - line.from + 1, selected, words };
 }
 
-function insertAtCursor(view: EditorView, text: string) {
-  const { to } = view.state.selection.main;
+function insertAtCursor(view: EditorView, text: string, at?: { x: number; y: number }) {
+  const dropped = at ? view.posAtCoords(at) : null;
+  const to = dropped ?? view.state.selection.main.to;
   view.dispatch({
     changes: { from: to, insert: text },
     selection: { anchor: to + text.length },
@@ -349,10 +351,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         execCommand(view, cmd);
         view.focus();
       },
-      insertText: (text: string) => {
+      insertText: (text: string, at?: { x: number; y: number }) => {
         const view = viewRef.current;
         if (!view) return;
-        insertAtCursor(view, text);
+        insertAtCursor(view, text, at);
         view.focus();
       },
       setDoc: (text: string) => {

@@ -3,7 +3,17 @@ import { FileIcon } from "./fileIcons";
 import { Icon } from "./icons";
 import { FileInfo, MountInfo } from "./notes";
 import { colorOf, iconOf } from "./noteTypes";
-import { fileOf, projectOf } from "./paths";
+import { dirOf, fileOf, projectOf } from "./paths";
+
+/** Where dragged notes were released: a folder (`""` = notes root), a project
+ * heading (the caller asks real-or-virtual), or the editor at a viewport point. */
+export type DropTarget =
+  | { kind: "dir"; dir: string }
+  | { kind: "project"; project: string }
+  | { kind: "editor"; x: number; y: number };
+
+/** Pointer travel that turns a press into a drag rather than a click. */
+const DRAG_SLOP = 5;
 
 /** Folder hierarchy of a project's notes (deep external projects). */
 interface TreeNode {
@@ -59,6 +69,13 @@ interface ExplorerProps {
   looseCurrent: boolean;
   openId: string | null;
   onSelect: (id: string, isNote: boolean) => void;
+  /** Saved notes dragged and released on a target — App moves them, or links
+   * them into the editor. */
+  onDrop: (ids: string[], target: DropTarget) => void;
+  /** Display name of the note the editor would link a dropped note into; null
+   * when the editor isn't a link target right now (lens tab, preview, a type
+   * without mentions). */
+  linkTarget: string | null;
   /** Right-click on a note/draft row — App shows the context menu. */
   onContext: (e: React.MouseEvent, id: string, isNote: boolean) => void;
   /** Right-click on a project/folder heading ("" = notes root). */
@@ -122,6 +139,8 @@ export function Explorer({
   looseCurrent,
   openId,
   onSelect,
+  onDrop,
+  linkTarget,
   onContext,
   onDirContext,
   onBodyContext,
@@ -159,6 +178,154 @@ export function Explorer({
   const paneDrag = useRef<{ y: number; h: number } | null>(null);
   const paneRef = useRef<HTMLElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+
+  // Multi-selection of saved notes — what a drag carries when the pressed row
+  // is part of it. Ctrl+click toggles, Shift+click extends from the last
+  // Ctrl/plain click; a plain click clears it and opens as always.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const anchorRef = useRef<string | null>(null);
+  // A drag in flight: the ids it carries and the ghost's label. The ghost's
+  // position is written straight to the DOM per move; only the target under
+  // the pointer is state, since that changes a row's class.
+  const [drag, setDrag] = useState<{ ids: string[]; label: string } | null>(null);
+  const [over, setOver] = useState<{ key: string; target: DropTarget } | null>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const ghostPos = useRef({ x: 0, y: 0 });
+  // Set while a press has travelled far enough to be a drag: the click that
+  // follows the release must not open the pressed note.
+  const dragged = useRef(false);
+
+  /** Saved-note rows in visual order — the axis a Shift+click range runs along.
+   * Rows inside a closed fold aren't laid out, so they stay out of the range. */
+  const visibleRows = () =>
+    [...(navRef.current?.querySelectorAll<HTMLElement>("li[data-note-id]") ?? [])]
+      .filter((el) => el.offsetParent !== null)
+      .map((el) => el.dataset.noteId!);
+
+  const rowClick = (e: React.MouseEvent, id: string, isNote: boolean) => {
+    if (dragged.current) return;
+    if (isNote && (e.ctrlKey || e.metaKey)) {
+      setSelected((s) => {
+        const next = new Set(s);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      anchorRef.current = id;
+      return;
+    }
+    if (isNote && e.shiftKey && anchorRef.current !== null) {
+      const rows = visibleRows();
+      const a = rows.indexOf(anchorRef.current);
+      const b = rows.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        setSelected(new Set(rows.slice(Math.min(a, b), Math.max(a, b) + 1)));
+        return;
+      }
+    }
+    setSelected((s) => (s.size ? new Set() : s));
+    anchorRef.current = id;
+    onSelect(id, isNote);
+  };
+
+  /** What a drop at a viewport point would hit, and a key that names it so a
+   * row can tell it is the one being hovered. Note rows stand for their own
+   * folder — "put it next to this one". */
+  const targetAt = (x: number, y: number): { key: string; target: DropTarget } | null => {
+    const hit = document
+      .elementFromPoint(x, y)
+      ?.closest<HTMLElement>("[data-note-id],[data-drop-dir],[data-drop-project],.content-panel");
+    if (!hit) return null;
+    if (hit.dataset.noteId !== undefined) {
+      return {
+        key: `row:${hit.dataset.noteId}`,
+        target: { kind: "dir", dir: dirOf(hit.dataset.noteId) },
+      };
+    }
+    if (hit.dataset.dropDir !== undefined) {
+      return {
+        key: `dir:${hit.dataset.dropDir}`,
+        target: { kind: "dir", dir: hit.dataset.dropDir },
+      };
+    }
+    if (hit.dataset.dropProject !== undefined) {
+      const project = hit.dataset.dropProject;
+      return { key: `project:${project}`, target: { kind: "project", project } };
+    }
+    return linkTarget === null ? null : { key: "editor", target: { kind: "editor", x, y } };
+  };
+
+  const placeGhost = () => {
+    if (!ghostRef.current) return;
+    const { x, y } = ghostPos.current;
+    ghostRef.current.style.transform = `translate(${x + 14}px, ${y + 10}px)`;
+  };
+  useEffect(placeGhost, [drag]);
+  // The whole window shows a grabbing hand while a drag is up, not just the
+  // pressed row: the pointer roams over the editor and the headings.
+  useEffect(() => {
+    document.body.classList.toggle("note-drag", drag !== null);
+    return () => document.body.classList.remove("note-drag");
+  }, [drag]);
+
+  // Press on a saved-note row: capture the pointer, and past the slop turn
+  // the press into a drag of the row (or of the selection it belongs to).
+  // Capture is what keeps the moves coming once the pointer leaves the row,
+  // and it is set on every press because a click is a drag that never moved.
+  const press = useRef<{ x: number; y: number; ids: string[] } | null>(null);
+  const rowPointerDown = (e: React.PointerEvent<HTMLLIElement>, id: string) => {
+    if (e.button !== 0 || !noteNames.has(id)) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    press.current = { x: e.clientX, y: e.clientY, ids: selected.has(id) ? [...selected] : [id] };
+  };
+  const rowPointerMove = (e: React.PointerEvent<HTMLLIElement>) => {
+    const p = press.current;
+    if (!p) return;
+    ghostPos.current = { x: e.clientX, y: e.clientY };
+    if (!dragged.current) {
+      if (Math.abs(e.clientX - p.x) + Math.abs(e.clientY - p.y) < DRAG_SLOP) return;
+      dragged.current = true;
+      setDrag({
+        ids: p.ids,
+        label: p.ids.length === 1 ? fileOf(p.ids[0]) : `${p.ids.length} notes`,
+      });
+    }
+    placeGhost();
+    const next = targetAt(e.clientX, e.clientY);
+    setOver((o) => (o?.key === next?.key ? o : next));
+  };
+  const rowPointerUp = (e: React.PointerEvent<HTMLLIElement>) => {
+    const p = press.current;
+    press.current = null;
+    if (!p) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!dragged.current) return;
+    setDrag(null);
+    setOver(null);
+    const hit = e.type === "pointerup" ? targetAt(e.clientX, e.clientY) : null;
+    if (hit) {
+      onDrop(p.ids, hit.target);
+      setSelected(new Set());
+    }
+    // The click event for this press fires after pointerup; clear the flag
+    // once it has come and gone.
+    setTimeout(() => {
+      dragged.current = false;
+    }, 0);
+  };
+
+  /** Class for a heading that is the hovered drop target. */
+  const dropCls = (key: string) => (over?.key === key ? "drop-over" : undefined);
+
+  /** Ghost text: what is carried, and where it would land right now. */
+  const ghostHint = (() => {
+    const t = over?.target;
+    if (!t) return null;
+    if (t.kind === "editor") return `Link in ${linkTarget}`;
+    if (t.kind === "project") return `Move to ${t.project}`;
+    return `Move to ${t.dir === "" ? "No project" : fileOf(t.dir)}`;
+  })();
   // Fold state per section, keyed by project name; "" is the "No project"
   // section, the id the root already has everywhere else here. Loose notes are
   // the capture inbox, so that one starts open; projects start collapsed, and
@@ -223,12 +390,25 @@ export function Explorer({
     // they are on disk, and the tint marks the type either way.
     const ext = dot > 0 ? file.slice(dot) : "";
     const color = colorOf(id);
+    const isNote = noteNames.has(id);
+    const cls = [
+      id === openId && "current",
+      selected.has(id) && "selected",
+      over?.key === `row:${id}` && "drop-over",
+    ]
+      .filter(Boolean)
+      .join(" ");
     return (
       <li
         key={id}
-        className={id === openId ? "current" : undefined}
-        onClick={() => onSelect(id, noteNames.has(id))}
-        onContextMenu={(e) => onContext(e, id, noteNames.has(id))}
+        data-note-id={isNote ? id : undefined}
+        className={cls || undefined}
+        onClick={(e) => rowClick(e, id, isNote)}
+        onPointerDown={(e) => rowPointerDown(e, id)}
+        onPointerMove={rowPointerMove}
+        onPointerUp={rowPointerUp}
+        onPointerCancel={rowPointerUp}
+        onContextMenu={(e) => onContext(e, id, isNote)}
       >
         <FileIcon icon={iconOf(id)} color={color} />
         <span className="explorer-name">
@@ -343,7 +523,12 @@ export function Explorer({
               className={(mount ? "explorer-folder mount" : "explorer-folder") + trail}
               open={holdsCreate || undefined}
             >
-              <summary onContextMenu={(e) => onDirContext(e, dir)} data-tip={mount?.path}>
+              <summary
+                className={dropCls(`dir:${dir}`)}
+                data-drop-dir={dir}
+                onContextMenu={(e) => onDirContext(e, dir)}
+                data-tip={mount?.path}
+              >
                 {mount && mountGlyph}
                 <span className="explorer-name">{name}</span>
                 {mount?.conflicted && (
@@ -374,7 +559,11 @@ export function Explorer({
   // no notes yet.
   const looseSection = (
     <details key="" open={expanded.has("")} onToggle={toggleFold("")}>
-      <summary onContextMenu={(e) => onDirContext(e, "")}>
+      <summary
+        className={dropCls("dir:")}
+        data-drop-dir=""
+        onContextMenu={(e) => onDirContext(e, "")}
+      >
         <span className="explorer-name">No project</span>
         {addBtn("")}
       </summary>
@@ -390,6 +579,8 @@ export function Explorer({
   const projectSection = (p: string) => (
     <details key={p} open={expanded.has(p)} onToggle={toggleFold(p)}>
       <summary
+        className={dropCls(`project:${p}`)}
+        data-drop-project={p}
         onContextMenu={(e) => onDirContext(e, p)}
         // Double-click moves into the project: its map opens, which also
         // makes it the current project. The two clicks toggle the fold twice
@@ -440,7 +631,13 @@ export function Explorer({
   const sep = paneCurrent && !hideNotes ? split : <div className="pane-gap" />;
 
   return (
-    <nav className={pinned ? "explorer" : "explorer floating"} style={{ width }}>
+    <nav className={pinned ? "explorer" : "explorer floating"} style={{ width }} ref={navRef}>
+      {drag && (
+        <div className="drag-ghost" ref={ghostRef}>
+          <b>{drag.label}</b>
+          {ghostHint && <span>{ghostHint}</span>}
+        </div>
+      )}
       {/* The bar has no rows of its own, so its right-click is the panel body's. */}
       <header className="explorer-bar" onContextMenu={onBodyContext}>
         <div className="explorer-views">
@@ -522,7 +719,11 @@ export function Explorer({
           >
             {currentProject ? (
               <>
-                <h2 onContextMenu={(e) => onDirContext(e, currentProject)}>
+                <h2
+                  className={dropCls(`project:${currentProject}`)}
+                  data-drop-project={currentProject}
+                  onContextMenu={(e) => onDirContext(e, currentProject)}
+                >
                   <span className="explorer-name">{currentProject}</span>
                   {missingProjects.includes(currentProject) && (
                     <span className="explorer-detail">folder is missing</span>
@@ -539,7 +740,11 @@ export function Explorer({
               // The open note lives in no project: the loose files hoisted
               // under the name the project selector gives that state.
               <>
-                <h2 onContextMenu={(e) => onDirContext(e, "")}>
+                <h2
+                  className={dropCls("dir:")}
+                  data-drop-dir=""
+                  onContextMenu={(e) => onDirContext(e, "")}
+                >
                   <span className="explorer-name">No project</span>
                   {addBtn("")}
                 </h2>
@@ -557,7 +762,11 @@ export function Explorer({
           <>
             {paneCurrent && sep}
             <section className="explorer-card notes">
-              <h2 onContextMenu={(e) => onDirContext(e, "")}>
+              <h2
+                className={dropCls("dir:")}
+                data-drop-dir=""
+                onContextMenu={(e) => onDirContext(e, "")}
+              >
                 <span className="explorer-name">Notes</span>
                 {addBtn("")}
                 {hideBtn(onHideNotes)}

@@ -11,7 +11,8 @@ import { DiffLens } from "./DiffLens";
 import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
-import { Explorer } from "./Explorer";
+import { DropTarget, Explorer } from "./Explorer";
+import { MoveInto } from "./MoveInto";
 import { Icon, type IconName } from "./icons";
 import { MeetingChip } from "./MeetingChip";
 import { StartMeeting } from "./Meeting";
@@ -307,6 +308,8 @@ function App() {
   // gets an inline input row in the tree, Enter creates the file — or, with
   // kind "folder", a real directory.
   const [explorerCreate, setExplorerCreate] = useState<string | null>(null);
+  // Notes dropped on a project heading, waiting on the real-or-virtual answer.
+  const [moveAsk, setMoveAsk] = useState<{ ids: string[]; project: string } | null>(null);
   const [explorerCreateKind, setExplorerCreateKind] = useState<"note" | "folder" | "virtual">(
     "note",
   );
@@ -950,6 +953,47 @@ function App() {
       }
       if (target) setProjects((ps) => (ps.includes(target) ? ps : [...ps, target].sort()));
       editorRef.current?.focus();
+    },
+    [retagOpen, trackMtime, toast],
+  );
+
+  /** Move saved notes into a folder id (`""` = notes root), keeping their
+   * names. Each note is its own move — one failing (a name already there, a
+   * file gone) doesn't stop the rest, and the toast names what didn't go.
+   * Open tabs follow their notes; the active one also re-arms its mtime. */
+  const moveNotes = useCallback(
+    async (ids: string[], dir: string) => {
+      const failed: string[] = [];
+      let moved = 0;
+      for (const id of ids) {
+        const newId = (dir ? `${dir}/` : "") + fileOf(id);
+        if (newId === id) continue;
+        if (notesRef.current.some((n) => n.name.toLowerCase() === newId.toLowerCase())) {
+          failed.push(`${fileOf(id)} — a note with that name is already there`);
+          continue;
+        }
+        try {
+          await api.moveNote(id, newId);
+        } catch (err) {
+          failed.push(`${fileOf(id)} — ${errText(err)}`);
+          continue;
+        }
+        moved++;
+        const cur = openRef.current;
+        if (cur?.id === id) {
+          retagOpen(id, { id: newId, name: newId });
+          trackMtime(newId);
+        } else {
+          setTabs((ts) => ts.map((t) => (t.id === id ? { id: newId, name: newId } : t)));
+        }
+      }
+      if (moved > 0) {
+        setNotes(await api.listNotes());
+        setDrafts(await api.listDrafts());
+      }
+      if (failed.length === 1) toast(`Couldn't move ${failed[0]}`);
+      else if (failed.length > 1)
+        toast(`Couldn't move ${failed.length} notes:\n${failed.join("\n")}`);
     },
     [retagOpen, trackMtime, toast],
   );
@@ -2802,6 +2846,39 @@ function App() {
     await refreshProjects();
   };
 
+  /** Notes released from an explorer drag. A folder or a note row moves them
+   * there outright; a project heading asks real-or-virtual first; the editor
+   * gets a mention link per note at the drop point — the note itself excepted,
+   * a link to the open note itself says nothing. */
+  const dropFromExplorer = (ids: string[], target: DropTarget) => {
+    if (target.kind === "dir") {
+      void moveNotes(ids, target.dir);
+      return;
+    }
+    if (target.kind === "project") {
+      setMoveAsk({ ids, project: target.project });
+      return;
+    }
+    const cur = openRef.current;
+    const links = ids.filter((id) => id !== cur?.id).map(mentionLink);
+    if (links.length === 0) return;
+    editorRef.current?.insertText(links.join("\n"), { x: target.x, y: target.y });
+  };
+
+  /** Answer to the real-or-virtual question: a brand-new virtual folder is
+   * created first, then the notes go in. */
+  const moveIntoNewVirtual = async (ids: string[], project: string, name: string) => {
+    setMoveAsk(null);
+    try {
+      await api.createVirtualFolder(project, name);
+    } catch (err) {
+      toast(`Couldn't create that virtual folder — ${errText(err)}`);
+      return;
+    }
+    await refreshProjects();
+    await moveNotes(ids, `${project}/${name}`);
+  };
+
   const explorerContextMenu = (e: React.MouseEvent, id: string, isNote: boolean) =>
     openContextMenu(e, [
       { label: "Open", run: () => openFromExplorer(id, isNote) },
@@ -3116,6 +3193,16 @@ function App() {
             looseCurrent={looseCurrent}
             openId={open?.id ?? null}
             onSelect={openFromExplorer}
+            onDrop={dropFromExplorer}
+            // The editor takes a dropped note as a link only while it is
+            // editing a type that has mentions at all.
+            linkTarget={
+              open && !lensOpen && mode === "edit" && hasFeature(open.id, "mentions")
+                ? open.name
+                  ? fileOf(open.name)
+                  : "Untitled"
+                : null
+            }
             onContext={explorerContextMenu}
             onDirContext={explorerDirMenu}
             onBodyContext={explorerBodyMenu}
@@ -3627,6 +3714,19 @@ function App() {
             setCloseAsk(null);
             editorRef.current?.focus();
           }}
+        />
+      )}
+      {moveAsk && (
+        <MoveInto
+          project={moveAsk.project}
+          count={moveAsk.ids.length}
+          mounts={mounts.filter((m) => m.project === moveAsk.project && !m.conflicted)}
+          onMove={(dir) => {
+            setMoveAsk(null);
+            void moveNotes(moveAsk.ids, dir);
+          }}
+          onNewVirtual={(name) => void moveIntoNewVirtual(moveAsk.ids, moveAsk.project, name)}
+          onCancel={() => setMoveAsk(null)}
         />
       )}
       {ctxMenu && <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} />}

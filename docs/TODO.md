@@ -12,6 +12,37 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## Today (2026-09-06)
+
+- [x] **Drag notes in the explorer: move, or link into the open note** (2026-09-06) —
+      asked: dragging files in the left panel did nothing; dropping on a project should
+      ask whether the file goes into the project folder or into a virtual folder (kept
+      outside the project directory); Ctrl/Shift should select several to move at once;
+      and dropping a file onto the open note's text should insert a link to it. Settles
+      the 2026-08-20 "move a note into another folder" question in favour of dragging.
+      _Built the same day._ Pointer-event drag in `Explorer.tsx` (the window's native
+      file-drop handling rules out in-page HTML5 drag on Windows, and the resize handles
+      already work this way): press a saved-note row, move past 5px and a ghost pill
+      follows the pointer naming what is carried and where it would land. Targets:
+      folder rows and note rows (move into that folder, no question), the "No project" /
+      "Notes" headings (out of any project), project headings (an in-app sheet,
+      `MoveInto.tsx`: "Project folder", one button per existing virtual folder, or "New
+      virtual folder…" with a name field that creates it first), and the editor (a
+      mention link per note at the drop point — `insertText` gained an optional point;
+      the open note itself is skipped). Ctrl+click toggles a row into a selection,
+      Shift+click extends along the visible rows; a plain click clears and opens as
+      before. `moveNotes` in App does one `move_note` per id, retags open tabs, skips
+      no-ops, and refuses a name clash per note with one toast; the selection clears on
+      drop. Drafts that were never saved aren't draggable. Mention links pointing at a
+      moved note are not rewritten — same as rename and "Move to project" today.
+      _Verified live over CDP_ with real pointer input against a scratch project: click
+      still opens, a 2px press is still a click, Ctrl/Shift selection, single and
+      two-note drags into a folder / to the root / onto a note row, both sheet paths,
+      the editor link, the clash toast, and that folder rows don't drag. _Pending
+      hands-on:_ the ghost and highlight colors in the light theme (only dark was
+      screenshotted); whether the pill should also show while over nothing droppable;
+      a right-click "Move to…" picker for keyboard reach was deliberately left out.
+
 ## Today (2026-09-05)
 
 - [ ] **Titlebar toolbar joins the stroke-icon family** (2026-09-05) — feedback: the
@@ -443,17 +474,6 @@ text`, `.board-*` CSS replaced by `.map-*`. Both 2026-08-14 decisions flipped to
       would re-register the wheel listener on every render; the honest fix is a
       `useCallback` or a ref, and either changes when that listener is attached. Wants
       the app in front of a human, not a blind edit.
-
-- [ ] **Move a note into another folder** (2026-08-20) — the half of the conversion ask
-      that is still open: moving files between a virtual folder and the real one it
-      becomes, so a conversion needn't be all-at-once. The backend is already there —
-      `move_note` takes a whole id and carries the note's draft and history with it, and
-      the tab retagging is the same call `submitRename` makes. What is missing is a way
-      to aim it: a "Move to…" entry listing the corpus's folders, or drag-and-drop in the
-      explorer (there is none anywhere in the app yet, so it would be the first). Open
-      question is which — a picker is small and keyboard-reachable, dragging is what the
-      hand expects from a tree. Unlike a conversion, this **does** change the moved
-      note's id, so mention links pointing at the old one are a real question here.
 
 ## Today (2026-08-19)
 
