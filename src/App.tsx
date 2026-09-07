@@ -838,17 +838,27 @@ function App() {
    * a note → open in-app; other paths → OS default. Relative ones resolve
    * against `from` — the open note's directory, except in the changes lens,
    * which reads a note that isn't the open one. */
+  const isUrl = (target: string) => /^(https?:\/\/|mailto:)/i.test(target);
+  /** Absolute forward-slash path a file link points at, resolved against
+   * `from` (default: the open note's directory). URLs have none. */
+  const linkPathOf = useCallback(
+    (target: string, from?: string) =>
+      isUrl(target)
+        ? null
+        : /^[a-z]:[\\/]/i.test(target)
+          ? target.replace(/\\/g, "/")
+          : resolvePath(from ?? noteDirRef.current, target),
+    [],
+  );
   const openLink = useCallback(
     (target: string, from?: string) => {
       void (async () => {
         try {
-          if (/^(https?:\/\/|mailto:)/i.test(target)) {
+          const abs = linkPathOf(target, from);
+          if (abs === null) {
             await api.openExternal(target);
             return;
           }
-          const abs = /^[a-z]:[\\/]/i.test(target)
-            ? target.replace(/\\/g, "/")
-            : resolvePath(from ?? noteDirRef.current, target);
           const id = noteIdOf(abs);
           if (id && isNoteFile(id)) {
             await openItem({ id, isNote: true }, new Set(draftsRef.current.map((d) => d.name)));
@@ -860,8 +870,31 @@ function App() {
         }
       })();
     },
-    [noteIdOf, openItem],
+    [linkPathOf, noteIdOf, openItem],
   );
+
+  /** Right-click on a link in the editor: the same open as Ctrl+click, plus
+   * the file's whereabouts. A URL has no folder to reveal or path to copy, so
+   * it gets the link itself. */
+  const linkEntries = (target: string): MenuEntry[] => {
+    const abs = linkPathOf(target);
+    return [
+      { label: "Open", run: () => openLink(target) },
+      ...(abs === null
+        ? [{ label: "Copy link", run: () => void writeText(target) }]
+        : [
+            {
+              label: "Reveal in File Explorer",
+              run: () =>
+                void api
+                  .revealPath(winPath(abs))
+                  .catch((err: unknown) => toast(`Couldn't reveal that file — ${errText(err)}`)),
+            },
+            { label: "Copy path", run: () => void writeText(winPath(abs)) },
+          ]),
+      "sep",
+    ];
+  };
 
   const openSearchView = useCallback(() => {
     setExplorerOpen(true);
@@ -3445,8 +3478,11 @@ function App() {
             onContextMenu={(e) => {
               // The Edit menu talks to the editor, which a lens tab doesn't
               // have (the map raises its own menus).
-              if (lensOpen) return;
-              if (mode === "edit") openContextMenu(e, editEntries);
+              if (lensOpen || mode !== "edit") return;
+              const link = (e.target as Element)
+                .closest?.("[data-link]")
+                ?.getAttribute("data-link");
+              openContextMenu(e, link ? [...linkEntries(link), ...editEntries] : editEntries);
             }}
           >
             {open && diffOpen && (

@@ -27,8 +27,13 @@ interface Candidate {
   target: string;
 }
 
+// The hover hint is what tells a reader the Ctrl is needed at all; the
+// right-click menu carries the rest (open, reveal, copy).
 function markOf(target: string) {
-  return Decoration.mark({ class: "cm-linkable", attributes: { "data-link": target } });
+  return Decoration.mark({
+    class: "cm-linkable",
+    attributes: { "data-link": target, "data-tip": "Ctrl+click to open" },
+  });
 }
 
 function buildDecorations(view: EditorView): DecorationSet {

@@ -43,6 +43,14 @@ The AI (or anyone) working on this repo keeps this file current while working:
       screenshotted); whether the pill should also show while over nothing droppable;
       a right-click "Move to…" picker for keyboard reach was deliberately left out.
 
+- [x] **Links in the editor get a right-click menu and a hover hint** (2026-09-06) —
+      feedback: after a meeting the recording links were the only way to the audio and
+      nothing said Ctrl+click follows them; right-click offered only the edit menu.
+      Built the same day (gates clean, awaiting a hand check): links carry a
+      "Ctrl+click to open" tip, and right-clicking one prepends Open / Reveal in File
+      Explorer / Copy path (Copy link for URLs) to the edit entries. Frontend only —
+      `reveal_path` already existed. This menu is the natural home for the parked
+      "Export as WAV" verb below.
 ## Today (2026-09-05)
 
 - [ ] **Titlebar toolbar joins the stroke-icon family** (2026-09-05) — feedback: the
