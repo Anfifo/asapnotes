@@ -14,7 +14,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Today (2026-09-07)
 
-- [ ] **Collapsed link labels aren't link targets** (2026-09-07) — found while checking
+- [x] **Collapsed link labels aren't link targets** (2026-09-07) — found while checking
       the link menu headless: the live preview collapses `[label](target)` to its label
       whenever the caret is elsewhere, and the linkable mark (`links.ts`) sits on the
       hidden destination. So at rest a file link's label takes neither Ctrl+click nor the
@@ -24,6 +24,11 @@ The AI (or anyone) working on this repo keeps this file current while working:
       landed (2026-08-19), not new. Fix shape: when a link is collapsed, put the
       `cm-linkable` mark on the label range with the destination as its `data-link`, so
       the label is the target the reader sees; keep `data-tip` showing the destination.
+      _Fixed 2026-09-08 in `livePreview.ts`: the collapsed label carries the linkable
+      mark with the destination as its target (angle-bracketed destinations lose the
+      brackets, as in `links.ts`). Checked headless: the label shows the destination
+      as its tip, right-click gives Open / Reveal in File Explorer / Copy path, and
+      Ctrl+click opens the note._
 - [x] **Decision round, eight picks** (2026-09-07) — a decision page with mockups in both
       themes was used instead of a chat menu; the picks, each recorded on its own item:
       tray menu shows the chord baked into the "Open" label; tables render in place in

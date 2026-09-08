@@ -175,9 +175,16 @@ const hidden = Decoration.replace({});
 /**
  * The label of a link whose target is collapsed. Carries the target as `data-tip`
  * so the app's own tooltip shows it after its dwell — no second tooltip to build,
- * and no reflow under the pointer the way an inline expansion would cause.
+ * and no reflow under the pointer the way an inline expansion would cause. It is
+ * also the link's clickable range while the target is hidden: the mark links.ts
+ * puts on the destination sits inside the replaced text and never reaches the DOM,
+ * so Ctrl+click and the link menu key off this one instead.
  */
-const linkTip = (target: string) => Decoration.mark({ attributes: { "data-tip": target } });
+const linkTip = (target: string) =>
+  Decoration.mark({
+    class: "cm-linkable",
+    attributes: { "data-link": target, "data-tip": target },
+  });
 
 /**
  * A list indents by how deeply it nests, not by however many spaces were typed
@@ -370,7 +377,9 @@ function buildDecorations(view: EditorView, resolveImage: (src: string) => strin
               // The brackets stay, so a link still reads as a link rather than
               // as ordinary prose.
               for (const m of marks) if (m.to <= close.to) dimMark(m.from, m.to, dimLiteral);
-              decos.push(linkTip(doc.sliceString(url.from, url.to)).range(node.from, close.to));
+              let target = doc.sliceString(url.from, url.to);
+              if (target.startsWith("<") && target.endsWith(">")) target = target.slice(1, -1);
+              decos.push(linkTip(target).range(node.from, close.to));
               decos.push(hidden.range(close.to, node.to));
               return false;
             }
