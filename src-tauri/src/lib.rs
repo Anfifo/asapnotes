@@ -1,9 +1,10 @@
 pub mod corpus;
 mod history;
-mod meeting;
+pub mod meeting;
 mod notes;
 mod project_config;
 mod settings;
+mod transcribe;
 
 /// Where this process's two corpus roots are, as `AppHandle` resolves them.
 ///
@@ -305,7 +306,15 @@ pub fn run() {
             meeting::stop_meeting_recording,
             meeting::meeting_recording_state,
             meeting::list_meeting_recordings,
+            transcribe::transcription_status,
+            transcribe::download_transcription,
+            transcribe::cancel_transcription_download,
+            transcribe::remove_transcription,
+            transcribe::transcribe_meeting,
+            transcribe::cancel_transcription,
+            transcribe::take_transcript_result,
             settings::set_meeting_folder,
+            settings::set_transcription_defaults,
             settings::set_workspaces,
             settings::set_current_workspace,
         ])

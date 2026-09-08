@@ -15,6 +15,8 @@ import { DropTarget, Explorer, ExplorerView } from "./Explorer";
 import { MoveInto } from "./MoveInto";
 import { Icon, type IconName } from "./icons";
 import { MeetingChip } from "./MeetingChip";
+import { TranscribeChip } from "./TranscribeChip";
+import { TranscribeDialog } from "./Transcribe";
 import { RecordingsView } from "./Recordings";
 import { StartMeeting } from "./Meeting";
 import { formatElapsed } from "./meetingTime";
@@ -252,6 +254,13 @@ function App() {
   const [recordings, setRecordings] = useState<api.MeetingRecording[]>([]);
   // Bumped when a recording lands, since the write that links it is not a listing refresh.
   const [recordingsTick, setRecordingsTick] = useState(0);
+  // Transcription: the recording the dialog is up for, the add-on's state
+  // while it is, the run in flight (its chip sits in the titlebar), and what
+  // the last run picked.
+  const [transcribeFor, setTranscribeFor] = useState<api.MeetingRecording | null>(null);
+  const [txStatus, setTxStatus] = useState<api.TranscriptionStatus | null>(null);
+  const [txJob, setTxJob] = useState<api.TranscriptionJob | null>(null);
+  const [txDefaults, setTxDefaults] = useState({ language: "", model: "small" });
   // External edits in the changes window: App owns them because the view
   // button's count shows even while the view itself is closed.
   const [changes, setChanges] = useState<api.ChangeSummary[]>([]);
@@ -896,6 +905,9 @@ function App() {
             },
             { label: "Copy path", run: () => void writeText(winPath(abs)) },
           ]),
+      ...(abs !== null && /\.opus$/i.test(target)
+        ? [{ label: "Transcribe…", run: () => void transcribeLink(abs) }]
+        : []),
       "sep",
     ];
   };
@@ -1168,6 +1180,10 @@ function App() {
       setMapViewState(isViewKind(settings.mapView) ? settings.mapView : DEFAULT_VIEW);
       setOpenFilesExternallyState(settings.openFilesExternally ?? false);
       setMeetingFolderState(settings.meetingFolder ?? "");
+      setTxDefaults({
+        language: settings.transcriptionLanguage ?? "",
+        model: settings.transcriptionModel ?? "small",
+      });
       const ws = settings.workspaces ?? {};
       setWorkspacesState(ws);
       // A current workspace the table no longer holds (a hand edit) is Default.
@@ -2119,6 +2135,13 @@ function App() {
           run: () => setMeetingDialog(true),
         },
     {
+      kind: "command" as const,
+      id: "cmd:transcribe",
+      label: "Transcribe the meeting recording…",
+      detail: "of the open note",
+      run: () => void transcribeOpenNote(),
+    },
+    {
       kind: "command",
       id: "cmd:keybinds",
       label: "Keyboard shortcuts",
@@ -2204,6 +2227,7 @@ function App() {
         ...(recording
           ? [{ label: "Stop the meeting recording", run: () => void stopMeeting() }]
           : [{ label: "New meeting…", run: () => setMeetingDialog(true) }]),
+        { label: "Transcribe the meeting recording…", run: () => void transcribeOpenNote() },
         { label: "Save note", detail: kb("save"), run: () => void save() },
         { label: "Rename note", run: startRename },
         ...(openName ? [{ label: "Delete note", run: () => void deleteNote(openName) }] : []),
@@ -2862,6 +2886,138 @@ function App() {
       .catch(() => undefined);
   }, []);
 
+  const refreshTxStatus = useCallback(
+    () =>
+      api.transcriptionStatus().then((s) => {
+        setTxStatus(s);
+        setTxJob(s.job);
+        return s;
+      }),
+    [],
+  );
+
+  /** Open the transcription dialog for a recording. The add-on's state is
+   * read first so the dialog can offer whatever downloads it still needs. */
+  const openTranscribe = (rec: api.MeetingRecording) => {
+    refreshTxStatus()
+      .then(() => setTranscribeFor(rec))
+      .catch((err: unknown) => toast(`Couldn't read the transcription setup — ${errText(err)}`));
+  };
+
+  /** The palette and the File menu point at no recording, so they take the
+   * open note's newest one. */
+  const transcribeOpenNote = async () => {
+    const note = openRef.current?.id;
+    if (!note) {
+      toast("Open the meeting note first");
+      return;
+    }
+    try {
+      const rec = (await api.listMeetingRecordings()).find((r) => r.note === note);
+      if (!rec) {
+        toast(`"${fileOf(note)}" links no meeting recording`);
+        return;
+      }
+      openTranscribe(rec);
+    } catch (err) {
+      toast(`Couldn't list recordings — ${errText(err)}`);
+    }
+  };
+
+  /** A right-clicked recording link: the meeting is whichever stop line links
+   * that file. */
+  const transcribeLink = async (abs: string) => {
+    const want = winPath(abs).toLowerCase();
+    try {
+      const rec = (await api.listMeetingRecordings()).find((r) =>
+        r.tracks.some((t) => t.path.toLowerCase() === want),
+      );
+      if (!rec) {
+        toast("That file isn't linked from a meeting's stop line");
+        return;
+      }
+      openTranscribe(rec);
+    } catch (err) {
+      toast(`Couldn't list recordings — ${errText(err)}`);
+    }
+  };
+
+  const startTranscription = async (language: string, model: string) => {
+    const rec = transcribeFor;
+    if (!rec) return;
+    await api.transcribeMeeting(rec.note, rec.line, language, model);
+    setTxJob({ note: rec.note, line: rec.line, percent: 0 });
+    setTranscribeFor(null);
+    setTxDefaults({ language, model });
+    void api.setTranscriptionDefaults(language, model).catch(() => undefined);
+  };
+
+  /** A finished transcription becomes a note beside the meeting note, and a
+   * link to it goes on the line under the stop line: into the editor when the
+   * note is the open tab (its own edits stay unsaved), else into the file. The
+   * line number is the one the dialog was opened with, so an edit above it in
+   * the meantime shifts where the link lands. */
+  const collectTranscript = useCallback(async () => {
+    setTxJob(null);
+    let result: api.TranscriptResult | null;
+    try {
+      result = await api.takeTranscriptResult();
+    } catch (err) {
+      toast(`Couldn't collect the transcript — ${errText(err)}`);
+      return;
+    }
+    if (!result) return;
+    if (result.markdown === null) {
+      toast(`Transcription failed — ${result.error ?? "unknown error"}`);
+      return;
+    }
+    const transcript = `${result.note.replace(/\.md$/i, "")}.transcript.md`;
+    const target = fileOf(transcript);
+    const link = /[\s()]/.test(target) ? `[transcript](<${target}>)` : `[transcript](${target})`;
+    const line = `- Transcript: ${link}`;
+    try {
+      await api.saveNote(transcript, result.markdown);
+      if (openRef.current?.id === result.note) {
+        editorRef.current?.insertAfterLine(result.line, `\n${line}`);
+      } else {
+        const content = await api.readNote(result.note);
+        const eol = content.includes("\r\n") ? "\r\n" : "\n";
+        const lines = content.split(/\r?\n/);
+        lines.splice(Math.min(result.line, lines.length), 0, line);
+        await api.saveNote(result.note, lines.join(eol));
+      }
+    } catch (err) {
+      toast(`Couldn't write the transcript — ${errText(err)}`);
+      return;
+    }
+    toast(`Transcribed into "${target}"`);
+    setRecordingsTick((n) => n + 1);
+  }, [toast]);
+
+  // The run lives in the backend; the window follows it by events, and on
+  // load picks up a run, or a result, that predates this window.
+  useEffect(() => {
+    const subs = [
+      listen<api.TranscriptionJob>("transcription-progress", (e) => setTxJob(e.payload)),
+      listen("transcription-finished", () => void collectTranscript()),
+      listen("transcription-download", () => void refreshTxStatus().catch(() => undefined)),
+      listen<{ what: string; error: string | null }>("transcription-download-done", (e) => {
+        if (e.payload.error) toast(`Download failed — ${e.payload.error}`);
+        void refreshTxStatus().catch(() => undefined);
+      }),
+    ];
+    void api
+      .transcriptionStatus()
+      .then((s) => {
+        setTxJob(s.job);
+        if (!s.job) void collectTranscript();
+      })
+      .catch(() => undefined);
+    return () => {
+      for (const s of subs) void s.then((unlisten) => unlisten());
+    };
+  }, [collectTranscript, refreshTxStatus, toast]);
+
   /** Inline creation of a real folder under the clicked heading. */
   const createNamedFolder = async (dir: string, name: string) => {
     setExplorerCreate(null);
@@ -3203,6 +3359,15 @@ function App() {
         status={
           recording ? (
             <MeetingChip startedAt={recording.startedAt} onStop={() => void stopMeeting()} />
+          ) : txJob ? (
+            <TranscribeChip
+              percent={txJob.percent}
+              onCancel={() =>
+                void api
+                  .cancelTranscription()
+                  .catch((err: unknown) => toast(`Couldn't cancel — ${errText(err)}`))
+              }
+            />
           ) : (
             <button
               className="rec-start"
@@ -3304,6 +3469,8 @@ function App() {
                     .catch((err: unknown) => toast(`Couldn't reveal that file — ${errText(err)}`))
                 }
                 onCopyPath={(t) => void writeText(t.path)}
+                onTranscribe={openTranscribe}
+                onOpenTranscript={(note) => openHit(note, 1)}
                 onMenu={openContextMenu}
               />
             }
@@ -3713,6 +3880,26 @@ function App() {
           onStart={startMeeting}
           onClose={() => {
             setMeetingDialog(false);
+            editorRef.current?.focus();
+          }}
+        />
+      )}
+      {transcribeFor && txStatus && (
+        <TranscribeDialog
+          recording={transcribeFor}
+          status={txStatus}
+          defaultLanguage={txDefaults.language}
+          defaultModel={txDefaults.model}
+          onDownload={(what) =>
+            void api
+              .downloadTranscription(what)
+              .then(() => refreshTxStatus())
+              .catch((err: unknown) => toast(`Couldn't start the download — ${errText(err)}`))
+          }
+          onCancelDownload={() => void api.cancelTranscriptionDownload().catch(() => undefined)}
+          onStart={startTranscription}
+          onClose={() => {
+            setTranscribeFor(null);
             editorRef.current?.focus();
           }}
         />

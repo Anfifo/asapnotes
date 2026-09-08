@@ -74,6 +74,13 @@ pub struct Settings {
     /// went. Absent means the notes root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meeting_folder: Option<String>,
+    /// What the transcription dialog preselects: the language and model of
+    /// the last run. The language is still asked every time; this only saves
+    /// the re-pick.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_model: Option<String>,
     /// Named sets of projects, workspace name → project names. A view over the
     /// registry: nothing on disk moves, a project may sit in any number of
     /// sets, and "Default" — every project — is implicit, so an absent map
@@ -137,6 +144,8 @@ impl Default for Settings {
             map_view: None,
             open_files_externally: None,
             meeting_folder: None,
+            transcription_language: None,
+            transcription_model: None,
             workspaces: BTreeMap::new(),
             current_workspace: None,
             mcp: Mcp::default(),
@@ -704,6 +713,20 @@ pub fn set_map_view(app: AppHandle, view: String) -> Result<(), String> {
 pub fn set_meeting_folder(app: AppHandle, folder: Option<String>) -> Result<(), String> {
     update(&app, |s| {
         s.meeting_folder = folder.filter(|f| !f.is_empty());
+        Ok(())
+    })
+}
+
+/// The transcription dialog's last picks, so the next run starts from them.
+#[tauri::command]
+pub fn set_transcription_defaults(
+    app: AppHandle,
+    language: String,
+    model: String,
+) -> Result<(), String> {
+    update(&app, |s| {
+        s.transcription_language = Some(language).filter(|l| !l.is_empty());
+        s.transcription_model = Some(model).filter(|m| !m.is_empty());
         Ok(())
     })
 }

@@ -44,6 +44,9 @@ export interface EditorHandle {
   /** Insert text at the cursor, or at the document position under viewport
    * point `at` when one is given (a drop) — the cursor moves there first. */
   insertText: (text: string, at?: { x: number; y: number }) => void;
+  /** Insert text at the end of `line` (1-based, clamped to the document); the
+   * cursor stays where it was. */
+  insertAfterLine: (line: number, text: string) => void;
   /** Replace the whole document in place (external-change reload): keeps the
    * editor mounted, clamps the cursor, and does NOT fire onChange — a reload
    * must not mark the buffer dirty or spawn a draft. */
@@ -356,6 +359,13 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         if (!view) return;
         insertAtCursor(view, text, at);
         view.focus();
+      },
+      insertAfterLine: (line: number, text: string) => {
+        const view = viewRef.current;
+        if (!view) return;
+        const doc = view.state.doc;
+        const at = doc.line(Math.min(Math.max(line, 1), doc.lines)).to;
+        view.dispatch({ changes: { from: at, insert: text } });
       },
       setDoc: (text: string) => {
         const view = viewRef.current;

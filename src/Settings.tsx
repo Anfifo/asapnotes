@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
+  cancelTranscriptionDownload,
+  downloadTranscription,
   mcpStatus,
+  removeTranscription,
   setMcpGrant,
   setMcpSettingsAccess,
   setMcpWriteScope,
+  transcriptionStatus,
   type McpStatus,
+  type TranscriptionStatus,
 } from "./notes";
+import { TranscriptionSetup } from "./Transcribe";
 import { Icon } from "./icons";
 import { creatableTypes } from "./noteTypes";
 import type { Theme } from "./theme";
@@ -429,6 +436,62 @@ interface SettingsProps {
   onClose: () => void;
 }
 
+/** The transcription add-on: the engine and the speech models, downloaded on
+ * request and removable here. Fetches its own state like the MCP section, and
+ * follows the download events so a figure moves while the panel is open. */
+function TranscriptionSection() {
+  const [status, setStatus] = useState<TranscriptionStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    transcriptionStatus()
+      .then((s) => {
+        setStatus(s);
+        setError(null);
+      })
+      .catch((e: unknown) => setError(String(e)));
+  }, []);
+
+  useEffect(load, [load]);
+  useEffect(() => {
+    const subs = [
+      listen("transcription-download", load),
+      listen<{ what: string; error: string | null }>("transcription-download-done", (e) => {
+        if (e.payload.error) setError(e.payload.error);
+        load();
+      }),
+    ];
+    return () => {
+      for (const s of subs) void s.then((unlisten) => unlisten());
+    };
+  }, [load]);
+
+  const run = (change: Promise<void>) => {
+    change.then(load).catch((e: unknown) => setError(String(e)));
+  };
+
+  return (
+    <>
+      <h2>Transcription</h2>
+      <p className="settings-note">
+        An add-on that turns a meeting recording into text on this computer. The engine and a speech
+        model are downloads you start here; nothing is fetched otherwise.
+      </p>
+      {status ? (
+        <TranscriptionSetup
+          status={status}
+          onDownload={(what) => run(downloadTranscription(what))}
+          onCancelDownload={() => run(cancelTranscriptionDownload())}
+          onRemove={(what) => run(removeTranscription(what))}
+        />
+      ) : (
+        <p className="settings-note">Reading…</p>
+      )}
+      {error && <p className="settings-note">{error}</p>}
+    </>
+  );
+}
+
 export type SettingsSection = "top" | "shortcuts" | "workspaces" | "new-workspace";
 
 /** A workspace name, in place: an empty name, "Default", or a taken one
@@ -763,6 +826,7 @@ export function Settings({
             </tr>
           </tbody>
         </table>
+        <TranscriptionSection />
         <McpSection />
         <h2 ref={shortcutsRef}>Keyboard shortcuts</h2>
         <p className="settings-note">

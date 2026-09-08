@@ -344,6 +344,8 @@ export interface Settings {
   openFilesExternally?: boolean | null;
   /** Folder the meeting dialog offers first; absent means the notes root. */
   meetingFolder?: string | null;
+  transcriptionLanguage?: string | null;
+  transcriptionModel?: string | null;
   /** Named sets of projects; "Default" (every project) is implicit. */
   workspaces?: Record<string, string[]>;
   /** The workspace the app is on; absent means Default. */
@@ -427,9 +429,76 @@ export interface MeetingRecording {
   line: number;
   seconds: number | null;
   tracks: RecordingTrack[];
+  /** The transcript note beside the meeting note, when one exists. */
+  transcript: string | null;
 }
 
 /** Every meeting recording the notes link to, newest first. */
 export const listMeetingRecordings = () => invoke<MeetingRecording[]>("list_meeting_recordings");
+
+export interface TranscriptionModel {
+  id: string;
+  label: string;
+  detail: string;
+  bytes: number;
+  installed: boolean;
+}
+
+/** A download in flight: the engine, or a model by id. */
+export interface TranscriptionDownload {
+  what: string;
+  received: number;
+  total: number;
+}
+
+/** A transcription in flight and how far along it is. */
+export interface TranscriptionJob {
+  note: string;
+  line: number;
+  percent: number;
+}
+
+/** The add-on's state: whether the engine is present (installed into app data,
+ * or found beside a development build), what this build can download, and
+ * which models are on disk. */
+export interface TranscriptionStatus {
+  engine: { path: string; installed: boolean } | null;
+  engine_downloadable: boolean;
+  engine_bytes: number | null;
+  models: TranscriptionModel[];
+  download: TranscriptionDownload | null;
+  job: TranscriptionJob | null;
+}
+
+/** What a finished transcription produced. `markdown` is null when it failed,
+ * and `error` says why. */
+export interface TranscriptResult {
+  note: string;
+  line: number;
+  language: string;
+  model: string;
+  markdown: string | null;
+  error: string | null;
+}
+
+export const transcriptionStatus = () => invoke<TranscriptionStatus>("transcription_status");
+/** Download the engine ("engine") or a model (its id) into app data. Progress
+ * arrives as `transcription-download` events, the end as
+ * `transcription-download-done`. */
+export const downloadTranscription = (what: string) =>
+  invoke<void>("download_transcription", { what });
+export const cancelTranscriptionDownload = () => invoke<void>("cancel_transcription_download");
+export const removeTranscription = (what: string) => invoke<void>("remove_transcription", { what });
+/** Transcribe the recording a note links on a line. Returns once the engine is
+ * running; progress arrives as `transcription-progress` events and the end as
+ * `transcription-finished`, after which the result waits to be taken. */
+export const transcribeMeeting = (note: string, line: number, language: string, model: string) =>
+  invoke<void>("transcribe_meeting", { note, line, language, model });
+export const cancelTranscription = () => invoke<void>("cancel_transcription");
+/** The finished transcription nobody has collected yet, if any. */
+export const takeTranscriptResult = () => invoke<TranscriptResult | null>("take_transcript_result");
+/** Remember the last language and model picked in the transcription dialog. */
+export const setTranscriptionDefaults = (language: string, model: string) =>
+  invoke<void>("set_transcription_defaults", { language, model });
 
 export const quit = () => invoke<void>("quit");

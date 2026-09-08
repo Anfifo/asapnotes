@@ -279,6 +279,53 @@ body,
   animation: rec-pulse 1.6s ease-in-out infinite;
 }
 
+.tx-chip {
+  color: #8ab4f8;
+  background: rgba(47, 96, 153, 0.22);
+  border-color: rgba(138, 180, 248, 0.5);
+}
+
+.tx-chip:hover {
+  background: rgba(47, 96, 153, 0.4);
+  color: #b8d3ff;
+}
+
+.tx-spin {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: tx-spin 0.9s linear infinite;
+}
+
+@keyframes tx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Transcription setup rows: the action column keeps its buttons on one line,
+   and a download in flight shows its figure beside the cancel. */
+.tx-action {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tx-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx-pick label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
 @keyframes rec-pulse {
   50% {
     opacity: 0.25;

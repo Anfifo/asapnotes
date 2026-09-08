@@ -10,6 +10,9 @@ interface RecordingsViewProps {
   onOpen: (note: string, line: number) => void;
   onReveal: (track: RecordingTrack) => void;
   onCopyPath: (track: RecordingTrack) => void;
+  onTranscribe: (recording: MeetingRecording) => void;
+  /** Open the transcript note that sits beside the meeting note. */
+  onOpenTranscript: (note: string) => void;
   /** Show a context menu at the pointer — App owns the one menu surface. */
   onMenu: (e: React.MouseEvent, entries: MenuEntry[]) => void;
 }
@@ -59,11 +62,24 @@ export function RecordingsView({
   onOpen,
   onReveal,
   onCopyPath,
+  onTranscribe,
+  onOpenTranscript,
   onMenu,
 }: RecordingsViewProps) {
   const rowMenu = (e: React.MouseEvent, r: MeetingRecording) =>
     onMenu(e, [
       { label: "Open note", run: () => onOpen(r.note, r.line) },
+      ...(r.transcript !== null
+        ? [{ label: "Open transcript", run: () => onOpenTranscript(r.transcript as string) }]
+        : []),
+      ...(r.tracks.some((t) => t.exists)
+        ? [
+            {
+              label: r.transcript !== null ? "Transcribe again…" : "Transcribe…",
+              run: () => onTranscribe(r),
+            },
+          ]
+        : []),
       "sep",
       ...r.tracks.flatMap((t): MenuEntry[] =>
         t.exists
@@ -115,6 +131,11 @@ export function RecordingsView({
                           {shortLabel(t)}
                         </span>
                       ))}
+                      {r.transcript !== null && (
+                        <span className="rec-track" data-tip="Has a transcript">
+                          text
+                        </span>
+                      )}
                     </span>
                   </li>
                 ))}

@@ -47,6 +47,26 @@ similar = { version = "2", features = ["inline"] }
 cpal = "0.16"
 audiopus = "0.2"
 ogg = "0.9"
+# Transcription add-on downloads: the engine from this app's release, models
+# from their publisher, each checked against a digest this build carries. Only
+# the download buttons in Settings reach the network.
+ureq = "3"
+sha2 = "0.10"
+# Transcription engine, only in the `asapnotes-transcribe` helper and only
+# with the `transcribe` feature. The app never links whisper.cpp: the helper
+# is an add-on the app downloads on request, so a default build and a default
+# install carry none of it. Building it needs cmake, like the Opus codec.
+whisper-rs = { version = "0.16", features = ["log_backend"], optional = true }
+
+[features]
+transcribe = ["dep:whisper-rs"]
+# GPU build of the engine. Needs the Vulkan SDK at build time.
+transcribe-vulkan = ["transcribe", "whisper-rs/vulkan"]
+
+[[bin]]
+name = "asapnotes-transcribe"
+path = "src/bin/asapnotes-transcribe.rs"
+required-features = ["transcribe"]
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-global-shortcut = "2"

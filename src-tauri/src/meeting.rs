@@ -17,9 +17,10 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use audiopus::coder::Encoder;
+use audiopus::coder::{Decoder, Encoder};
 use audiopus::{Application, Bitrate, Channels, SampleRate};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ogg::reading::PacketReader;
 use ogg::writing::{PacketWriteEndInfo, PacketWriter};
 use serde::Serialize;
 use tauri::AppHandle;
@@ -261,6 +262,18 @@ pub struct MeetingRecording {
     /// From the "(m:ss)" the stop line writes; None when hand-edited away.
     pub seconds: Option<u64>,
     pub tracks: Vec<RecordingTrack>,
+    /// The transcript note beside the meeting note, when one exists.
+    pub transcript: Option<String>,
+}
+
+/// Where a transcript of the note's recording lives, when it exists: a note
+/// named after the meeting note, beside it. Found by name so that a hand edit
+/// to the stop line never orphans it.
+pub(crate) fn transcript_note(note: &str, path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let file = path.with_file_name(format!("{stem}.transcript.md"));
+    file.exists()
+        .then(|| format!("{}.transcript.md", note.strip_suffix(".md").unwrap_or(note)))
 }
 
 /// Every meeting recording the notes link to, newest file first. The notes
@@ -303,11 +316,41 @@ pub fn list_meeting_recordings(app: AppHandle) -> Result<Vec<MeetingRecording>, 
                 line: i as u32 + 1,
                 seconds: elapsed_before_link(line),
                 tracks,
+                transcript: transcript_note(&note, &path),
             });
         }
     }
     out.sort_by_key(|r| std::cmp::Reverse(r.tracks.iter().map(|t| t.modified_ms).max()));
     Ok(out)
+}
+
+/// The tracks a note's stop line links, resolved to the files still on disk:
+/// what the transcriber is handed.
+pub(crate) fn tracks_on_line(
+    app: &AppHandle,
+    note: &str,
+    line: u32,
+) -> Result<Vec<(String, PathBuf)>, String> {
+    let path = crate::notes::note_paths(app)?
+        .into_iter()
+        .find(|(id, _)| id == note)
+        .map(|(_, p)| p)
+        .ok_or_else(|| format!("\"{note}\" isn't a note this app lists"))?;
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let text = content
+        .lines()
+        .nth(line.saturating_sub(1) as usize)
+        .ok_or("The note no longer has that line")?;
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let tracks: Vec<(String, PathBuf)> = opus_links(text)
+        .into_iter()
+        .map(|(label, target)| (label, lexical_join(dir, &target)))
+        .filter(|(_, file)| file.exists())
+        .collect();
+    if tracks.is_empty() {
+        return Err("That line links no recording that is still on disk".to_string());
+    }
+    Ok(tracks)
 }
 
 /// `dir/target` with the target's `..` and `.` segments folded, so the path
@@ -626,6 +669,35 @@ impl OggOpus {
     }
 }
 
+/// A recorded track decoded to what whisper.cpp reads: 16 kHz mono samples.
+/// Every three 48 kHz samples average into one; speech sits well under the
+/// 8 kHz that keeps, and the model resamples nothing itself.
+pub fn decode_for_whisper(path: &Path) -> Result<Vec<f32>, String> {
+    let file =
+        fs::File::open(path).map_err(|e| format!("couldn't open {}: {e}", path.display()))?;
+    let mut reader = PacketReader::new(file);
+    let mut decoder =
+        Decoder::new(SampleRate::Hz48000, Channels::Mono).map_err(|e| e.to_string())?;
+    let mut packet = || reader.read_packet().map_err(|e| e.to_string());
+    // The two header packets carry no audio.
+    for _ in 0..2 {
+        packet()?.ok_or_else(|| format!("{} is not an Ogg Opus file", path.display()))?;
+    }
+    let mut frame = vec![0f32; FRAME];
+    let mut out = Vec::new();
+    while let Some(p) = packet()? {
+        let n = decoder
+            .decode_float(Some(&p.data[..]), &mut frame[..], false)
+            .map_err(|e| e.to_string())?;
+        out.extend(
+            frame[..n]
+                .chunks_exact(3)
+                .map(|c| (c[0] + c[1] + c[2]) / 3.0),
+        );
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -662,8 +734,6 @@ mod tests {
     }
 
     use super::*;
-    use audiopus::coder::Decoder;
-    use ogg::reading::PacketReader;
 
     /// What a decoder finds in a file `OggOpus` wrote: the header packets, then
     /// the audio packets decoded to PCM, with the page layout the Ogg reader saw.
@@ -802,5 +872,51 @@ mod tests {
             rms(&p.pcm),
             p.last_in_stream
         );
+    }
+
+    /// Hands-on helper: encode a 16-bit PCM WAV into a recording-shaped Opus
+    /// file, the way to hand the transcription engine synthesized speech.
+    /// `ASAPNOTES_WAV=<in.wav> ASAPNOTES_OPUS=<out.opus> cargo test encode_wav -- --ignored`
+    #[test]
+    #[ignore]
+    fn encode_wav_fixture() {
+        let wav = fs::read(std::env::var("ASAPNOTES_WAV").expect("ASAPNOTES_WAV=<in.wav>"))
+            .expect("read wav");
+        let out = std::env::var("ASAPNOTES_OPUS").expect("ASAPNOTES_OPUS=<out.opus>");
+        let u16_at = |i: usize| u16::from_le_bytes([wav[i], wav[i + 1]]) as usize;
+        let u32_at = |i: usize| u32::from_le_bytes([wav[i], wav[i + 1], wav[i + 2], wav[i + 3]]);
+        // RIFF chunks: "fmt " gives the layout, "data" the samples.
+        let (mut channels, mut rate, mut data) = (0usize, 0u32, &wav[..0]);
+        let mut at = 12;
+        while at + 8 <= wav.len() {
+            let len = u32_at(at + 4) as usize;
+            match &wav[at..at + 4] {
+                b"fmt " => {
+                    assert_eq!(u16_at(at + 8), 1, "PCM");
+                    channels = u16_at(at + 10);
+                    rate = u32_at(at + 12);
+                    assert_eq!(u16_at(at + 22), 16, "16-bit");
+                }
+                b"data" => data = &wav[at + 8..(at + 8 + len).min(wav.len())],
+                _ => {}
+            }
+            at += 8 + len + (len & 1);
+        }
+        let samples: Vec<f32> = data
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+            .collect();
+        let mut mono = MonoAt48k::new(channels, rate);
+        let mut pcm = Vec::new();
+        mono.push(&samples, &mut pcm);
+        pcm.resize(pcm.len().div_ceil(FRAME) * FRAME, 0.0);
+        let file = fs::File::create(&out).expect("create");
+        let mut sink = OggOpus::create(BufWriter::new(file)).expect("sink");
+        let frames = pcm.len() / FRAME;
+        for (i, frame) in pcm.chunks_exact(FRAME).enumerate() {
+            sink.encode(frame, i + 1 == frames).expect("encode");
+        }
+        sink.finish().expect("finish");
+        println!("{out}: {frames} frames, {:.2} s", frames as f32 / 50.0);
     }
 }

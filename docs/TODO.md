@@ -291,9 +291,50 @@ The AI (or anyone) working on this repo keeps this file current while working:
         user deleted is a recording they no longer want listed. Verified: seeded stop lines
         in a scratch project and a loose note, a real 4-s recording through the chip
         refreshing the view, the row click, the row menu, light and dark.
-  - [ ] **2 — transcription**: helper process + whisper.cpp; consented model download;
-        transcript appended as markdown with `[hh:mm:ss]` per paragraph, speaker by
-        track.
+  - [x] **2 — transcription** — **designed, built and verified headless 2026-09-08**;
+        hands-on pass pending. The engine is an **add-on**: a third binary,
+        `asapnotes-transcribe` (whisper.cpp through `whisper-rs`, built only with the
+        `transcribe` cargo feature, so `tauri dev` and the default install carry none of
+        it), which Settings downloads on request from the app's own release and checks
+        against a SHA-256 the app carries for its version (`ASAPNOTES_TRANSCRIBE_SHA256`
+        and `_BYTES` at build time; a dev build finds the engine beside its executable
+        instead). Picked over an installer checkbox (the NSIS and WiX templates have no
+        components page, and winget never shows one) and over always shipping the engine.
+        Models (`small` default; `base`; `large-v3-turbo-q5_0`; digests pinned in
+        `transcribe.rs`) are a second consented download into app data
+        (`transcribe/models/`). The **language is asked on every transcription** (last
+        pick preselected, no auto option: detection is unreliable). Helper protocol: JSON
+        lines on stdout (progress, segment, done, error); segment stamps are trimmed to
+        audible audio, because the model stretches them over silence and that mis-ordered
+        the two tracks. The app merges the tracks by time into paragraphs
+        (`[hh:mm:ss] **Me:**` / `**Them:**` by track; no labels with one track) and the
+        result becomes a **sibling note** `<name>.transcript.md` — picked over appending
+        into the meeting note, since an hour is ~9k words — linked from the line under the
+        stop line (into the editor when the note is the open tab, else into the file). The
+        recordings view finds the transcript by that name: a `text` chip, "Open
+        transcript", "Transcribe again…". Entry points: recordings row menu, the `.opus`
+        link's right-click menu, palette and File menu (over the open note's recording).
+        A titlebar chip shows the percentage and cancels (kills the child); the engine
+        runs below normal priority with no console window; a result nobody collected
+        (window reloaded midway) waits in memory. Settings has a Transcription section
+        (engine and models, download or remove, one download at a time). **Verified**:
+        the helper on synthesized English speech (two voices, pauses) with base and small,
+        word-perfect; a headless CDP run through the real app: row menu → dialog (light and
+        dark) → chip → transcript note with interleaved Me/Them → link under the stop line
+        (both paths) → recordings chip → Settings section; `cargo test` green, clippy clean
+        for both feature sets. **Not exercised**: the engine and model downloads (no
+        release exists yet; both go through one hash-checked fetch), Portuguese or Spanish
+        audio (no local voice for them), an hour-long recording's CPU runtime. **Build
+        note**: whisper-rs needs libclang on Windows (its bundled bindings are
+        Linux-shaped); `pip install libclang` plus `LIBCLANG_PATH`, recorded in CLAUDE.md.
+        **The release workflow must**: build `asapnotes-transcribe` (`--release --features
+transcribe`), attach it as `asapnotes-transcribe-windows-x64.exe`, and pass its
+        SHA-256 and byte size into the app build; CI needs LLVM's libclang (present on
+        `windows-latest`).
+  - [ ] **GPU engine** (2026-09-08): the `transcribe-vulkan` feature exists; a second
+        release asset and a variant picker in Settings would let a machine with a GPU run
+        `large-v3-turbo` in minutes instead of an hour. Needs the Vulkan SDK on the build
+        machine and on CI.
   - [ ] **3 — live timestamps**: while recording, stamp elapsed time on new bullets so
         hand notes align with the recording and transcript.
   - [ ] **Later — volume control per track** (asked 2026-08-31): a gain slider for each
