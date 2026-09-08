@@ -11,10 +11,11 @@ import { DiffLens } from "./DiffLens";
 import { CloseConfirm } from "./CloseConfirm";
 import { ContextMenu, ContextMenuState } from "./ContextMenu";
 import Editor, { EditorHandle, EditorStatus, FormatKind } from "./Editor";
-import { DropTarget, Explorer } from "./Explorer";
+import { DropTarget, Explorer, ExplorerView } from "./Explorer";
 import { MoveInto } from "./MoveInto";
 import { Icon, type IconName } from "./icons";
 import { MeetingChip } from "./MeetingChip";
+import { RecordingsView } from "./Recordings";
 import { StartMeeting } from "./Meeting";
 import { formatElapsed } from "./meetingTime";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
@@ -247,7 +248,10 @@ function App() {
   const [explorerOpen, setExplorerOpen] = useState(explorerPinned);
   // The explorer panel hosts three views; search and changes are deliberately
   // not persisted — reopening the app should land on the file tree.
-  const [explorerView, setExplorerView] = useState<"files" | "search" | "changes">("files");
+  const [explorerView, setExplorerView] = useState<ExplorerView>("files");
+  const [recordings, setRecordings] = useState<api.MeetingRecording[]>([]);
+  // Bumped when a recording lands, since the write that links it is not a listing refresh.
+  const [recordingsTick, setRecordingsTick] = useState(0);
   // External edits in the changes window: App owns them because the view
   // button's count shows even while the view itself is closed.
   const [changes, setChanges] = useState<api.ChangeSummary[]>([]);
@@ -2396,10 +2400,27 @@ function App() {
     if (ids.length > 0) closeTabs(ids);
   };
 
-  const changeExplorerView = (view: "files" | "search" | "changes") => {
+  const changeExplorerView = (view: ExplorerView) => {
     setExplorerView(view);
     if (view !== "changes") closeLens();
   };
+
+  // The notes are the recordings' index, so any listing refresh (a save, an
+  // external edit, a finished recording) is a reason to re-read them — but
+  // only while the view is up; nothing is scanned for a closed panel.
+  useEffect(() => {
+    if (explorerView !== "recordings") return;
+    let stale = false;
+    api
+      .listMeetingRecordings()
+      .then((r) => {
+        if (!stale) setRecordings(r);
+      })
+      .catch((err: unknown) => toast(`Couldn't list recordings — ${errText(err)}`));
+    return () => {
+      stale = true;
+    };
+  }, [explorerView, notes, recordingsTick, toast]);
 
   /** The lens hands over to the note it was reading: open it (at the change on
    * screen), then drop the lens tab — by then it is a background tab, so this
@@ -2825,6 +2846,7 @@ function App() {
       }
     }
     toast(`Recorded ${formatElapsed(files.seconds)} into "${fileOf(rec.note)}"`);
+    setRecordingsTick((n) => n + 1);
   };
 
   // A recording started before this window loaded keeps running in the
@@ -3272,6 +3294,19 @@ function App() {
               />
             }
             changesCount={new Set(visibleChanges.filter((c) => !c.seen).map((c) => c.note)).size}
+            recordingsSlot={
+              <RecordingsView
+                recordings={recordings}
+                onOpen={openHit}
+                onReveal={(t) =>
+                  void api
+                    .revealPath(t.path)
+                    .catch((err: unknown) => toast(`Couldn't reveal that file — ${errText(err)}`))
+                }
+                onCopyPath={(t) => void writeText(t.path)}
+                onMenu={openContextMenu}
+              />
+            }
             pinned={explorerDocked}
             onTogglePin={() => setExplorerPinned(!explorerPinned)}
             onCollapse={() => setExplorerOpen(false)}

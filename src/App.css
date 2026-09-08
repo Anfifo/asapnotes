@@ -925,6 +925,23 @@ body,
   font-size: 0.7rem;
 }
 
+/* Recording rows: the length, then a chip per track; a chip with no file
+   behind it is struck out, since the link outlived the file. */
+.rec-chips {
+  color: #7a7a7a;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-track {
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.rec-track.gone {
+  text-decoration: line-through;
+}
+
 .chg-empty {
   font-size: 0.74rem;
   padding: 0.2rem 0.25rem;
@@ -4011,6 +4028,14 @@ body.note-drag * {
   .chg-read-through:hover {
     background: rgba(255, 255, 255, 0.1);
     color: inherit;
+  }
+
+  .rec-chips {
+    color: #9a9a9a;
+  }
+
+  .rec-track {
+    background: rgba(255, 255, 255, 0.1);
   }
 
   .chg-row.seen .chg-seen-btn {

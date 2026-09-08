@@ -412,4 +412,24 @@ export const stopMeetingRecording = () => invoke<MeetingFiles>("stop_meeting_rec
 /** Whether a recording is running — what a fresh window load asks. */
 export const meetingRecordingState = () => invoke<MeetingState>("meeting_recording_state");
 
+export interface RecordingTrack {
+  /** The link's label: "microphone" or "system audio". */
+  label: string;
+  /** Absolute path of the Opus file. */
+  path: string;
+  exists: boolean;
+  modified_ms: number;
+}
+
+/** One meeting as its note links it: the line, its length, its tracks. */
+export interface MeetingRecording {
+  note: string;
+  line: number;
+  seconds: number | null;
+  tracks: RecordingTrack[];
+}
+
+/** Every meeting recording the notes link to, newest first. */
+export const listMeetingRecordings = () => invoke<MeetingRecording[]>("list_meeting_recordings");
+
 export const quit = () => invoke<void>("quit");

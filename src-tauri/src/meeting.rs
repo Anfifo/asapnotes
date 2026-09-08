@@ -241,6 +241,135 @@ pub fn meeting_recording_state() -> Result<MeetingState, String> {
     })
 }
 
+/// One recorded side as a meeting note links to it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RecordingTrack {
+    /// The link's label: "microphone" or "system audio".
+    pub label: String,
+    /// Absolute path of the Opus file, resolved from the note's folder.
+    pub path: String,
+    pub exists: bool,
+    pub modified_ms: u64,
+}
+
+/// One meeting: the line in a note that links its tracks.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct MeetingRecording {
+    pub note: String,
+    /// 1-based line number, for the jump-to on click.
+    pub line: u32,
+    /// From the "(m:ss)" the stop line writes; None when hand-edited away.
+    pub seconds: Option<u64>,
+    pub tracks: Vec<RecordingTrack>,
+}
+
+/// Every meeting recording the notes link to, newest file first. The notes
+/// are the index: a recording is what its meeting note says it is, and one
+/// whose link was deleted is no longer a meeting of that note. Files share a
+/// root `assets/` and carry no project in their names, so scanning folders
+/// could not attribute them.
+#[tauri::command]
+pub fn list_meeting_recordings(app: AppHandle) -> Result<Vec<MeetingRecording>, String> {
+    let mut out = Vec::new();
+    for (note, path) in crate::notes::note_paths(&app)? {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let dir = path.parent().unwrap_or(Path::new(""));
+        for (i, line) in content.lines().enumerate() {
+            let targets = opus_links(line);
+            if targets.is_empty() {
+                continue;
+            }
+            let tracks = targets
+                .into_iter()
+                .map(|(label, target)| {
+                    let file = lexical_join(dir, &target);
+                    let meta = fs::metadata(&file).ok();
+                    RecordingTrack {
+                        label,
+                        path: file.to_string_lossy().into_owned(),
+                        exists: meta.is_some(),
+                        modified_ms: meta
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0),
+                    }
+                })
+                .collect();
+            out.push(MeetingRecording {
+                note: note.clone(),
+                line: i as u32 + 1,
+                seconds: elapsed_before_link(line),
+                tracks,
+            });
+        }
+    }
+    out.sort_by_key(|r| std::cmp::Reverse(r.tracks.iter().map(|t| t.modified_ms).max()));
+    Ok(out)
+}
+
+/// `dir/target` with the target's `..` and `.` segments folded, so the path
+/// shown and copied is the one a file manager would show.
+fn lexical_join(dir: &Path, target: &str) -> PathBuf {
+    let mut out = dir.to_path_buf();
+    for seg in target.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            s => out.push(s),
+        }
+    }
+    out
+}
+
+/// The `[label](target)` links on a line whose target is an `.opus` file.
+/// A target with spaces is wrapped in angle brackets, as the stop line writes
+/// it; anything else is left to the markdown parser's stricter reading.
+fn opus_links(line: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(close) = rest.find("](") {
+        let label = rest[..close].rsplit('[').next().unwrap_or("").to_string();
+        let after = &rest[close + 2..];
+        let (target, used) = if let Some(inner) = after.strip_prefix('<') {
+            match inner.find(">)") {
+                Some(end) => (&inner[..end], end + 3),
+                None => break,
+            }
+        } else {
+            match after.find(')') {
+                Some(end) => (&after[..end], end + 1),
+                None => break,
+            }
+        };
+        if target.to_ascii_lowercase().ends_with(".opus") {
+            out.push((label, target.to_string()));
+        }
+        rest = &after[used..];
+    }
+    out
+}
+
+/// The "(h:mm:ss)" or "(m:ss)" the stop line puts before its links.
+fn elapsed_before_link(line: &str) -> Option<u64> {
+    let head = &line[..line.find("](")?];
+    let open = head.rfind('(')?;
+    let close = head[open..].find(')')? + open;
+    let parts: Vec<u64> = head[open + 1..close]
+        .split(':')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
+    match parts[..] {
+        [m, s] => Some(m * 60 + s),
+        [h, m, s] => Some(h * 3600 + m * 60 + s),
+        _ => None,
+    }
+}
+
 /// Everything one capture thread needs to run to completion.
 struct TrackJob {
     side: Side,
@@ -499,6 +628,39 @@ impl OggOpus {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stop_line_parses_into_tracks_and_length() {
+        let line = "- Meeting recording (1:02:03): [microphone](assets/standup-mic.opus) · [system audio](<../assets/stand up-system.opus>)";
+        assert_eq!(
+            opus_links(line),
+            vec![
+                (
+                    "microphone".to_string(),
+                    "assets/standup-mic.opus".to_string()
+                ),
+                (
+                    "system audio".to_string(),
+                    "../assets/stand up-system.opus".to_string()
+                ),
+            ]
+        );
+        assert_eq!(elapsed_before_link(line), Some(3723));
+        assert_eq!(
+            elapsed_before_link("- Meeting recording (4:05): [microphone](a.opus)"),
+            Some(245)
+        );
+        assert_eq!(elapsed_before_link("see [microphone](a.opus)"), None);
+        assert!(opus_links("an [image](assets/img-1.png) and a [note](other.md)").is_empty());
+        assert_eq!(
+            lexical_join(Path::new("C:/root/proj"), "../assets/a b.opus"),
+            PathBuf::from("C:/root/assets/a b.opus")
+        );
+        assert_eq!(
+            lexical_join(Path::new("C:/root"), "./assets/a.opus"),
+            PathBuf::from("C:/root/assets/a.opus")
+        );
+    }
+
     use super::*;
     use audiopus::coder::Decoder;
     use ogg::reading::PacketReader;

@@ -52,6 +52,9 @@ const mountGlyph = (
   </svg>
 );
 
+/** The panel's views: the file tree, and the three that replace it. */
+export type ExplorerView = "files" | "search" | "changes" | "recordings";
+
 interface ExplorerProps {
   notes: FileInfo[];
   drafts: FileInfo[];
@@ -97,14 +100,16 @@ interface ExplorerProps {
    * note files, so without this an empty new folder would vanish on sight. */
   newFolders: string[];
   /** Which of the panel's views is showing. */
-  view: "files" | "search" | "changes";
-  onViewChange: (view: "files" | "search" | "changes") => void;
+  view: ExplorerView;
+  onViewChange: (view: ExplorerView) => void;
   /** Rendered in place of the file tree while `view` is "search". */
   searchSlot: ReactNode;
   /** Rendered in place of the file tree while `view` is "changes". */
   changesSlot: ReactNode;
   /** Notes with external edits in the window — the ± button's count. */
   changesCount: number;
+  /** Rendered in place of the file tree while `view` is "recordings". */
+  recordingsSlot: ReactNode;
   /** Docked beside the editor (true) vs floating over it. */
   pinned: boolean;
   onTogglePin: () => void;
@@ -156,6 +161,7 @@ export function Explorer({
   searchSlot,
   changesSlot,
   changesCount,
+  recordingsSlot,
   pinned,
   onTogglePin,
   onCollapse,
@@ -666,6 +672,14 @@ export function Explorer({
             <Icon name="diff" />
             {changesCount > 0 && <span className="view-count">{changesCount}</span>}
           </button>
+          <button
+            className={view === "recordings" ? "bar-btn open" : "bar-btn"}
+            aria-label="Meeting recordings"
+            data-tip="Meeting recordings"
+            onClick={() => onViewChange("recordings")}
+          >
+            <Icon name="mic" />
+          </button>
         </div>
         {/* Seam between what is looked at (the views) and what is done (the actions). */}
         <span className="bar-sep" />
@@ -696,6 +710,7 @@ export function Explorer({
       </header>
       {view === "search" && searchSlot}
       {view === "changes" && changesSlot}
+      {view === "recordings" && recordingsSlot}
       <div
         className="explorer-cards"
         ref={cardsRef}

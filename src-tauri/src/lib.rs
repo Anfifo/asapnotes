@@ -304,6 +304,7 @@ pub fn run() {
             meeting::start_meeting_recording,
             meeting::stop_meeting_recording,
             meeting::meeting_recording_state,
+            meeting::list_meeting_recordings,
             settings::set_meeting_folder,
             settings::set_workspaces,
             settings::set_current_workspace,

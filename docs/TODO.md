@@ -280,6 +280,17 @@ The AI (or anyone) working on this repo keeps this file current while working:
         WAV…" entry on the recording link's right-click menu and a palette / File verb
         over the active note's recordings, opening one shared export sheet (mixed, per
         track, or the raw files, then a save location).
+  - [x] **Recordings view in the side panel** (asked 2026-09-08, built and verified
+        headless the same day): a fourth explorer view beside Files / Search / Changes,
+        listing every meeting the notes link a recording from, grouped by project with the
+        newest first — note name, day, length, and a chip per track (struck through when
+        the file is gone). A row opens the note at its stop line; right-click reveals or
+        copies each track's path. The notes are the index (`list_meeting_recordings` scans
+        the corpus for `.opus` links): recordings share the root `assets/` and carry no
+        project in their names, so a folder scan could not attribute them, and a link the
+        user deleted is a recording they no longer want listed. Verified: seeded stop lines
+        in a scratch project and a loose note, a real 4-s recording through the chip
+        refreshing the view, the row click, the row menu, light and dark.
   - [ ] **2 — transcription**: helper process + whisper.cpp; consented model download;
         transcript appended as markdown with `[hh:mm:ss]` per paragraph, speaker by
         track.
