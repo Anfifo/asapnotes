@@ -35,7 +35,7 @@ check the terminal for `Running target\debug\asapnotes.exe`, or the tray.
 **Rust breakpoints are not set up.** Rust is debugged with `println!`/`dbg!`. Either
 CodeLLDB or the C/C++ extension works on the MSVC toolchain, but both need a
 `.vscode/tasks.json` with a background Vite task whose problem matcher waits for the
-"ready in" line — a debug-built binary is a _dev_ build and loads `http://localhost:1420`,
+"ready in" line — a debug-built binary is a _dev_ build and loads `http://127.0.0.1:1430`,
 so the debugger must not start before the dev server answers. Deferred until Rust work
 warrants it; when it lands, add the adapter to
 [`.vscode/extensions.json`](../.vscode/extensions.json) so it self-installs.

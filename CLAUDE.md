@@ -45,7 +45,7 @@ summoned by a global hotkey; notes are plain `.md` files; an MCP sidecar is plan
 
 ```powershell
 npm.cmd install
-npm.cmd run tauri dev     # run the app (Vite on fixed port 1420 + cargo)
+npm.cmd run tauri dev     # run the app (Vite on fixed port 1430 + cargo)
 ```
 
 Quality gates before finishing any change:
@@ -69,7 +69,7 @@ asapnotes-transcribe` (whisper.cpp from source; a plain `tauri dev` never compil
   bindings need **libclang**: `pip install libclang`, then point `LIBCLANG_PATH` at the folder
   holding `libclang.dll` (under the Python `site-packages/clang/native`). The crate's bundled
   bindings are Linux-shaped and fail to compile here, so bindgen has to run.
-- Vite's port **1420 is fixed** (`strictPort`) — a second dev instance won't start.
+- Vite's port **1430 is fixed** (`strictPort`, bound to `127.0.0.1`) — a second dev instance won't start.
 - First `tauri dev` build compiles the whole Rust tree (minutes); incremental is fast.
 - Frontend JS calling into Rust needs the matching grant in
   `src-tauri/capabilities/default.json` — missing grants fail at runtime, not compile time.
