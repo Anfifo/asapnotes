@@ -142,6 +142,85 @@ pub fn write_section(
     })
 }
 
+/// Write a new note. Refused when the id is taken, so creating can never
+/// overwrite; `append` is the call that adds to a note that exists.
+pub fn create(
+    roots: &Roots,
+    s: &Settings,
+    state: &State,
+    note: &str,
+    content: &str,
+) -> Result<WriteResult, String> {
+    let path = writable_path(roots, s, state, note)?;
+    if path.exists() {
+        return Err(format!("{note} already exists"));
+    }
+    let body = content.trim_end_matches(['\n', '\r']);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(
+        &path,
+        if body.is_empty() {
+            String::new()
+        } else {
+            format!("{body}\n")
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(WriteResult {
+        note: note.to_string(),
+        section: String::new(),
+        created: true,
+        replaced: String::new(),
+        mtime_ms: mtime_ms(&path).unwrap_or(0),
+    })
+}
+
+/// Move a note to another id, with both ends write-checked. History moves
+/// with it, as it does for a move in the app; links to it are not rewritten,
+/// the same as there. Refused while the app holds unsaved edits for the note,
+/// because the app would later save them back to the old id.
+pub fn move_note(
+    roots: &Roots,
+    s: &Settings,
+    state: &State,
+    from: &str,
+    to: &str,
+) -> Result<(), String> {
+    let from_path = writable_path(roots, s, state, from)?;
+    let to_path = writable_path(roots, s, state, to)?;
+    if !from_path.is_file() {
+        return Err(format!("no such note: {from}"));
+    }
+    if to_path.exists() {
+        return Err(format!("{to} already exists"));
+    }
+    if roots.data.join("drafts").join(from).exists() {
+        return Err(format!(
+            "{from} has unsaved edits open in asapnotes; save it there first"
+        ));
+    }
+    if let Some(parent) = to_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // `rename` fails across volumes, which linked folders and mounts make an
+    // ordinary case.
+    if fs::rename(&from_path, &to_path).is_err() {
+        fs::copy(&from_path, &to_path).map_err(|e| e.to_string())?;
+        fs::remove_file(&from_path).map_err(|e| e.to_string())?;
+    }
+    let history = roots.data.join("history");
+    if history.join(from).is_dir() {
+        let target = history.join(to);
+        if let Some(parent) = target.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::rename(history.join(from), target);
+    }
+    Ok(())
+}
+
 /// Add to the end of a note, or to the end of one of its sections.
 ///
 /// **Creation rides here**: an id whose file does not exist yet is created, so

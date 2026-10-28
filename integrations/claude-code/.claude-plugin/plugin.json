@@ -1,0 +1,8 @@
+{
+  "name": "asapnotes",
+  "version": "0.1.0",
+  "description": "Reminds a session that asapnotes keeps notes for the code it is working on.",
+  "author": { "name": "Anfifo" },
+  "homepage": "https://github.com/Anfifo/asapnotes",
+  "license": "MIT"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "asapnotes",
+  "owner": { "name": "Anfifo" },
+  "description": "Plugins that connect agent sessions to asapnotes, the instant-capture markdown notes app.",
+  "plugins": [
+    {
+      "name": "asapnotes",
+      "source": "./integrations/claude-code",
+      "description": "Reminds a session that asapnotes keeps notes for the code it is working on."
+    }
+  ]
+}

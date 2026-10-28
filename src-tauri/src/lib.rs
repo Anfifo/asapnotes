@@ -90,7 +90,8 @@ mod desktop {
         // different corpus and looks perfectly healthy doing it. Nothing is
         // open yet, so no current project.
         if let Ok(roots) = crate::app_paths::roots(app.handle()) {
-            let _ = crate::corpus::grants::publish(&roots, None);
+            let helper = crate::notes::helper_path();
+            let _ = crate::corpus::grants::publish(&roots, None, helper.as_deref());
         }
 
         // Every folder outside the notes root that notes can live in — project
@@ -314,6 +315,8 @@ pub fn run() {
             transcribe::cancel_transcription,
             transcribe::take_transcript_result,
             settings::set_meeting_folder,
+            settings::set_destinations,
+            settings::set_project_folders,
             settings::set_transcription_defaults,
             settings::set_workspaces,
             settings::set_current_workspace,

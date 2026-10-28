@@ -311,7 +311,7 @@ fn an_id_lands_in_its_project_its_mount_or_the_notes_root() {
                         path: deeper.to_string_lossy().into_owned(),
                     },
                 ],
-                mcp: None,
+                ..Project::default()
             },
         ),
         ("plain", Project::default()),
@@ -365,7 +365,7 @@ fn a_real_folder_shadows_a_mount_of_the_same_name() {
                 at: "docs".into(),
                 path: mounted.to_string_lossy().into_owned(),
             }],
-            mcp: None,
+            ..Project::default()
         },
     )]);
     assert_eq!(
@@ -661,8 +661,8 @@ fn find_notes_ranks_the_file_name_above_the_folder_it_sits_in() {
 fn granted(mcp: Option<&str>, located: bool, home: &std::path::Path) -> Project {
     Project {
         path: located.then(|| home.to_string_lossy().into_owned()),
-        mounts: Vec::new(),
         mcp: mcp.map(str::to_string),
+        ..Project::default()
     }
 }
 
@@ -777,8 +777,7 @@ fn the_write_scope_can_be_pinned_to_the_current_project() {
 
     let pinned = grants::State {
         current_project: Some("here".into()),
-        notes_root: None,
-        updated_ms: 0,
+        ..Default::default()
     };
     assert!(grants::check_write(&s, &pinned, "here/note.md").is_ok());
     let denied = grants::check_write(&s, &pinned, "there/note.md").expect_err("out of scope");
@@ -796,8 +795,7 @@ fn a_pin_never_widens_a_grant() {
     s.mcp.write_scope = Some("current".into());
     let pinned = grants::State {
         current_project: Some("shut".into()),
-        notes_root: None,
-        updated_ms: 0,
+        ..Default::default()
     };
     // Being the current project does not make an `off` project writable, and
     // the refusal still says nothing about it existing.
@@ -1569,4 +1567,108 @@ fn a_missing_required_argument_names_itself() {
     let f = tool_fixture();
     let err = call(&f, "read_note", json!({})).expect_err("missing");
     assert!(err.contains("\"note\""));
+}
+
+#[test]
+fn create_note_files_by_the_users_destinations() {
+    let f = tool_fixture();
+    let mut s = f.settings();
+    let work = s.projects.get_mut("work").expect("work");
+    work.destinations.meeting = Some("meetings".into());
+    work.destinations
+        .types
+        .insert("markdown".into(), "docs".into());
+    // A global destination may point into a project.
+    s.destinations.capture = Some("work/inbox".into());
+    f.save_settings(&s);
+
+    let made = |args: serde_json::Value| {
+        call(&f, "create_note", args).map(|v| v["note"].as_str().expect("note").to_string())
+    };
+    let meeting = json!({ "name": "standup", "project": "work", "kind": "meeting" });
+    assert_eq!(
+        made(meeting.clone()).as_deref(),
+        Ok("work/meetings/standup.md")
+    );
+    assert_eq!(
+        made(json!({ "name": "idea", "kind": "capture", "content": "# Idea" })).as_deref(),
+        Ok("work/inbox/idea.md")
+    );
+    assert_eq!(f.read("work/inbox/idea.md"), "# Idea\n");
+    assert_eq!(
+        made(json!({ "name": "spec.md", "project": "work" })).as_deref(),
+        Ok("work/docs/spec.md")
+    );
+    // Never overwrites.
+    assert!(made(meeting).expect_err("taken").contains("already exists"));
+    // A project without destinations files at its own folder.
+    s.projects.get_mut("work").expect("work").destinations = Default::default();
+    f.save_settings(&s);
+    assert_eq!(
+        made(json!({ "name": "flat", "project": "work" })).as_deref(),
+        Ok("work/flat.md")
+    );
+
+    // The grants still decide.
+    let read_only = made(json!({ "name": "x", "project": "reading" })).expect_err("read-only");
+    assert!(read_only.contains("read-only"));
+    // An off project and an unknown one answer alike, and neither becomes a
+    // new folder.
+    for project in ["secret", "nope"] {
+        let err = made(json!({ "name": "x", "project": project })).expect_err("absent");
+        assert_eq!(err, format!("no such project: {project}"));
+    }
+    assert!(!f.roots.notes.join("nope").exists());
+}
+
+#[test]
+fn move_note_checks_both_ends_and_respects_open_edits() {
+    let f = tool_fixture();
+    let moved = call(
+        &f,
+        "move_note",
+        json!({ "from": "work/other.md", "to": "work/archive/other.md" }),
+    );
+    assert!(moved.is_ok(), "{moved:?}");
+    assert_eq!(f.read("work/archive/other.md"), "unrelated\n");
+    assert!(!f.roots.notes.join("work/other.md").exists());
+
+    // Out of a read-only project: refused, the file stays.
+    let err = call(
+        &f,
+        "move_note",
+        json!({ "from": "reading/ref.md", "to": "work/ref.md" }),
+    )
+    .expect_err("read-only source");
+    assert!(err.contains("read-only"));
+    assert!(f.roots.notes.join("reading/ref.md").exists());
+
+    // The app holds a draft for it: moving would strand those edits.
+    let draft = f.roots.data.join("drafts/work/plan.md");
+    std::fs::create_dir_all(draft.parent().expect("parent")).expect("drafts");
+    std::fs::write(&draft, "unsaved").expect("draft");
+    let err = call(
+        &f,
+        "move_note",
+        json!({ "from": "work/plan.md", "to": "work/plan2.md" }),
+    )
+    .expect_err("open edits");
+    assert!(err.contains("unsaved edits"));
+}
+
+#[test]
+fn code_folders_list_only_visible_projects() {
+    let f = tool_fixture();
+    let mut s = f.settings();
+    for project in ["work", "secret"] {
+        s.projects.get_mut(project).expect("project").code_folders =
+            vec![format!("C:/code/{project}")];
+    }
+    f.save_settings(&s);
+    let out = call(&f, "code_folders", json!({})).expect("code folders");
+    let projects = out["projects"].as_array().expect("array");
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0]["project"], json!("work"));
+    assert_eq!(projects[0]["codeFolders"], json!(["C:/code/work"]));
+    assert_eq!(projects[0]["grant"], json!("write"));
 }

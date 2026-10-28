@@ -47,6 +47,19 @@ participants is on you. The app's part is a recording indicator that cannot be m
 This is a personal project built in the open, with substantial help from AI coding tools.
 Issues and pull requests are welcome; responses come when time allows.
 
+## Working with AI tools
+
+Any AI tool can work on the notes as files, or through the MCP server in [mcp/](mcp/README.md)
+with per-project access you set in the app. Settings → Where new notes go sets the folder for
+each kind of new note, and the MCP server's `create_note` follows it.
+
+An optional Claude Code plugin reminds a session that notes exist when it works in a folder
+a project names as its code ([integrations/claude-code/](integrations/claude-code/README.md)):
+
+```text
+/plugin install asapnotes --marketplace Anfifo/asapnotes
+```
+
 ## Install
 
 There is no signed installer yet. Build it yourself (see below) or run `npm.cmd run tauri

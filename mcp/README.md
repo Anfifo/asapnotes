@@ -135,6 +135,8 @@ Writing:
 | ---------------- | --------------------------------------------------------------- |
 | `write_section`  | Replace one heading's body                                      |
 | `append_to_note` | Add to a note or a section — **and create a note**, in one call |
+| `create_note`    | A new note in the folder the user set for its kind              |
+| `move_note`      | Move or rename a note; both ends need `write`                   |
 | `write_settings` | A JSON merge patch, never touching `mcp`                        |
 | `append_todo`    | A correctly shaped TODO item under today's heading              |
 | `new_decision`   | A dated decision entry from the template                        |
@@ -174,6 +176,17 @@ the agent never read.
 that moved in between refuses the write instead of clobbering it. The user may
 well be typing in that file right now.
 
+**Notes land where the user files them.** `destinations` in `settings.json` names a
+folder per kind of new note (quick capture, meetings, each note type), globally and
+per project; `create_note` takes a file name and a kind and puts it there, and
+`list_projects` shows each project's table. `move_note` refuses while the app holds
+unsaved edits for the note, since the app would save them back to the old id, and
+it does not rewrite links, the same as a move in the app.
+
+The helper also answers `code_folders`, which is not an MCP tool: it lists the code
+folders of the visible projects for the
+[Claude Code plugin](../integrations/claude-code/README.md)'s reminder.
+
 ## The convention layer
 
 `asapnotes://convention` is a resource describing the working pattern this repo
@@ -186,8 +199,8 @@ shape instead of a free-form section write that gets it subtly wrong.
 
 ## What is not here
 
-- **Deletes and renames.** Destructive, and the recycle-bin safety net is in the
-  app. A later slice, with the same `expectUnchanged` discipline.
+- **Deletes.** Destructive, and the recycle-bin safety net is in the app. A later
+  slice, with the same `expectUnchanged` discipline.
 - **A whole-file note write.** Deliberately, as above.
 - **Reads in the log.** Writes are logged to `mcp-calls.jsonl` in app data — one
   line each, with the tool and the section. Reads are not: a record of every read

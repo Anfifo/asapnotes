@@ -143,7 +143,7 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<ProjectInfo>, String> {
 /// corpus while looking perfectly healthy.
 #[tauri::command]
 pub fn set_mcp_current_project(app: AppHandle, project: Option<String>) -> Result<(), String> {
-    grants::publish(&roots(&app)?, project)
+    grants::publish(&roots(&app)?, project, helper_path().as_deref())
 }
 
 /// What the sidecar can see, and what it last changed — the read behind
@@ -176,7 +176,7 @@ pub fn mcp_status(app: AppHandle) -> Result<serde_json::Value, String> {
 /// In a dev tree nothing is beside the executable, so the path won't exist and
 /// `helperExists` is false. The panel has to tell the two apart: offering a
 /// path that isn't there is worse than offering none.
-fn helper_path() -> Option<PathBuf> {
+pub(crate) fn helper_path() -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "asapnotes-mcp.exe"
     } else {

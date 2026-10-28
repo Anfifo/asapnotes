@@ -165,6 +165,10 @@ type Entry = NoteEntry | CommandEntry;
  * honest and Ctrl+S recreates the file. */
 const draftName = (id: string) => (/^untitled-\d+\.[a-z0-9]+$/i.test(fileOf(id)) ? null : id);
 
+/** A fresh app-generated id for an untitled note in a note-id folder. */
+const untitledId = (folder: string, ext: string) =>
+  `${folder ? `${folder}/` : ""}untitled-${Date.now()}.${ext}`;
+
 /** `<base>.<ext>`, numbered until the name is free. */
 function uniqueName(base: string, ext: string, taken: Set<string>): string {
   let name = `${base}.${ext}`;
@@ -357,6 +361,8 @@ function App() {
   const [openFilesExternally, setOpenFilesExternallyState] = useState(false);
   const defaultExtRef = useRef("md");
   defaultExtRef.current = (defaultNoteType && extOfType(defaultNoteType)) || "md";
+  // Where new notes land, by kind: the global destinations and each project's.
+  const [routing, setRouting] = useState<api.Routing>({ projects: {} });
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [summonMs, setSummonMs] = useState<number | null>(null);
@@ -600,27 +606,33 @@ function App() {
     setTabs((ts) => ts.map((t) => (t.id === oldId ? note : t)));
   }, []);
 
-  /** Open a fresh untitled note of some extension. */
+  /** Open a fresh untitled note of some extension in a note-id folder. */
   const newDoc = useCallback(
-    async (project: string | null | undefined, ext: string) => {
+    async (folder: string, ext: string) => {
       await flushDraft();
-      const prefix = project ? `${project}/` : "";
-      showDoc({ id: `${prefix}untitled-${Date.now()}.${ext}`, name: null }, "", false);
+      showDoc({ id: untitledId(folder, ext), name: null }, "", false);
     },
     [flushDraft, showDoc],
   );
 
   /** Capture: the blank note a summon, a startup with nothing to restore, or a
-   * closed last tab lands in. Always markdown — capture means "type now",
-   * whatever the default-format setting says. The deliberate verbs go through
-   * `newNote`. */
-  const newCapture = useCallback((project?: string | null) => newDoc(project, "md"), [newDoc]);
+   * closed last tab lands in, in the capture destination. Always markdown —
+   * capture means "type now", whatever the default-format setting says. The
+   * deliberate verbs go through `newNote`. */
+  const newCapture = useCallback(
+    (project?: string | null) => newDoc(api.destinationFor(routing, project, "capture"), "md"),
+    [newDoc, routing],
+  );
 
   /** The "New note" verb: the extension comes from the default note type, the
-   * same from the File menu, the palette and the explorer alike. */
+   * same from the File menu, the palette and the explorer alike, and the
+   * folder from that type's destination. */
   const newNote = useCallback(
-    (project?: string | null) => newDoc(project, defaultExtRef.current),
-    [newDoc],
+    (project?: string | null) => {
+      const kind = { type: defaultNoteType ?? "markdown" };
+      return newDoc(api.destinationFor(routing, project, kind), defaultExtRef.current);
+    },
+    [newDoc, routing, defaultNoteType],
   );
 
   /** Open a note (or draft) into the editor; false when its file could not be
@@ -941,9 +953,11 @@ function App() {
       if (!cur.name && !asName && doc.trim() === "") return null;
       let name = cur.name ?? asName ?? null;
       if (!name) {
-        const project = projectOf(cur.id);
+        // The folder the untitled note was opened in, which a destination
+        // may have put below its project.
+        const dir = dirOf(cur.id);
         const taken = new Set(notesRef.current.map((n) => n.name.toLowerCase()));
-        name = deriveName(doc, project ? `${project}/` : "", taken);
+        name = deriveName(doc, dir ? `${dir}/` : "", taken);
       }
       // External-change guard: the file is shared with other tools by design —
       // if it changed on disk since this buffer loaded, never overwrite silently.
@@ -1179,7 +1193,8 @@ function App() {
       setDefaultNoteTypeState(settings.defaultNoteType ?? null);
       setMapViewState(isViewKind(settings.mapView) ? settings.mapView : DEFAULT_VIEW);
       setOpenFilesExternallyState(settings.openFilesExternally ?? false);
-      setMeetingFolderState(settings.meetingFolder ?? "");
+      setMeetingFolderState(settings.destinations?.meeting ?? "");
+      setRouting({ destinations: settings.destinations, projects: settings.projects });
       setTxDefaults({
         language: settings.transcriptionLanguage ?? "",
         model: settings.transcriptionModel ?? "small",
@@ -1193,6 +1208,18 @@ function App() {
       appearanceSyncedRef.current = true;
     },
     [applyZoom, toast],
+  );
+
+  /** A destination or code-folder edit from Settings: write, then re-read, so
+   * what the panel shows is what the file holds. */
+  const saveRouting = useCallback(
+    (write: Promise<void>) => {
+      void write
+        .then(() => api.getSettings(true))
+        .then(applySettings)
+        .catch((err: unknown) => toast(`Couldn't save that setting — ${errText(err)}`));
+    },
+    [applySettings, toast],
   );
 
   /** Which layout the project map opens in. The view switches at once; the
@@ -1464,14 +1491,15 @@ function App() {
           const content = await api.readNote(ns[0].name);
           showDoc({ id: ns[0].name, name: ns[0].name }, content, false);
         } else {
-          showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
+          const folder = api.destinationFor(cfg.settings, null, "capture");
+          showDoc({ id: untitledId(folder, "md"), name: null }, "", false);
         }
       } catch (err) {
         // A notes root on an unreachable drive fails the first listing: name
         // the problem and land on a blank capture — never a forever-blank
         // window. Nothing here needs the root until the first save.
         toast(`Couldn't load your notes — ${errText(err)}`);
-        showDoc({ id: `untitled-${Date.now()}.md`, name: null }, "", false);
+        showDoc({ id: untitledId("", "md"), name: null }, "", false);
       }
     })();
   }, [showDoc, applySettings, applyProjects, refreshChanges, toast]);
@@ -2806,6 +2834,12 @@ function App() {
     openFromExplorer(id, true);
   };
 
+  // The meeting dialog starts in the open note's project's meetings folder
+  // when it has one, else wherever the last meeting went.
+  const openProject = open ? projectOf(open.id) : null;
+  const projectMeetings = openProject && routing.projects[openProject]?.destinations?.meeting;
+  const meetingDefault = projectMeetings ? `${openProject}/${projectMeetings}` : meetingFolder;
+
   /** Create (or reopen) the meeting note and start recording into it. A
    * rejection surfaces inside the dialog, which stays open. */
   const startMeeting = async (folder: string, name: string, mic: boolean, system: boolean) => {
@@ -2825,8 +2859,11 @@ function App() {
     setRecording({ note, startedAt: Date.now() });
     setMeetingDialog(false);
     editorRef.current?.focus();
-    if (folder !== meetingFolder) {
+    // Only a folder picked in the dialog becomes the new default; accepting
+    // a project's meetings folder leaves the global one alone.
+    if (folder !== meetingDefault) {
       setMeetingFolderState(folder);
+      setRouting((r) => ({ ...r, destinations: { ...r.destinations, meeting: folder || null } }));
       void api
         .setMeetingFolder(folder || null)
         .catch((err: unknown) => toast(`Couldn't save that setting — ${errText(err)}`));
@@ -3876,7 +3913,7 @@ function App() {
         <StartMeeting
           projects={projects}
           mounts={mounts}
-          defaultFolder={meetingFolder}
+          defaultFolder={meetingDefault}
           onStart={startMeeting}
           onClose={() => {
             setMeetingDialog(false);
@@ -3942,6 +3979,9 @@ function App() {
           onDefaultNoteTypeChange={setDefaultNoteType}
           openFilesExternally={openFilesExternally}
           onOpenFilesExternallyChange={setOpenFilesExternally}
+          routing={routing}
+          onSetDestinations={(d) => saveRouting(api.setDestinations(d))}
+          onSetProjectFolders={(p, d, code) => saveRouting(api.setProjectFolders(p, d, code))}
           workspaces={workspaces}
           onAddWorkspace={(name) => void addWorkspace(name)}
           onRenameWorkspace={(from, to) => void renameWorkspace(from, to)}

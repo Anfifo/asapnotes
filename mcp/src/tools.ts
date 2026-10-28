@@ -91,8 +91,9 @@ export const TOOLS: ToolDef[] = [
   forward(
     "list_projects",
     "The projects this server can see, each with its access grant (read or " +
-      "write) and note count. Projects the user has not granted access to do " +
-      "not appear here at all.",
+      "write), note count, and destinations: the folders, relative to the " +
+      "project, where the user files new notes by kind. Projects the user " +
+      "has not granted access to do not appear here at all.",
     object({ workspace: WORKSPACE_ARG }),
     true,
   ),
@@ -224,6 +225,49 @@ export const TOOLS: ToolDef[] = [
   ),
 
   forward(
+    "create_note",
+    "Create a note in the folder the user set for its kind, so it lands where " +
+      "they would file it. Give the file name; the folder comes from the " +
+      "user's destinations (list_projects shows each project's, doctor the " +
+      "ones outside projects). Refuses rather than overwriting a note that " +
+      "exists. Returns the note id it wrote.",
+    object(
+      {
+        name: str(
+          "File name, extension optional (the note type's is added). May " +
+            "carry subfolders below the destination.",
+        ),
+        project: str("Project to create it in. Omit for a note outside projects."),
+        kind: str(
+          '"note" (the default), "capture" (a quick jotting) or "meeting". ' +
+            "Captures and meetings are markdown.",
+        ),
+        type: str(
+          "Note-type id for kind note, such as markdown. Defaults to the " + "user's default type.",
+        ),
+        content: str("Initial markdown. Omit for an empty note."),
+      },
+      ["name"],
+    ),
+    false,
+  ),
+
+  forward(
+    "move_note",
+    "Move or rename a note to another id, within a project or between " +
+      "projects. Both ends need write access. Links in other notes are not " +
+      "rewritten. Refused while the app holds unsaved edits for the note.",
+    object(
+      {
+        from: NOTE_ARG,
+        to: str("The note id to move it to, e.g. work/archive/plan.md."),
+      },
+      ["from", "to"],
+    ),
+    false,
+  ),
+
+  forward(
     "read_settings",
     "The user's settings.json. Off unless the user turns it on, because this " +
       "file names every project location on the machine; the refusal says " +
@@ -237,7 +281,11 @@ export const TOOLS: ToolDef[] = [
     "Change settings with a JSON merge patch: objects merge recursively, null " +
       "removes a key. The result has to remain valid settings or the write is " +
       "refused before anything is written. The mcp block — the grants, and the " +
-      "write pin — is never writable here.",
+      "write pin — is never writable here. Where new notes go is " +
+      "destinations ({capture, meeting, types: {typeId: folder}}, folders as " +
+      "note-id prefixes) and projects.<name>.destinations (same shape, " +
+      "folders relative to the project); projects.<name>.codeFolders lists " +
+      "the absolute folders a project's notes are about.",
     object({ patch: { type: "object", description: "JSON merge patch to apply." } }, ["patch"]),
     false,
   ),

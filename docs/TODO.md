@@ -12,6 +12,35 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ---
 
+## 2026-10-28
+
+- [ ] **Destinations, MCP create/move, and the Claude Code reminder** (2026-10-28) —
+      AI tools work on the notes as files or over MCP; there is no in-app agent.
+      `destinations` (capture, meeting, per note type) in `settings.json`, globally as
+      note-id folders and per project as subfolders; `meetingFolder` migrates into it.
+      The app routes capture, "New note" and the meeting dialog through it; the explorer's
+      "New note here" stays explicit. MCP gains `create_note` (files by kind) and
+      `move_note` (both ends `write`, refused while the app holds a draft), and
+      `list_projects`/`doctor` report destinations. `projects.<name>.codeFolders` feeds
+      `integrations/claude-code/`, a plugin whose hook reminds a session once per project
+      when its folder, a tool path, a shell command or the prompt names a code folder;
+      hidden projects never match. The app publishes the helper path in `mcp-state.json`
+      for it. Gates clean, Rust tests cover routing, moves and visibility, and the hook was
+      run end to end against a scratch settings folder. Checked live 2026-10-28 with
+      headless sessions loading the plugin by `--plugin-dir`: a session starting in the code
+      folder gets it at SessionStart, one starting elsewhere gets it after Read or Grep
+      touches the folder and not after a Glob over its parent; the hook costs about 80 ms
+      per tool call, 130-150 ms at session start. _Open:_ check the Settings panel and a
+      routed capture in the running app; promote to a decision entry once settled.
+- [ ] **Investigate: an outside move of an open note duplicates it** (2026-10-28) — when
+      `move_note` (or any tool) moves a note whose tab is open and saved, the tab keeps the
+      old id; the next autosave writes the old path again, and the changed-on-disk guard
+      only runs when that file still exists, so two copies drift apart. Look at: the
+      focus re-list noticing the open note's file is gone (and offering to follow it, by
+      a move record the helper leaves in app data, or close the tab), and whether a save
+      to a vanished path should ask before recreating. Until then, close a note's tab
+      before an AI moves it.
+
 ## Today (2026-09-07)
 
 - [x] **Collapsed link labels aren't link targets** (2026-09-07) — found while checking

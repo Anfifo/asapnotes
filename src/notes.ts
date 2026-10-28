@@ -297,6 +297,47 @@ export interface Project {
   path?: string | null;
   mounts?: Mount[];
   mcp?: string | null;
+  /** Folders relative to the project, by kind of new note. */
+  destinations?: Destinations;
+  /** Absolute folders this project's notes are about; agent sessions working
+   * in one are reminded these notes exist. */
+  codeFolders?: string[];
+}
+
+/** Folder per kind of new note; absent means the base folder. */
+export interface Destinations {
+  capture?: string | null;
+  meeting?: string | null;
+  /** Note-type registry id → folder. */
+  types?: Record<string, string>;
+}
+
+/** A deliberate "New note" goes by its registry type id. */
+export type NoteKind = "capture" | "meeting" | { type: string };
+
+function pick(d: Destinations | undefined, kind: NoteKind): string | null | undefined {
+  if (kind === "capture") return d?.capture;
+  if (kind === "meeting") return d?.meeting;
+  return d?.types?.[kind.type];
+}
+
+/** The part of settings that decides where new notes land. */
+export type Routing = Pick<Settings, "destinations" | "projects">;
+
+/** The note-id folder a new note of this kind lands in, `""` for the notes
+ * root. The same rule as `Settings::destination` in settings.rs: inside a
+ * project its own entry decides, else the project folder; the global table
+ * applies only outside projects. */
+export function destinationFor(
+  routing: Routing,
+  project: string | null | undefined,
+  kind: NoteKind,
+): string {
+  if (project) {
+    const sub = pick(routing.projects[project]?.destinations, kind);
+    return sub ? `${project}/${sub}` : project;
+  }
+  return pick(routing.destinations, kind) ?? "";
 }
 
 /** Values `localStorage` also mirrors, because they are read before the first
@@ -342,8 +383,8 @@ export interface Settings {
   /** Double-clicking a referenced non-markdown file on the map opens it with
    * the system default app instead of the in-app read-only view. */
   openFilesExternally?: boolean | null;
-  /** Folder the meeting dialog offers first; absent means the notes root. */
-  meetingFolder?: string | null;
+  /** Where new notes land outside projects; folders are note-id prefixes. */
+  destinations?: Destinations;
   transcriptionLanguage?: string | null;
   transcriptionModel?: string | null;
   /** Named sets of projects; "Default" (every project) is implicit. */
@@ -378,9 +419,19 @@ export const setMapView = (view: string) => invoke<void>("set_map_view", { view 
  * instead of the in-app read-only view. */
 export const setOpenFilesExternally = (on: boolean) =>
   invoke<void>("set_open_files_externally", { on });
-/** Folder the meeting dialog offers first; null goes back to the notes root. */
+/** Folder the meeting dialog offers first, which is also the meetings
+ * destination; null goes back to the notes root. */
 export const setMeetingFolder = (folder: string | null) =>
   invoke<void>("set_meeting_folder", { folder });
+/** Replace the global destinations. Rejects a folder that isn't a note path. */
+export const setDestinations = (destinations: Destinations) =>
+  invoke<void>("set_destinations", { destinations });
+/** Replace one project's destinations and code folders. */
+export const setProjectFolders = (
+  project: string,
+  destinations: Destinations,
+  codeFolders: string[],
+) => invoke<void>("set_project_folders", { project, destinations, codeFolders });
 /** Replace the workspace table. Rejects an empty name and "Default"; a current
  * workspace missing from the new table falls back to Default. */
 export const setWorkspaces = (workspaces: Record<string, string[]>) =>

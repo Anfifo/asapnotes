@@ -70,10 +70,14 @@ pub struct Settings {
     /// Absent means the in-app view.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_files_externally: Option<bool>,
-    /// Folder the meeting dialog offers first — wherever the last meeting
-    /// went. Absent means the notes root.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Read from files written before `destinations` existed and moved into
+    /// `destinations.meeting` on load, so it is never written back.
+    #[serde(skip_serializing)]
     pub meeting_folder: Option<String>,
+    /// Where new notes land when no project is involved. Folders are note-id
+    /// prefixes, so one may point into a project (`work/meetings`).
+    #[serde(skip_serializing_if = "Destinations::is_empty")]
+    pub destinations: Destinations,
     /// What the transcription dialog preselects: the language and model of
     /// the last run. The language is still asked every time; this only saves
     /// the re-pick.
@@ -144,6 +148,7 @@ impl Default for Settings {
             map_view: None,
             open_files_externally: None,
             meeting_folder: None,
+            destinations: Destinations::default(),
             transcription_language: None,
             transcription_model: None,
             workspaces: BTreeMap::new(),
@@ -205,6 +210,91 @@ pub struct Project {
     /// lives here rather than in the project so no clone can widen it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp: Option<String>,
+    /// Where new notes land inside this project, as folders relative to it.
+    #[serde(skip_serializing_if = "Destinations::is_empty")]
+    pub destinations: Destinations,
+    /// Absolute folders this project's notes are about, such as the
+    /// repository the work happens in. An agent session working in one of
+    /// them is reminded that these notes exist.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub code_folders: Vec<String>,
+}
+
+/// Folder per kind of new note. Absent means the base the caller resolves
+/// against: the notes root globally, the project's own folder in a project.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Destinations {
+    /// The blank note a summon or a startup lands in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting: Option<String>,
+    /// Note-type registry id → folder, for a deliberate "New note".
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub types: BTreeMap<String, String>,
+}
+
+/// What a new note is, for picking its folder.
+pub enum Kind<'a> {
+    Capture,
+    Meeting,
+    Type(&'a str),
+}
+
+impl Destinations {
+    fn is_empty(&self) -> bool {
+        self == &Destinations::default()
+    }
+
+    fn get(&self, kind: &Kind) -> Option<&str> {
+        match kind {
+            Kind::Capture => self.capture.as_deref(),
+            Kind::Meeting => self.meeting.as_deref(),
+            Kind::Type(id) => self.types.get(*id).map(String::as_str),
+        }
+    }
+}
+
+/// A destination folder as stored: slashes trimmed, every segment one a note
+/// id may carry. Empty means the base folder and is stored as absent.
+pub fn checked_folder(folder: &str) -> Result<Option<String>, String> {
+    let trimmed = folder.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed
+        .split('/')
+        .all(|s| crate::corpus::ids::valid_segment(s) && !s.contains(':'))
+    {
+        Ok(Some(trimmed.to_string()))
+    } else {
+        Err(format!("not a folder inside the notes: {folder}"))
+    }
+}
+
+fn checked_destinations(d: Destinations) -> Result<Destinations, String> {
+    let mut types = BTreeMap::new();
+    for (id, folder) in d.types {
+        if let Some(f) = checked_folder(&folder)? {
+            types.insert(id, f);
+        }
+    }
+    Ok(Destinations {
+        capture: d
+            .capture
+            .as_deref()
+            .map(checked_folder)
+            .transpose()?
+            .flatten(),
+        meeting: d
+            .meeting
+            .as_deref()
+            .map(checked_folder)
+            .transpose()?
+            .flatten(),
+        types,
+    })
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -550,6 +640,32 @@ impl Settings {
             .iter()
             .filter_map(|(name, p)| p.path.as_ref().map(|path| (name, path)))
     }
+
+    /// The note-id folder a new note of this kind lands in, `""` for the notes
+    /// root. Inside a project the project's own entry decides, falling back to
+    /// the project folder; the global table applies only outside projects. The
+    /// frontend's `destinationFor` follows the same rule.
+    pub fn destination(&self, project: Option<&str>, kind: &Kind) -> String {
+        match project {
+            Some(p) => match self.projects.get(p).and_then(|e| e.destinations.get(kind)) {
+                Some(sub) => format!("{p}/{sub}"),
+                None => p.to_string(),
+            },
+            None => self.destinations.get(kind).unwrap_or("").to_string(),
+        }
+    }
+}
+
+/// Moves a pre-`destinations` `meetingFolder` into `destinations.meeting`.
+/// `true` when something changed, the caller's cue to write the file back.
+pub(crate) fn upgrade_meeting_folder(settings: &mut Settings) -> bool {
+    let Some(folder) = settings.meeting_folder.take() else {
+        return false;
+    };
+    if settings.destinations.meeting.is_none() {
+        settings.destinations.meeting = Some(folder);
+    }
+    true
 }
 
 /// A shipped registry, verbatim, upgraded to the current one; any hand-edit
@@ -706,13 +822,49 @@ pub fn set_map_view(app: AppHandle, view: String) -> Result<(), String> {
 }
 
 /// Where the meeting dialog points first: the folder the last meeting note
-/// went to. The notes root is the default and is stored as absent. Not
-/// validated against existing folders — a folder that has since been removed
-/// just makes the dialog offer a name the user can change.
+/// went to, which is also the meetings destination. The notes root is the
+/// default and is stored as absent. Not validated against existing folders —
+/// a folder that has since been removed just makes the dialog offer a name
+/// the user can change.
 #[tauri::command]
 pub fn set_meeting_folder(app: AppHandle, folder: Option<String>) -> Result<(), String> {
+    let folder = folder.as_deref().map(checked_folder).transpose()?.flatten();
     update(&app, |s| {
-        s.meeting_folder = folder.filter(|f| !f.is_empty());
+        s.destinations.meeting = folder;
+        Ok(())
+    })
+}
+
+/// The global destinations, replaced whole by the Settings panel.
+#[tauri::command]
+pub fn set_destinations(app: AppHandle, destinations: Destinations) -> Result<(), String> {
+    let destinations = checked_destinations(destinations)?;
+    update(&app, |s| {
+        s.destinations = destinations;
+        Ok(())
+    })
+}
+
+/// One project's destinations and code folders, replaced whole. Code folders
+/// are machine paths, so they are kept as given apart from blank entries.
+#[tauri::command]
+pub fn set_project_folders(
+    app: AppHandle,
+    project: String,
+    destinations: Destinations,
+    code_folders: Vec<String>,
+) -> Result<(), String> {
+    let destinations = checked_destinations(destinations)?;
+    let mut code_folders: Vec<String> = code_folders
+        .into_iter()
+        .map(|f| f.trim().to_string())
+        .filter(|f| !f.is_empty())
+        .collect();
+    code_folders.dedup();
+    update(&app, |s| {
+        let entry = s.projects.entry(project).or_default();
+        entry.destinations = destinations;
+        entry.code_folders = code_folders;
         Ok(())
     })
 }
@@ -875,6 +1027,47 @@ mod tests {
         let s: Settings = serde_json::from_str(json).expect("parses");
         assert_eq!(s.workspaces["Work"], vec!["acme", "asapnotes"]);
         assert_eq!(s.current_workspace.as_deref(), Some("Work"));
+    }
+
+    #[test]
+    fn destinations_resolve_project_first() {
+        let mut s = Settings::default();
+        s.destinations.capture = Some("inbox".into());
+        s.destinations
+            .types
+            .insert("markdown".into(), "notes".into());
+        let work = s.projects.entry("work".into()).or_default();
+        work.destinations.meeting = Some("meetings".into());
+        assert_eq!(s.destination(None, &Kind::Capture), "inbox");
+        assert_eq!(s.destination(None, &Kind::Meeting), "");
+        assert_eq!(s.destination(None, &Kind::Type("markdown")), "notes");
+        assert_eq!(s.destination(Some("work"), &Kind::Meeting), "work/meetings");
+        // The global table never applies inside a project.
+        assert_eq!(s.destination(Some("work"), &Kind::Type("markdown")), "work");
+        assert_eq!(s.destination(Some("other"), &Kind::Capture), "other");
+    }
+
+    #[test]
+    fn a_meeting_folder_moves_into_destinations() {
+        let mut s: Settings =
+            serde_json::from_str(r#"{"meetingFolder":"work/calls"}"#).expect("parses");
+        assert!(upgrade_meeting_folder(&mut s));
+        assert_eq!(s.destinations.meeting.as_deref(), Some("work/calls"));
+        let data = serde_json::to_string(&s).expect("serializes");
+        assert!(!data.contains("meetingFolder"));
+        assert!(!upgrade_meeting_folder(&mut s));
+    }
+
+    #[test]
+    fn folders_are_checked_and_trimmed() {
+        assert_eq!(
+            checked_folder(" /work/meetings/ "),
+            Ok(Some("work/meetings".into()))
+        );
+        assert_eq!(checked_folder(""), Ok(None));
+        for bad in ["../up", "a/.hidden", "C:/abs", "a\\b", "a//b"] {
+            assert!(checked_folder(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

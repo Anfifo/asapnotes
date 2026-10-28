@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import {
+  type Destinations,
+  type Project,
+  type Routing,
   cancelTranscriptionDownload,
   downloadTranscription,
   mcpStatus,
@@ -423,6 +427,11 @@ interface SettingsProps {
    * the in-app read-only view, true the system default app. */
   openFilesExternally: boolean;
   onOpenFilesExternallyChange: (on: boolean) => void;
+  /** Where new notes land, globally and per project, and each project's code
+   * folders. Each change replaces that table whole. */
+  routing: Routing;
+  onSetDestinations: (destinations: Destinations) => void;
+  onSetProjectFolders: (project: string, destinations: Destinations, codeFolders: string[]) => void;
   /** Named sets of projects; "Default" (every project) is implicit and not
    * listed here. Names are unique keys — a rename is remove-and-add to App. */
   workspaces: Record<string, string[]>;
@@ -494,6 +503,162 @@ function TranscriptionSection() {
 
 export type SettingsSection = "top" | "shortcuts" | "workspaces" | "new-workspace";
 
+/** A destination folder, edited in place: saved on Enter or blur, reverted on
+ * Escape. Callers key it by the stored value, so a write resets the draft. */
+function FolderInput({
+  value,
+  placeholder,
+  label,
+  onCommit,
+}: {
+  value: string;
+  placeholder: string;
+  label: string;
+  onCommit: (folder: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const commit = () => {
+    const folder = draft.trim().replace(/^\/+|\/+$/g, "");
+    if (folder === value) setDraft(value);
+    else onCommit(folder);
+  };
+  return (
+    <input
+      className="ws-name ws-new"
+      value={draft}
+      placeholder={placeholder}
+      spellCheck={false}
+      aria-label={label}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setDraft(value);
+          e.currentTarget.blur();
+          e.stopPropagation();
+        }
+      }}
+    />
+  );
+}
+
+/** `destinations` with one kind's folder set, or removed when empty. */
+function withFolder(d: Destinations, kind: "capture" | "meeting" | string, folder: string) {
+  if (kind === "capture" || kind === "meeting") return { ...d, [kind]: folder || null };
+  const types = { ...d.types };
+  if (folder) types[kind] = folder;
+  else delete types[kind];
+  return { ...d, types };
+}
+
+/** One row per kind of new note, each a folder below `base`. Captures only
+ * apply outside projects, so a project's table leaves that row out. */
+function DestinationRows({
+  destinations,
+  base,
+  withCapture,
+  onChange,
+}: {
+  destinations: Destinations;
+  base: string;
+  withCapture: boolean;
+  onChange: (next: Destinations) => void;
+}) {
+  const rows: [string, string][] = [
+    ...(withCapture ? [["capture", "Quick capture"] as [string, string]] : []),
+    ["meeting", "Meetings"],
+    ...creatableTypes().map((t): [string, string] => [t.id, `New ${t.name} note`]),
+  ];
+  const valueOf = (kind: string) =>
+    (kind === "capture"
+      ? destinations.capture
+      : kind === "meeting"
+        ? destinations.meeting
+        : destinations.types?.[kind]) ?? "";
+  return rows.map(([kind, label]) => (
+    <tr key={kind}>
+      <td>{label}</td>
+      <td>
+        <FolderInput
+          key={valueOf(kind)}
+          value={valueOf(kind)}
+          placeholder={base}
+          label={`Folder for ${label}`}
+          onCommit={(folder) => onChange(withFolder(destinations, kind, folder))}
+        />
+      </td>
+    </tr>
+  ));
+}
+
+/** A project's destinations and code folders, folded until opened. */
+function ProjectFolders({
+  name,
+  project,
+  onChange,
+}: {
+  name: string;
+  project: Project | undefined;
+  onChange: (destinations: Destinations, codeFolders: string[]) => void;
+}) {
+  const [shown, setShown] = useState(false);
+  const destinations = project?.destinations ?? {};
+  const code = project?.codeFolders ?? [];
+  const addCode = async () => {
+    const picked = await openFolderDialog({ directory: true, title: `Code folder for ${name}` });
+    if (typeof picked === "string" && !code.includes(picked)) {
+      onChange(destinations, [...code, picked]);
+    }
+  };
+  return (
+    <>
+      <button className="mcp-disclose" onClick={() => setShown(!shown)}>
+        <Icon name={shown ? "chevron-down" : "chevron-right"} /> {name}
+        {code.length > 0 && ` · ${code.length} code folder${code.length === 1 ? "" : "s"}`}
+      </button>
+      {shown && (
+        <table>
+          <tbody>
+            <DestinationRows
+              destinations={destinations}
+              base="Project folder"
+              withCapture={false}
+              onChange={(next) => onChange(next, code)}
+            />
+            <tr>
+              <td>Code folders</td>
+              <td>
+                {code.map((folder) => (
+                  <div key={folder} className="settings-path">
+                    {folder}
+                    <button
+                      className="settings-remove"
+                      aria-label={`Remove code folder ${folder}`}
+                      data-tip="Remove — nothing on disk changes"
+                      onClick={() =>
+                        onChange(
+                          destinations,
+                          code.filter((f) => f !== folder),
+                        )
+                      }
+                    >
+                      <Icon name="x" />
+                    </button>
+                  </div>
+                ))}
+                <button className="mcp-btn" onClick={() => void addCode()}>
+                  Add folder…
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </>
+  );
+}
+
 /** A workspace name, in place: an empty name, "Default", or a taken one
  * reverts rather than saves — the row stays what it was. */
 function nameProblem(name: string, taken: string[]): string | null {
@@ -558,6 +723,9 @@ export function Settings({
   onDefaultNoteTypeChange,
   openFilesExternally,
   onOpenFilesExternallyChange,
+  routing,
+  onSetDestinations,
+  onSetProjectFolders,
   workspaces,
   onAddWorkspace,
   onRenameWorkspace,
@@ -700,6 +868,41 @@ export function Settings({
             </tr>
           </tbody>
         </table>
+        <h2>Where new notes go</h2>
+        <p className="settings-note">
+          A folder inside the notes folder, such as inbox or work/meetings; empty means the notes
+          folder itself. A new folder at the top level becomes a project. AI tools that create notes
+          through asapnotes file them here too.
+        </p>
+        <table>
+          <tbody>
+            <DestinationRows
+              destinations={routing.destinations ?? {}}
+              base="Notes folder"
+              withCapture
+              onChange={onSetDestinations}
+            />
+          </tbody>
+        </table>
+        {projects.length > 0 && (
+          <>
+            <h2>Project folders</h2>
+            <p className="settings-note">
+              Inside a project, a kind of note can go to a subfolder of it. Code folders are where
+              the project’s work happens, such as its repository: an AI session working in one is
+              reminded these notes exist, once the asapnotes plugin for it is installed.
+            </p>
+            {projects.map(({ name }) => (
+              <div key={name}>
+                <ProjectFolders
+                  name={name}
+                  project={routing.projects[name]}
+                  onChange={(d, code) => onSetProjectFolders(name, d, code)}
+                />
+              </div>
+            ))}
+          </>
+        )}
         <h2>Storage</h2>
         <table>
           <tbody>

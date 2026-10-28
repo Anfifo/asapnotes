@@ -72,7 +72,7 @@ impl Fixture {
 
     /// The state file the app publishes: which project is current.
     pub fn set_current(&self, project: Option<&str>) {
-        grants::publish(&self.roots, project.map(str::to_string)).expect("write state");
+        grants::publish(&self.roots, project.map(str::to_string), None).expect("write state");
     }
 
     pub fn state(&self) -> State {

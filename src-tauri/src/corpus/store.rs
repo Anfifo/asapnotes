@@ -50,7 +50,8 @@ pub fn load(roots: &Roots) -> Result<Loaded, String> {
                 // to the current one; any hand-edit means the whole list
                 // belongs to the user. A failed write only postpones this —
                 // the in-memory upgrade already happened and will be retried.
-                if crate::settings::upgrade_registry(&mut settings) {
+                let registry = crate::settings::upgrade_registry(&mut settings);
+                if crate::settings::upgrade_meeting_folder(&mut settings) || registry {
                     let _ = write(&path, &settings);
                 }
                 Loaded {
@@ -151,8 +152,9 @@ pub fn patch_settings(roots: &Roots, patch: &Value) -> Result<Value, String> {
     guard_mcp_block(patch)?;
     let mut next = read_json(roots)?;
     merge_patch(&mut next, patch);
-    let parsed: Settings = serde_json::from_value(next.clone())
+    let mut parsed: Settings = serde_json::from_value(next.clone())
         .map_err(|e| format!("that patch doesn't leave valid settings: {e}"))?;
+    crate::settings::upgrade_meeting_folder(&mut parsed);
     // Belt and braces against a future patch shape that slips `mcp` in some
     // other way: what is written must carry the block that was already there.
     let before = load(roots)?.settings;

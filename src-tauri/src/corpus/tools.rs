@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
 /// Every wire name this helper answers to, in the order the docs list them.
-pub const COMMANDS: [&str; 12] = [
+pub const COMMANDS: [&str; 15] = [
     "doctor",
     "list_projects",
     "list_workspaces",
@@ -28,8 +28,11 @@ pub const COMMANDS: [&str; 12] = [
     "find_notes",
     "write_section",
     "append_to_note",
+    "create_note",
+    "move_note",
     "read_settings",
     "write_settings",
+    "code_folders",
 ];
 
 /// Default note count for an outlined listing, well under the plain one: an
@@ -88,8 +91,11 @@ pub fn dispatch(roots: &Roots, command: &str, args: &Value) -> Result<Value, Str
         "find_notes" => find_notes(roots, args),
         "write_section" => write_section(roots, args),
         "append_to_note" => append_to_note(roots, args),
+        "create_note" => create_note(roots, args),
+        "move_note" => move_note(roots, args),
         "read_settings" => read_settings(roots),
         "write_settings" => write_settings(roots, args),
+        "code_folders" => code_folders(roots),
         other => Err(format!(
             "unknown command \"{other}\"; this helper answers: {}",
             COMMANDS.join(", ")
@@ -127,6 +133,7 @@ fn doctor(roots: &Roots) -> Result<Value, String> {
         "writeScope": if s.mcp.pinned_to_current() { "current" } else { "any" },
         "currentProject": state.current_project,
         "currentWorkspace": s.current_workspace,
+        "destinations": s.destinations,
         "grants": grants_by_project,
         "visibleProjects": grants::visible_projects(roots, s)
             .map(|v| v.len())
@@ -212,6 +219,7 @@ fn list_projects(roots: &Roots, args: &Value) -> Result<Value, String> {
                 "grant": grant.as_str(),
                 "missing": p.missing,
                 "notes": count,
+                "destinations": s.projects.get(&p.name).map(|e| &e.destinations),
             })
         })
         .collect();
@@ -431,6 +439,114 @@ fn append_to_note(roots: &Roots, args: &Value) -> Result<Value, String> {
         .on(&result.note, &result.section),
     );
     serde_json::to_value(result).map_err(|e| e.to_string())
+}
+
+/// A new note in the folder the user configured for its kind. The caller
+/// names the file; the folder comes from `destinations`, so an agent files
+/// notes where the user files them without knowing the layout.
+fn create_note(roots: &Roots, args: &Value) -> Result<Value, String> {
+    use crate::settings::Kind;
+    let s = settings(roots)?;
+    let state = grants::read_state(roots);
+    let name = str_arg(args, "name")?.trim().trim_matches('/');
+    let project = opt_str(args, "project");
+    if let Some(p) = project {
+        // An unknown name would otherwise create a notes-root folder, which is
+        // a new project; a hidden one answers like one that isn't there.
+        let known = grants::visible_projects(roots, &s)?
+            .iter()
+            .any(|(info, _)| info.name == p);
+        if !known {
+            return Err(format!("no such project: {p}"));
+        }
+    }
+    let type_id = match opt_str(args, "type") {
+        Some(id) => id,
+        None => s.default_note_type.as_deref().unwrap_or("markdown"),
+    };
+    let kind = match opt_str(args, "kind").unwrap_or("note") {
+        "note" => Kind::Type(type_id),
+        "capture" => Kind::Capture,
+        "meeting" => Kind::Meeting,
+        other => {
+            return Err(format!(
+                "not a kind of note: {other} (note, capture, meeting)"
+            ))
+        }
+    };
+    // Captures and meetings are markdown, as they are in the app.
+    let type_id = if matches!(kind, Kind::Type(_)) {
+        type_id
+    } else {
+        "markdown"
+    };
+    let note_type = s
+        .note_types
+        .iter()
+        .find(|t| t.id == type_id)
+        .ok_or_else(|| format!("no note type with id \"{type_id}\""))?;
+    let file = if s.type_for(name).is_some() {
+        name.to_string()
+    } else {
+        let ext = note_type.extensions.first().map_or("md", String::as_str);
+        format!("{name}.{ext}")
+    };
+    let folder = s.destination(project, &kind);
+    let note = if folder.is_empty() {
+        file
+    } else {
+        format!("{folder}/{file}")
+    };
+    let content = opt_str(args, "content").unwrap_or("");
+    let result = edits::create(roots, &s, &state, &note, content)?;
+    log::record(
+        roots,
+        &log::Entry::new(
+            "create_note",
+            format!("created with {} lines", content.lines().count()),
+        )
+        .on(&result.note, ""),
+    );
+    serde_json::to_value(result).map_err(|e| e.to_string())
+}
+
+fn move_note(roots: &Roots, args: &Value) -> Result<Value, String> {
+    let s = settings(roots)?;
+    let state = grants::read_state(roots);
+    let from = str_arg(args, "from")?;
+    let to = str_arg(args, "to")?;
+    edits::move_note(roots, &s, &state, from, to)?;
+    log::record(
+        roots,
+        &log::Entry::new("move_note", format!("moved from {from}")).on(to, ""),
+    );
+    Ok(json!({ "from": from, "to": to }))
+}
+
+/// The code folders of every project this caller may see, for agent hooks
+/// that remind a session these notes exist when it works in one of them. Not
+/// an MCP tool: the hook calls the helper directly. Hidden projects are left
+/// out, so a project that is off never prompts a reminder.
+fn code_folders(roots: &Roots) -> Result<Value, String> {
+    let s = settings(roots)?;
+    let projects: Vec<Value> = grants::visible_projects(roots, &s)?
+        .into_iter()
+        .filter_map(|(p, grant)| {
+            let folders = &s.projects.get(&p.name)?.code_folders;
+            (!folders.is_empty()).then(|| {
+                json!({
+                    "project": p.name,
+                    "grant": grant.as_str(),
+                    "codeFolders": folders,
+                    "location": ids::project_base(&roots.notes, &s, &p.name).to_string_lossy(),
+                })
+            })
+        })
+        .collect();
+    Ok(json!({
+        "projects": projects,
+        "settingsMtimeMs": super::mtime_ms(&roots.settings_file()),
+    }))
 }
 
 /// Settings access is off unless the user turns it on, and that default is not

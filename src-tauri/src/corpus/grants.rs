@@ -28,6 +28,7 @@ use crate::settings::{Mcp, Settings};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
+use std::path::Path;
 
 /// The file the app keeps the current project in. Deliberately not
 /// `settings.json`: this changes every time the user switches tab, and
@@ -110,6 +111,10 @@ pub struct State {
     /// about which corpus they are serving.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes_root: Option<String>,
+    /// The helper binary beside the running app, when it exists. Agent hooks
+    /// read it here so they need no path configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub helper: Option<String>,
     pub updated_ms: u64,
 }
 
@@ -128,15 +133,22 @@ pub fn write_state(roots: &Roots, state: &State) -> Result<(), String> {
     fs::write(roots.data.join(STATE_FILE), data).map_err(|e| e.to_string())
 }
 
-/// Publish where the app is: which project is current, and the notes root this
-/// process resolved. Called at launch and whenever the active note changes
-/// project, so the helper never has to guess either one.
-pub fn publish(roots: &Roots, current_project: Option<String>) -> Result<(), String> {
+/// Publish where the app is: which project is current, the notes root this
+/// process resolved, and the helper beside it. Called at launch and whenever
+/// the active note changes project, so the helper never has to guess either one.
+pub fn publish(
+    roots: &Roots,
+    current_project: Option<String>,
+    helper: Option<&Path>,
+) -> Result<(), String> {
     write_state(
         roots,
         &State {
             current_project,
             notes_root: Some(roots.notes.to_string_lossy().into_owned()),
+            helper: helper
+                .filter(|p| p.exists())
+                .map(|p| p.to_string_lossy().into_owned()),
             updated_ms: super::now_ms(),
         },
     )
