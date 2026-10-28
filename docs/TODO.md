@@ -40,6 +40,12 @@ The AI (or anyone) working on this repo keeps this file current while working:
       a move record the helper leaves in app data, or close the tab), and whether a save
       to a vanished path should ask before recreating. Until then, close a note's tab
       before an AI moves it.
+- [ ] **Decide: should the meeting dialog's pick overwrite the Meetings destination?**
+      (2026-10-28) — the dialog still remembers the last folder picked, and that memory
+      is now `destinations.meeting`, which Settings shows and `create_note` follows. One
+      meeting recorded into `personal` sends every later meeting, the app's and an AI's,
+      there too. Accepting a project's meetings folder leaves it alone. Options: keep the
+      remembered pick separate from the configured destination, or stop writing it back.
 
 ## Today (2026-09-07)
 
