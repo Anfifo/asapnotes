@@ -14,9 +14,6 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Bugs
 
-- [ ] **`Inter` heads the UI font stack but is not bundled** (2026-08-19): the root
-      `font-family` in `App.css` names it first with no `@font-face`, so a machine with
-      Inter installed renders a different face from everyone else. Bundle it or drop it.
 
 ## Next: distribution
 
