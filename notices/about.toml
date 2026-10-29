@@ -1,0 +1,21 @@
+# cargo-about config for the Rust half of THIRD-PARTY-NOTICES.txt. A crate whose
+# license is not listed here fails the generation, which is the review gate for new
+# dependencies. Proc-macro crates stay in the report although they only run at
+# compile time, so the list is wider than what links into the binaries.
+accepted = [
+  "MIT",
+  "Apache-2.0",
+  "ISC",
+  "BSD-3-Clause",
+  "Unicode-3.0",
+  "MPL-2.0",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  "Unlicense",
+  "Zlib",
+]
+targets = ["x86_64-pc-windows-msvc"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# The app's own crate is `publish = false`; its license is LICENSE.
+private = { ignore = true }

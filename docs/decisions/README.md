@@ -62,3 +62,4 @@ Deep docs, migrations, key files.
 | 2026-09-05 | [Workspaces are display-only sets of projects](2026-09-05-workspaces-are-display-only-sets.md)                                | Named sets of projects filter the window; MCP scope only when asked; grants stay     |
 | 2026-10-28 | [AI tools work on the notes from outside the app](2026-10-28-ai-tools-work-from-outside.md)                                   | No in-app agent; destinations route new notes; MCP create/move; code-folder reminder |
 | 2026-10-29 | [Agents drive meetings over a local control channel](2026-10-29-agents-drive-meetings-over-a-local-control-channel.md)        | Off-by-default pipe with a per-launch token; agents start and stop recordings        |
+| 2026-10-29 | [Third-party notices are generated per release](2026-10-29-third-party-notices-are-generated-per-release.md)                  | One committed file, rebuilt by every release; a license list gates new crates        |

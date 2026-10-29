@@ -35,6 +35,16 @@ jobs:
       - run: npm ci
         shell: bash
 
+      # The installer ships THIRD-PARTY-NOTICES.txt; regenerating it here keeps it
+      # current with the lockfiles, and fails the release on a license not listed
+      # in notices/about.toml.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+
+      - run: npm run notices
+        shell: bash
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

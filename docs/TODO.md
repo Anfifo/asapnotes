@@ -28,7 +28,6 @@ The AI (or anyone) working on this repo keeps this file current while working:
   - [ ] The workflow builds `asapnotes-transcribe` (`--release --features transcribe`),
         attaches it as `asapnotes-transcribe-windows-x64.exe`, and passes its SHA-256 and
         size to the app build (`ASAPNOTES_TRANSCRIBE_SHA256`, `_BYTES`).
-  - [ ] Bundled third-party license notices in the installer.
   - [ ] A winget manifest (`Anfifo.asapnotes`) once a release exists.
   - [ ] Signing: ship unsigned and say so, then apply to SignPath Foundation's free
         open-source signing. The Store is parked (account fee, and MSIX packaging the

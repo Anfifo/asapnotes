@@ -36,6 +36,9 @@
     "shortDescription": "Instant-capture markdown notes",
     "longDescription": "Always-resident tray app summoned by a global hotkey. Notes are plain markdown files you own.",
     "licenseFile": "../LICENSE",
+    "resources": {
+      "../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"

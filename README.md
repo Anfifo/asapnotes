@@ -64,6 +64,21 @@ a project names as its code ([integrations/claude-code/](integrations/claude-cod
 /plugin install asapnotes --marketplace Anfifo/asapnotes
 ```
 
+## Network
+
+asapnotes connects to nothing on its own: no telemetry, analytics, crash reports or
+accounts. These are every connection it can make, each started by you:
+
+| When                                                           | Where                                  | What                                                                    |
+| -------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------- |
+| You download the transcription engine in Settings or a meeting | `github.com/Anfifo/asapnotes/releases` | The engine build for your app version, checked against a SHA-256 digest |
+| You download a speech model                                    | `huggingface.co/ggerganov/whisper.cpp` | The model file, checked against a SHA-256 digest                        |
+| Install, only when WebView2 is missing (some Windows 10)       | Microsoft                              | The WebView2 runtime the interface runs in; Windows 11 has it           |
+
+Links in notes open in your browser. The MCP server runs on your machine and makes no
+network connections. Update checks are not built; when they are, they will be off until you
+turn them on.
+
 ## Install
 
 There is no signed installer yet. Build it yourself (see below) or run `npm.cmd run tauri
@@ -107,3 +122,8 @@ cargo clippy --manifest-path src-tauri/Cargo.toml
 ## License
 
 [MIT](LICENSE). Use it, fork it, ship it; keep the copyright notice.
+
+The open-source software asapnotes includes is listed with its licenses in
+[THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which the installer also ships.
+`npm.cmd run notices` regenerates it (needs `cargo install cargo-about --locked --features cli`);
+the release workflow does this for every release.

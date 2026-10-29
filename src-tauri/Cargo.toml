@@ -6,6 +6,7 @@ authors = ["Anfifo"]
 license = "MIT"
 repository = "https://github.com/Anfifo/asapnotes"
 edition = "2021"
+publish = false
 # The crate builds two binaries (app + MCP helper), so the bare `cargo run`
 # that `tauri dev` invokes has to be told which one is the app.
 default-run = "asapnotes"

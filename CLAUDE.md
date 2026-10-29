@@ -46,6 +46,7 @@ summoned by a global hotkey; notes are plain `.md` files; an MCP sidecar is plan
 ```powershell
 npm.cmd install
 npm.cmd run tauri dev     # run the app (Vite on fixed port 1430 + cargo)
+npm.cmd run notices       # rebuild THIRD-PARTY-NOTICES.txt after a dependency change (needs cargo-about)
 ```
 
 Quality gates before finishing any change:
