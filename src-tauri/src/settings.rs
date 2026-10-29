@@ -70,6 +70,12 @@ pub struct Settings {
     /// Absent means the in-app view.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_files_externally: Option<bool>,
+    /// The choice behind the Windows startup entry. Absent until a release
+    /// build's first launch turns the entry on and records `true`; after that
+    /// only the Settings switch changes the entry, so turning it off anywhere
+    /// else (Task Manager included) is not undone at the next launch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_with_windows: Option<bool>,
     /// Read from files written before `destinations` existed and moved into
     /// `destinations.meeting` on load, so it is never written back.
     #[serde(skip_serializing)]
@@ -156,6 +162,7 @@ impl Default for Settings {
             default_note_type: None,
             map_view: None,
             open_files_externally: None,
+            start_with_windows: None,
             meeting_folder: None,
             destinations: Destinations::default(),
             transcription_language: None,
@@ -951,6 +958,40 @@ pub fn set_current_workspace(app: AppHandle, name: Option<String>) -> Result<(),
 pub fn set_open_files_externally(app: AppHandle, on: bool) -> Result<(), String> {
     update(&app, |s| {
         s.open_files_externally = on.then_some(true);
+        Ok(())
+    })
+}
+
+/// Whether asapnotes starts at Windows sign-in, as the startup entry
+/// says (Task Manager can turn it off too). A development build never writes
+/// the entry, since it would point at `target/debug`; it reports the stored
+/// choice instead.
+#[tauri::command]
+pub fn start_with_windows(app: AppHandle) -> Result<bool, String> {
+    #[cfg(not(debug_assertions))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        app.autolaunch().is_enabled().map_err(|e| e.to_string())
+    }
+    #[cfg(debug_assertions)]
+    Ok(settings(&app)?.start_with_windows.unwrap_or(true))
+}
+
+#[tauri::command]
+pub fn set_start_with_windows(app: AppHandle, on: bool) -> Result<(), String> {
+    #[cfg(not(debug_assertions))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let autolaunch = app.autolaunch();
+        if on {
+            autolaunch.enable().map_err(|e| e.to_string())?;
+        } else {
+            // Fails when the entry is already gone, which is the outcome asked for.
+            let _ = autolaunch.disable();
+        }
+    }
+    update(&app, |s| {
+        s.start_with_windows = Some(on);
         Ok(())
     })
 }

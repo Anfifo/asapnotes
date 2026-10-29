@@ -441,6 +441,9 @@ export const setMapView = (view: string) => invoke<void>("set_map_view", { view 
  * instead of the in-app read-only view. */
 export const setOpenFilesExternally = (on: boolean) =>
   invoke<void>("set_open_files_externally", { on });
+/** Whether the Windows startup entry is on (Task Manager can turn it off too). */
+export const startWithWindows = () => invoke<boolean>("start_with_windows");
+export const setStartWithWindows = (on: boolean) => invoke<void>("set_start_with_windows", { on });
 /** Folder the meeting dialog offers first, which is also the meetings
  * destination; null goes back to the notes root. */
 export const setMeetingFolder = (folder: string | null) =>

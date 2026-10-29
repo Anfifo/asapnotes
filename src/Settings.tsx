@@ -13,6 +13,8 @@ import {
   setMcpMeetings,
   setMcpSettingsAccess,
   setMcpWriteScope,
+  setStartWithWindows,
+  startWithWindows,
   transcriptionStatus,
   type McpStatus,
   type TranscriptionStatus,
@@ -481,6 +483,67 @@ interface SettingsProps {
   onClose: () => void;
 }
 
+/** Whether the app starts at sign-in. Reads the startup entry itself each time
+ * Settings opens, since Task Manager can turn it off behind the app's back. */
+function StartupSection() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    startWithWindows()
+      .then(setOn)
+      .catch((e: unknown) => setError(String(e)));
+  }, []);
+
+  const choose = (next: boolean) => {
+    setOn(next);
+    setStartWithWindows(next)
+      .then(() => setError(null))
+      .catch((e: unknown) => {
+        setOn(!next);
+        setError(String(e));
+      });
+  };
+
+  return (
+    <>
+      <h2>Startup</h2>
+      <table>
+        <tbody>
+          <tr>
+            <td>Start with Windows</td>
+            <td>
+              <div className="segmented" role="group" aria-label="Start with Windows">
+                <button
+                  className={on === true ? "active" : undefined}
+                  aria-pressed={on === true}
+                  disabled={on === null}
+                  onClick={() => choose(true)}
+                >
+                  On
+                </button>
+                <button
+                  className={on === false ? "active" : undefined}
+                  aria-pressed={on === false}
+                  disabled={on === null}
+                  onClick={() => choose(false)}
+                >
+                  Off
+                </button>
+              </div>
+              <p className="settings-note">
+                On, asapnotes waits in the tray from sign-in, so the summon hotkey works right away.
+                Off, it starts when you open it.
+              </p>
+              {error && <p className="settings-note">{error}</p>}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </>
+  );
+}
+
 /** The transcription add-on: the engine and the speech models, downloaded on
  * request and removable here. Fetches its own state like the MCP section, and
  * follows the download events so a figure moves while the panel is open. */
@@ -939,6 +1002,7 @@ export function Settings({
             ))}
           </>
         )}
+        <StartupSection />
         <h2>Storage</h2>
         <table>
           <tbody>

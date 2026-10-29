@@ -124,15 +124,15 @@ mod desktop {
                 }
             }
         }
-        // Only a release build should register itself to run at login; in dev this
-        // would point autostart at target/debug and stick around after the session.
+        // A release build's first launch turns the startup entry on; afterwards
+        // only the Settings switch changes it. In dev the entry would point at
+        // target/debug and stick around after the session.
         #[cfg(not(debug_assertions))]
+        if settings
+            .as_ref()
+            .is_some_and(|s| s.start_with_windows.is_none())
         {
-            use tauri_plugin_autostart::ManagerExt;
-            let autolaunch = app.autolaunch();
-            if !autolaunch.is_enabled().unwrap_or(false) {
-                let _ = autolaunch.enable();
-            }
+            let _ = crate::settings::set_start_with_windows(app.handle().clone(), true);
         }
 
         // Default Ctrl+Alt+A ("asapnotes", one-handed): Ctrl+Alt+Space was already
@@ -286,6 +286,8 @@ pub fn run() {
             settings::set_default_note_type,
             settings::set_map_view,
             settings::set_open_files_externally,
+            settings::start_with_windows,
+            settings::set_start_with_windows,
             settings::set_mcp_grant,
             settings::set_mcp_write_scope,
             settings::set_mcp_settings_access,
