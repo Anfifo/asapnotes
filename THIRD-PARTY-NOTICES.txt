@@ -8211,7 +8211,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ---
 
 Name: entities
-Version: 8.0.0
+Version: 8.1.0
 License: BSD-2-Clause
 Private: false
 Description: Encode & decode XML and HTML entities with ease & speed
@@ -8305,7 +8305,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ---
 
 Name: markdown-it
-Version: 15.0.0
+Version: 15.0.3
 License: MIT
 Private: false
 Description: Markdown-it - modern pluggable markdown parser.
