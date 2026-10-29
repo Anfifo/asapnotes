@@ -91,6 +91,13 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Decisions waiting
 
+- [ ] **Where do new virtual folders live by default?** (2026-10-29): "New virtual folder"
+      creates its backing folder in app data (`virtual/<project>/<at>`), outside the notes
+      folder people back up or sync, and nothing in the app shows that path;
+      `virtualFoldersRoot` in `settings.json` is the only way to move it. Options: default
+      to a folder inside the notes root, or keep app data and show the location in
+      Settings with a picker. The README states the current default.
+
 - [ ] **Does the meeting dialog's pick overwrite the Meetings destination?**
       (2026-10-28): the dialog remembers the last folder picked as
       `destinations.meeting`, which Settings shows and `create_note` follows, so one
