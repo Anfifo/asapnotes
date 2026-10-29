@@ -166,6 +166,12 @@ pub fn mcp_status(app: AppHandle) -> Result<serde_json::Value, String> {
     Ok(status)
 }
 
+/// Where an AI tool moved a note, per the helper's log.
+#[tauri::command]
+pub fn moved_to(app: AppHandle, from: String) -> Result<Option<String>, String> {
+    Ok(mcp_log::moved_to(&roots(&app)?, &from))
+}
+
 /// Where the helper binary is, so Settings can print a path a client config can
 /// paste verbatim rather than a build command.
 ///

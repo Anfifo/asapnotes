@@ -33,6 +33,9 @@ pub struct Entry {
     pub note: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// The id a `move_note` moved from; `note` is where it went.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     /// One line a human can read in the changes view.
     pub summary: String,
 }
@@ -44,6 +47,7 @@ impl Entry {
             tool: tool.to_string(),
             note: None,
             section: None,
+            from: None,
             summary: summary.into(),
         }
     }
@@ -99,4 +103,23 @@ pub fn tail(roots: &Roots, limit: usize) -> Vec<Entry> {
         .collect();
     out.sort_by_key(|e| std::cmp::Reverse(e.at_ms));
     out
+}
+
+/// Where the logged moves took `from`, following a note moved more than once.
+/// None when no move from that id is logged. The app uses it to repoint a tab
+/// whose file a tool moved, so its next save does not recreate the old path.
+pub fn moved_to(roots: &Roots, from: &str) -> Option<String> {
+    let mut entries = tail(roots, usize::MAX);
+    entries.reverse();
+    let mut at = from.to_string();
+    let mut moved = false;
+    for e in entries {
+        if e.tool == "move_note" && e.from.as_deref() == Some(at.as_str()) {
+            if let Some(to) = e.note {
+                at = to;
+                moved = true;
+            }
+        }
+    }
+    moved.then_some(at)
 }

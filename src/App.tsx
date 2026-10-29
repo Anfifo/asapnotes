@@ -440,11 +440,14 @@ function App() {
   /** Remember the open note's on-disk mtime; a stale async result (another
    * track started meanwhile) is dropped via the token. */
   const mtimeTokenRef = useRef(0);
+  // The save guard awaits this, so a save landing before the read resolves
+  // still has a reference point.
+  const mtimeReadyRef = useRef<Promise<void>>(Promise.resolve());
   const trackMtime = useCallback((name: string | null) => {
     const token = ++mtimeTokenRef.current;
     openMtimeRef.current = null;
     if (!name) return;
-    void api
+    mtimeReadyRef.current = api
       .noteMtime(name)
       .then((m) => {
         if (mtimeTokenRef.current === token) openMtimeRef.current = m;
@@ -962,12 +965,19 @@ function App() {
       }
       // External-change guard: the file is shared with other tools by design —
       // if it changed on disk since this buffer loaded, never overwrite silently.
+      if (cur.name) await mtimeReadyRef.current;
       if (cur.name && openMtimeRef.current !== null) {
         const now = await api.noteMtime(cur.name).catch(() => null);
         if (now !== null && now !== openMtimeRef.current) {
           const ok = await confirmDialog(
             `"${fileOf(cur.name)}" changed on disk since you opened it. Overwrite those changes?`,
             { title: "Note changed on disk", kind: "warning" },
+          );
+          if (!ok) return null;
+        } else if (now === null) {
+          const ok = await confirmDialog(
+            `"${fileOf(cur.name)}" was moved or deleted outside asapnotes. Save it here again?`,
+            { title: "Note gone from disk", kind: "warning" },
           );
           if (!ok) return null;
         }
@@ -1817,6 +1827,16 @@ function App() {
         .then((ns) => {
           refreshErrorRef.current = null;
           setNotes(ns);
+          // Background tabs whose note an AI tool moved follow it; the open
+          // tab is handled below, since its buffer may hold edits.
+          const listed = new Set(ns.map((n) => n.name));
+          for (const t of tabsRef.current) {
+            if (!t.name || listed.has(t.name) || t.id === openRef.current?.id) continue;
+            void api.movedTo(t.name).then((to) => {
+              if (!to || !listed.has(to)) return;
+              setTabs((ts) => ts.map((x) => (x.id === t.id ? { id: to, name: to } : x)));
+            });
+          }
         })
         .catch(reportRefreshError);
       void api.listDrafts().then(setDrafts).catch(reportRefreshError);
@@ -1844,6 +1864,9 @@ function App() {
       const name = openRef.current?.name;
       if (!name) return;
       void (async () => {
+        // Keys typed during the awaits below reach contentRef at once but
+        // dirtyRef only on the next render; the reload checks the buffer.
+        const before = contentRef.current;
         const mtime = await api.noteMtime(name).catch(() => null);
         const cur = openRef.current;
         if (!cur || cur.name !== name) return;
@@ -1851,6 +1874,20 @@ function App() {
           // No reference mtime means no file was ever seen — a lazily-created
           // tab (a project board before its first save), not a vanished file.
           if (openMtimeRef.current === null) return;
+          // An AI tool moved it: a clean buffer follows the file. Edits made
+          // meanwhile stay on the old id below, and the save asks.
+          const to = await api.movedTo(name).catch(() => null);
+          if (
+            to &&
+            (await api.noteMtime(to).catch(() => null)) !== null &&
+            openRef.current?.name === name &&
+            contentRef.current === before &&
+            !dirtyRef.current
+          ) {
+            retagOpen(cur.id, { id: to, name: to });
+            trackMtime(to);
+            return;
+          }
           // The file vanished from disk, and a clean buffer has no draft —
           // the buffer is the only copy left. Dirty + draft re-arm the
           // close-confirm and draft safety nets; Ctrl+S recreates the file,
@@ -1868,7 +1905,7 @@ function App() {
           openMtimeRef.current = mtime; // adopt — no reference point yet
         } else if (mtime !== openMtimeRef.current && !dirtyRef.current) {
           const content = await api.readNote(name);
-          if (openRef.current?.name !== name) return;
+          if (openRef.current?.name !== name || contentRef.current !== before) return;
           contentRef.current = content;
           baselineRef.current = content;
           setInitialDoc(content);
@@ -1880,7 +1917,15 @@ function App() {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [applySettings, applyProjects, reportRefreshError, toast, refreshChanges]);
+  }, [
+    applySettings,
+    applyProjects,
+    reportRefreshError,
+    toast,
+    refreshChanges,
+    retagOpen,
+    trackMtime,
+  ]);
 
   // `summoned` carries the hotkey-press epoch ms from Rust; the next animation
   // frame approximates when the shown window actually painted.

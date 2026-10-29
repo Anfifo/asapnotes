@@ -43,8 +43,10 @@ kind's destination, and refuses to overwrite a note that exists. `move_note` mov
 renames within a project or between projects; both ends need write access, the note's
 history goes with it, and it is refused while the app holds unsaved edits for the note.
 Links in other notes are not rewritten. `list_projects` and `doctor` report destinations,
-so an agent can see where a note will go before it writes one. Known cost: a note open in
-a saved tab keeps its old id after an outside move, so its tab should be closed first.
+so an agent can see where a note will go before it writes one. Each move is logged with
+both ids, and on focus the app repoints a tab whose note moved: background tabs always,
+the open tab when its buffer has no edits. A save that would recreate a vanished file
+asks first, which covers moves by any other tool.
 
 **A Claude Code plugin points a session at the notes for its code.**
 `projects.<name>.codeFolders` lists the absolute folders a project's notes are about, such

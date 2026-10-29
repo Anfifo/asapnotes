@@ -279,6 +279,7 @@ pub fn run() {
             notes::list_projects,
             notes::set_mcp_current_project,
             notes::mcp_status,
+            notes::moved_to,
             notes::project_config_errors,
             notes::search_notes,
             notes::notes_root_path,

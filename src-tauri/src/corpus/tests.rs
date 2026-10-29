@@ -1660,6 +1660,23 @@ fn move_note_checks_both_ends_and_respects_open_edits() {
 }
 
 #[test]
+fn moved_to_follows_a_note_through_repeated_moves() {
+    let f = tool_fixture();
+    for (from, to) in [
+        ("work/other.md", "work/a/other.md"),
+        ("work/a/other.md", "work/b/other.md"),
+    ] {
+        let moved = call(&f, "move_note", json!({ "from": from, "to": to }));
+        assert!(moved.is_ok(), "{moved:?}");
+    }
+    assert_eq!(
+        log::moved_to(&f.roots, "work/other.md").as_deref(),
+        Some("work/b/other.md")
+    );
+    assert_eq!(log::moved_to(&f.roots, "work/plan.md"), None);
+}
+
+#[test]
 fn code_folders_list_only_visible_projects() {
     let f = tool_fixture();
     let mut s = f.settings();

@@ -542,10 +542,9 @@ fn move_note(roots: &Roots, args: &Value) -> Result<Value, String> {
     let from = str_arg(args, "from")?;
     let to = str_arg(args, "to")?;
     edits::move_note(roots, &s, &state, from, to)?;
-    log::record(
-        roots,
-        &log::Entry::new("move_note", format!("moved from {from}")).on(to, ""),
-    );
+    let mut entry = log::Entry::new("move_note", format!("moved from {from}")).on(to, "");
+    entry.from = Some(from.to_string());
+    log::record(roots, &entry);
     Ok(json!({ "from": from, "to": to }))
 }
 

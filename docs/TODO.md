@@ -14,17 +14,6 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Bugs
 
-- [ ] **An outside move of an open note duplicates it** (2026-10-28): when `move_note`
-      (or any tool) moves a note whose tab is open and saved, the tab keeps the old id and
-      the next autosave writes the old path again. Look at the focus re-list noticing the
-      file is gone (follow the move by a record the helper leaves in app data, or close
-      the tab), and at asking before a save recreates a vanished path. Until then, close a
-      note's tab before an AI moves it.
-- [ ] **Two races in the changed-on-disk guard** (2026-08-09): each is one IPC round trip
-      wide, left until one bites. `trackMtime` clears `openMtimeRef` and refills it
-      async, so a Ctrl+S in that gap skips the overwrite guard; the focus handler in
-      `App.tsx` reads `dirtyRef` before `await api.readNote`, so keys typed during the
-      await are lost to the in-place reload. Fix: re-check the condition after the await.
 - [ ] **`Inter` heads the UI font stack but is not bundled** (2026-08-19): the root
       `font-family` in `App.css` names it first with no `@font-face`, so a machine with
       Inter installed renders a different face from everyone else. Bundle it or drop it.

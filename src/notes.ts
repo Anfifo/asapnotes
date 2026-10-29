@@ -184,6 +184,8 @@ export const draftLens = (name: string, content?: string) =>
 export const setChangesSeen = (items: { note: string; atMs: number }[], seen: boolean) =>
   invoke<void>("set_changes_seen", { items, seen });
 export const moveNote = (from: string, to: string) => invoke<void>("move_note", { from, to });
+/** Where an AI tool moved a note; null when the helper's log holds no move of it. */
+export const movedTo = (from: string) => invoke<string | null>("moved_to", { from });
 /** Create a real folder inside a project (`dir` is its would-be id path). */
 export const createFolder = (dir: string) => invoke<void>("create_folder", { dir });
 /** Recycle-bin a folder and everything in it; drafts under it go too. */
