@@ -62,9 +62,12 @@ cargo clippy --manifest-path src-tauri/Cargo.toml
 ## Gotchas
 
 - **`npm.cmd`** (not `npm`) in PowerShell — the `.ps1` shim is blocked by execution policy.
-- **The Rust build needs cmake** (the Opus codec compiles from source). It need not be on
-  PATH: a `CMAKE` env var pointing at `cmake.exe` works — VS Build Tools ships one under
-  `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
+- **The transcription engine build needs cmake** (whisper.cpp compiles from source; on
+  MSVC the Opus codec links a prebuilt `opus.lib` shipped in `audiopus_sys`). It need not
+  be on PATH: a `CMAKE` env var pointing at `cmake.exe` works — VS Build Tools ships one
+  under `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`. A long `CARGO_TARGET_DIR`
+  (a temp folder) makes whisper.cpp's CMake configure fail with "No CMAKE_C_COMPILER
+  could be found": the Windows path limit, not a missing compiler.
 - **The transcription engine is opt-in to build**: `cargo build --features transcribe --bin
 asapnotes-transcribe` (whisper.cpp from source; a plain `tauri dev` never compiles it). Its
   bindings need **libclang**: `pip install libclang`, then point `LIBCLANG_PATH` at the folder

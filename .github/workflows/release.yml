@@ -45,7 +45,25 @@ jobs:
       - run: npm run notices
         shell: bash
 
+      # The transcription engine ships as its own release asset, which the app
+      # downloads on request and checks against the digest and size exported here
+      # for the app build. The C runtime is linked in so the engine starts on a
+      # machine without the VC++ redistributable; its own target dir keeps the
+      # RUSTFLAGS change from invalidating the app's build cache.
+      - name: Build the transcription engine
+        shell: bash
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_DIR: src-tauri/target/engine
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: |
+          cargo build --release --manifest-path src-tauri/Cargo.toml --features transcribe --bin asapnotes-transcribe
+          cp src-tauri/target/engine/release/asapnotes-transcribe.exe asapnotes-transcribe-windows-x64.exe
+          echo "ASAPNOTES_TRANSCRIBE_SHA256=$(sha256sum asapnotes-transcribe-windows-x64.exe | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "ASAPNOTES_TRANSCRIBE_BYTES=$(stat -c %s asapnotes-transcribe-windows-x64.exe)" >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@v0
+        id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -56,3 +74,27 @@ jobs:
             warning; choose "More info" and then "Run anyway".
           releaseDraft: true
           prerelease: false
+
+      # A fresh Windows install has no VC++ runtime, so no shipped exe may import it.
+      # The app and the MCP helper get the static runtime from the Tauri build.
+      - name: Check that no exe needs the VC++ runtime
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $dumpbin = (Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1).FullName
+          $exes = "src-tauri/target/release/asapnotes.exe", "src-tauri/target/release/asapnotes-mcp.exe", "asapnotes-transcribe-windows-x64.exe"
+          $bad = foreach ($exe in $exes) {
+            & $dumpbin /dependents $exe | Select-String -Pattern "(vcruntime|msvcp)\d+" | ForEach-Object { "$exe needs $($_.Line.Trim())" }
+          }
+          if ($bad) { $bad; exit 1 }
+
+      - name: Attach the engine to the release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          curl --fail -sS -X POST
+          -H "Authorization: Bearer $GITHUB_TOKEN"
+          -H "Content-Type: application/octet-stream"
+          --data-binary @asapnotes-transcribe-windows-x64.exe
+          "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.tauri.outputs.releaseId }}/assets?name=asapnotes-transcribe-windows-x64.exe"

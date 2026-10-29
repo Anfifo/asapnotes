@@ -25,9 +25,11 @@ The AI (or anyone) working on this repo keeps this file current while working:
       bumps the version in `package.json`, `mcp/package.json`,
       `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, then tags `vX.Y.Z`. Left, in
       order:
-  - [ ] The workflow builds `asapnotes-transcribe` (`--release --features transcribe`),
-        attaches it as `asapnotes-transcribe-windows-x64.exe`, and passes its SHA-256 and
-        size to the app build (`ASAPNOTES_TRANSCRIBE_SHA256`, `_BYTES`).
+  - [ ] First tagged run of the release workflow (2026-10-29): it now builds the engine
+        with the C runtime linked in, passes its SHA-256 and size to the app build,
+        fails if any shipped exe imports the VC++ runtime, attaches the engine, and
+        regenerates the notices. None of these steps has run on CI yet; the libclang
+        path assumes the runner's LLVM install.
   - [ ] A winget manifest (`Anfifo.asapnotes`) once a release exists.
   - [ ] Signing: ship unsigned and say so, then apply to SignPath Foundation's free
         open-source signing. The Store is parked (account fee, and MSIX packaging the
