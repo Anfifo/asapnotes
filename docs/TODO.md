@@ -21,14 +21,14 @@ The AI (or anyone) working on this repo keeps this file current while working:
       bumps the version in `package.json`, `mcp/package.json`,
       `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, then tags `vX.Y.Z`. Left, in
       order:
-  - [ ] First published release. The workflow builds the engine with the C runtime
-        linked in, passes its SHA-256 and size to the app build, fails if any shipped exe
-        imports the VC++ runtime, attaches the engine, and regenerates the notices. A
-        manual run on 2026-10-29 passed every step in 35 min and left a draft `v0.1.0`
-        whose engine matches the digest compiled into the app. The app's engine link
-        works for others only once the release is published and the repository is
-        public.
-  - [ ] A winget manifest (`Anfifo.asapnotes`) once a release exists.
+  - [ ] Repository public. `v0.1.0` is published (2026-10-29, tag on `d603add`, built
+        by the workflow). Checked in that installed build: the installer lays down the
+        app, the MCP helper and the notices; the first launch turns startup on, and a
+        launch after switching it off leaves it off; the helper's `doctor` reads the
+        corpus; Quit during a recording stops it first, so the file ends on an
+        end-of-stream page and the note gets its link. The engine download answers 404
+        while the repository is private, and the app reports that error.
+  - [ ] A winget manifest (`Anfifo.asapnotes`); it needs the public release URL.
   - [ ] Signing: ship unsigned and say so, then apply to SignPath Foundation's free
         open-source signing. The Store is parked (account fee, and MSIX packaging the
         bundler does not emit). Ready on our side (2026-10-29): the README carries the
@@ -37,10 +37,6 @@ The AI (or anyone) working on this repo keeps this file current while working:
         MFA on the GitHub account, the repository public, the application at
         signpath.org, then a signing step between the build and the release upload and
         the policy's "planned" sentence rewritten as current.
-  - [ ] Installer (2026-10-29): Settings → Startup switches the startup entry, and a
-        launch no longer turns it back on after the first one. The NSIS uninstaller
-        deletes the `Run` value outside updates. Not yet checked in an installed release
-        build.
   - [ ] Updater: `tauri-plugin-updater` reading `latest.json` from the GitHub release,
         signed with a minisign key (private key as a repository secret). Opt-in only: a
         "Check for updates" button that connects on click, and a toggle for a throttled
