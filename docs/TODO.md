@@ -14,7 +14,6 @@ The AI (or anyone) working on this repo keeps this file current while working:
 
 ## Bugs
 
-
 ## Next: distribution
 
 - [ ] **Releases, winget, signing, updater** (2026-09-05): `.github/workflows/release.yml`
@@ -30,7 +29,12 @@ The AI (or anyone) working on this repo keeps this file current while working:
   - [ ] A winget manifest (`Anfifo.asapnotes`) once a release exists.
   - [ ] Signing: ship unsigned and say so, then apply to SignPath Foundation's free
         open-source signing. The Store is parked (account fee, and MSIX packaging the
-        bundler does not emit).
+        bundler does not emit). Ready on our side (2026-10-29): the README carries the
+        code signing policy and the privacy statement, the workflow builds every shipped
+        binary from a tag, and the exes carry product name, version and publisher. Left:
+        MFA on the GitHub account, the repository public, the application at
+        signpath.org, then a signing step between the build and the release upload and
+        the policy's "planned" sentence rewritten as current.
   - [ ] Installer: a Settings switch for autostart, and an NSIS uninstall hook that
         removes the Run entry the autostart plugin writes at runtime.
   - [ ] Updater: `tauri-plugin-updater` reading `latest.json` from the GitHub release,

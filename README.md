@@ -85,6 +85,23 @@ There is no signed installer yet. Build it yourself (see below) or run `npm.cmd 
 build` to produce an installer under `src-tauri/target/release/bundle/`. Windows will show an
 "unrecognized app" warning for unsigned installers; choose "More info" and then "Run anyway".
 
+## Code signing policy
+
+Release binaries are built by the [release workflow](.github/workflows/release.yml) from a
+version tag in this repository; nothing that ships is built or uploaded from a personal
+machine. Each release is a draft until a maintainer has checked it and published it.
+
+Releases are unsigned today. Signing is planned through SignPath Foundation, which offers
+free code signing to open-source projects: free code signing provided by SignPath.io,
+certificate by SignPath Foundation.
+
+- Committers and reviewers: [Anfifo](https://github.com/Anfifo)
+- Approvers: [Anfifo](https://github.com/Anfifo)
+
+Privacy: this program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it. The
+[Network](#network) section lists every connection it can make.
+
 ## Development
 
 Prerequisites: Node 20+, Rust (rustup, MSVC toolchain), VS 2022 Build Tools with the C++
