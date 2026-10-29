@@ -2335,7 +2335,7 @@ function App() {
           : []),
         "sep",
         { label: "Hide window", detail: "Esc", run: hideWindow },
-        { label: "Quit", run: () => void api.quit() },
+        { label: "Quit", run: () => void quitRef.current() },
       ],
     },
     { label: "Edit", items: editEntries },
@@ -2998,6 +2998,20 @@ function App() {
     setRecordingsTick((n) => n + 1);
     return { note: rec.note, seconds: files.seconds };
   };
+
+  /** Quit, stopping a running recording first so its files end cleanly and its
+   * links reach the note; a link typed into the open buffer lands in its draft. */
+  const quitApp = async () => {
+    if (recording) await stopMeeting();
+    await flushDraft();
+    await api.quit();
+  };
+  const quitRef = useRef(quitApp);
+  quitRef.current = quitApp;
+  useEffect(() => {
+    const sub = listen("quit-requested", () => void quitRef.current());
+    return () => void sub.then((unlisten) => unlisten());
+  }, []);
 
   // A recording started before this window loaded keeps running in the
   // backend — pick its chip back up.

@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use audiopus::coder::{Decoder, Encoder};
 use audiopus::{Application, Bitrate, Channels, SampleRate};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ogg::reading::PacketReader;
+use ogg::reading::{OggReadError, PacketReader};
 use ogg::writing::{PacketWriteEndInfo, PacketWriter};
 use serde::Serialize;
 use tauri::AppHandle;
@@ -221,6 +221,23 @@ pub fn stop_meeting_recording(app: AppHandle) -> Result<MeetingFiles, String> {
     failed?;
     files.seconds = s.started.elapsed().as_secs();
     Ok(files)
+}
+
+pub fn recording_active() -> bool {
+    session().lock().is_ok_and(|s| s.is_some())
+}
+
+/// Close a recording the process is exiting under, so each file ends with its
+/// end-of-stream page. The note gets no link line: writing it is the
+/// interface's part of a normal stop, which a quit runs first when it can.
+pub fn finish_for_exit() {
+    let taken = session().lock().ok().and_then(|mut s| s.take());
+    if let Some(s) = taken {
+        s.stop.store(true, Ordering::Relaxed);
+        for t in s.tracks {
+            let _ = t.handle.join();
+        }
+    }
 }
 
 /// Whether a recording is running, and for how long — what a freshly loaded
@@ -678,14 +695,26 @@ pub fn decode_for_whisper(path: &Path) -> Result<Vec<f32>, String> {
     let mut reader = PacketReader::new(file);
     let mut decoder =
         Decoder::new(SampleRate::Hz48000, Channels::Mono).map_err(|e| e.to_string())?;
-    let mut packet = || reader.read_packet().map_err(|e| e.to_string());
     // The two header packets carry no audio.
     for _ in 0..2 {
-        packet()?.ok_or_else(|| format!("{} is not an Ogg Opus file", path.display()))?;
+        reader
+            .read_packet()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("{} is not an Ogg Opus file", path.display()))?;
     }
     let mut frame = vec![0f32; FRAME];
     let mut out = Vec::new();
-    while let Some(p) = packet()? {
+    loop {
+        let p = match reader.read_packet() {
+            Ok(Some(p)) => p,
+            Ok(None) => break,
+            // A recording the app could not stop (killed mid-recording) ends
+            // partway through a page; the audio before it is intact.
+            Err(OggReadError::ReadError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                break
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         let n = decoder
             .decode_float(Some(&p.data[..]), &mut frame[..], false)
             .map_err(|e| e.to_string())?;
@@ -825,6 +854,28 @@ mod tests {
         let steady = &p.pcm[10 * FRAME..];
         let r = rms(steady);
         assert!((0.3..0.4).contains(&r), "rms {r}");
+    }
+
+    #[test]
+    fn a_recording_cut_off_mid_page_still_decodes() {
+        let path = temp_opus("cutoff");
+        {
+            let file = fs::File::create(&path).expect("create");
+            let mut sink = OggOpus::create(BufWriter::new(file)).expect("sink");
+            // Three full pages of 50 packets.
+            for _ in 0..150 {
+                sink.encode(&[0.1; FRAME], false).expect("encode");
+            }
+            sink.finish().expect("finish");
+        }
+        // What a killed process leaves: no end-of-stream page, and the last
+        // page only partly written.
+        let bytes = fs::read(&path).expect("read");
+        fs::write(&path, &bytes[..bytes.len() - 100]).expect("truncate");
+        let decoded = decode_for_whisper(&path);
+        let _ = fs::remove_file(&path);
+        // The two complete pages (100 packets) survive at 16 kHz.
+        assert_eq!(decoded.expect("decodes").len(), 100 * FRAME / 3);
     }
 
     #[test]

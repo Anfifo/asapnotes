@@ -182,7 +182,7 @@ mod desktop {
             .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id().as_ref() {
                 "open" => show_main_window(app),
-                "quit" => app.exit(0),
+                "quit" => request_quit(app),
                 _ => {}
             })
             .on_tray_icon_event(|tray, event| {
@@ -198,6 +198,22 @@ mod desktop {
             .build(app)?;
 
         Ok(())
+    }
+
+    /// The tray's Quit. A running recording is stopped by the interface, which
+    /// also writes its links into the note, and the interface then quits. If it
+    /// does not within a few seconds, the exit handler closes the files.
+    fn request_quit(app: &AppHandle) {
+        if !crate::meeting::recording_active() {
+            app.exit(0);
+            return;
+        }
+        let _ = app.emit("quit-requested", ());
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            app.exit(0);
+        });
     }
 }
 
@@ -349,6 +365,11 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                meeting::finish_for_exit();
+            }
+        });
 }
