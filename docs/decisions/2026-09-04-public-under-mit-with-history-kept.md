@@ -26,11 +26,13 @@ carry was identity metadata — a personal email on every commit and AI co-autho
 and that was rewritten in place with the trees and dates untouched, rather than squashing
 sixty commits into one to hide it. The author email is the GitHub no-reply address.
 
-**Comparisons stay where comparison is the point.** `branding.md` is a positioning doc and
-keeps its competitor table, minus quoted complaints from other products' users and the
-links to them. Everywhere else the house rule holds: describe the behaviour, never name
-the product it resembles. Material whose value depends on the name goes to the gitignored
-`docs/private/`.
+**Comparisons stay out of the repo.** The house rule holds everywhere: describe the
+behaviour, never name the product it resembles. Material whose value depends on the name
+goes to the gitignored `docs/private/`. Revised 2026-10-29: `branding.md` first kept its
+positioning half (niche, competitor table, sources) on the grounds that comparison was that
+file's point; that half moved to `docs/private/` and `branding.md` keeps the mark and its
+asset recipe. The same pass took the old in-repo handoff file, the full `branding.md` and
+the links to private working pages out of every commit, with dates and authors unchanged.
 
 **Session state is not project history.** Handoffs between working sessions live outside
 the repo, under the handoff tooling's own directory; the old in-repo path is gitignored.
