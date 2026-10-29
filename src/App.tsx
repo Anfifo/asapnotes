@@ -1465,7 +1465,8 @@ function App() {
         // the first paint shouldn't wait for even that.
         refreshChanges();
         // Restored tabs win: reopen the last active one (content loads here, the
-        // rest stay lazy). A tab whose note vanished is dropped and we fall back.
+        // rest stay lazy). A tab whose note vanished is dropped, and the
+        // fallbacks below take over.
         const restored = tabsRef.current;
         if (restored.length > 0) {
           const activeId = localStorage.getItem("activeTab");
