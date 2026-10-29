@@ -275,7 +275,8 @@ export const TOOLS: ToolDef[] = [
       "microphone and system audio unless told otherwise; the app window " +
       "comes up and shows the recording. Needs meeting control on in the app " +
       "(Settings > MCP > Meetings) and write access to the project. Tell the " +
-      "user it is recording; telling the other participants is theirs to do. " +
+      "user it is recording, and show them `notice`, a line for the meeting " +
+      "chat; telling the other participants is theirs to do. " +
       "Only the user can change access: if this is refused, pass on what the " +
       "refusal says to switch on.",
     object(

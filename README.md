@@ -42,7 +42,11 @@ analytics, no update checks unless you ask for them. You can verify this from th
 **Meeting recording captures other people.** It records your microphone and your system
 audio to files next to the note, locally, and nothing leaves the machine. Whether you may
 record a conversation depends on where you are and who has agreed; telling the other
-participants is on you. The app's part is a recording indicator that cannot be missed.
+participants is on you. The app's part is a recording indicator that cannot be missed,
+and a notice line it writes into the note when a recording starts and offers to copy for
+the meeting chat (`meetingNotice` in `settings.json` sets the wording; `{time}` and
+`{date}` are filled in). The notice informs people. Where the law requires their consent,
+asking for it is still yours to do.
 
 This is a personal project built in the open, with substantial help from AI coding tools.
 Issues and pull requests are welcome; responses come when time allows.

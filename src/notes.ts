@@ -405,6 +405,8 @@ export interface Settings {
   destinations?: Destinations;
   transcriptionLanguage?: string | null;
   transcriptionModel?: string | null;
+  /** The recording notice, with `{time}` and `{date}` placeholders. */
+  meetingNotice?: string | null;
   /** Named sets of projects; "Default" (every project) is implicit. */
   workspaces?: Record<string, string[]>;
   /** The workspace the app is on; absent means Default. */

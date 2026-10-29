@@ -19,7 +19,7 @@ import { TranscribeChip } from "./TranscribeChip";
 import { TranscribeDialog } from "./Transcribe";
 import { RecordingsView } from "./Recordings";
 import { StartMeeting } from "./Meeting";
-import { formatElapsed } from "./meetingTime";
+import { DEFAULT_MEETING_NOTICE, formatElapsed, meetingNotice } from "./meetingTime";
 import { MenuBar, MenuDef, MenuEntry } from "./MenuBar";
 import { NewProject } from "./NewProject";
 import {
@@ -321,6 +321,7 @@ function App() {
   const [recording, setRecording] = useState<{ note: string; startedAt: number } | null>(null);
   // Folder the meeting dialog offers first: wherever the last meeting went.
   const [meetingFolder, setMeetingFolderState] = useState("");
+  const [meetingNoticeTpl, setMeetingNoticeTpl] = useState(DEFAULT_MEETING_NOTICE);
   // Explorer-driven creation is name-first: the target dir ("" = notes root)
   // gets an inline input row in the tree, Enter creates the file — or, with
   // kind "folder", a real directory.
@@ -1196,6 +1197,7 @@ function App() {
       setMapViewState(isViewKind(settings.mapView) ? settings.mapView : DEFAULT_VIEW);
       setOpenFilesExternallyState(settings.openFilesExternally ?? false);
       setMeetingFolderState(settings.destinations?.meeting ?? "");
+      setMeetingNoticeTpl(settings.meetingNotice || DEFAULT_MEETING_NOTICE);
       setRouting({ destinations: settings.destinations, projects: settings.projects });
       setTxDefaults({
         language: settings.transcriptionLanguage ?? "",
@@ -2843,21 +2845,49 @@ function App() {
   const projectMeetings = openProject && routing.projects[openProject]?.destinations?.meeting;
   const meetingDefault = projectMeetings ? `${openProject}/${projectMeetings}` : meetingFolder;
 
-  /** Open the meeting note, creating it when no note matches the id in any
-   * case, and start recording into it. Shared by the dialog and an agent's
-   * request; returns the note's id. */
+  /** Start recording into the meeting note, creating it when no note matches
+   * the id in any case, and write the recording notice where the links will
+   * go. Shared by the dialog and an agent's request. */
   const recordInto = async (id: string, mic: boolean, system: boolean) => {
     const lower = id.toLowerCase();
     const note = notes.find((n) => n.name.toLowerCase() === lower)?.name ?? id;
-    if (note === id && !notes.some((n) => n.name.toLowerCase() === lower)) {
+    const created = note === id && !notes.some((n) => n.name.toLowerCase() === lower);
+    if (created) {
       await api.saveNote(id, "");
       setNotes(await api.listNotes());
     }
-    openFromExplorer(note, true);
     await api.startMeetingRecording(note, mic, system);
-    setRecording({ note, startedAt: Date.now() });
-    return note;
+    const startedAt = Date.now();
+    setRecording({ note, startedAt });
+    const notice = meetingNotice(meetingNoticeTpl, new Date(startedAt));
+    const line = `> ${notice}\n`;
+    try {
+      if (openRef.current?.id === note) {
+        editorRef.current?.insertText(`\n${line}`);
+      } else {
+        const content = created ? "" : await api.readNote(note);
+        const next = content ? `${content}\n${line}` : `${line}\n`;
+        await api.saveNote(note, next);
+        // Typing and the stop line go below the notice.
+        pendingLine.current = next.split("\n").length;
+      }
+    } catch (err) {
+      toast(`Recording, but the notice couldn't be written into the note — ${errText(err)}`);
+    }
+    openFromExplorer(note, true);
+    return { note, notice };
   };
+
+  /** The recording notice is never put on the clipboard unasked; the toast
+   * offers it. */
+  const noticeToast = (message: string, notice: string) =>
+    toast(`${message} · click to copy the notice for the meeting chat`, "info", {
+      tip: "Copy the recording notice",
+      run: () =>
+        void writeText(notice)
+          .then(() => toast("Notice copied", "info"))
+          .catch((err: unknown) => toast(`Couldn't copy the notice — ${errText(err)}`)),
+    });
 
   /** Create (or reopen) the meeting note and start recording into it. A
    * rejection surfaces inside the dialog, which stays open. */
@@ -2867,7 +2897,8 @@ function App() {
     if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
       throw new Error(`"${name}" isn't a valid note name`);
     }
-    await recordInto(id, mic, system);
+    const { note, notice } = await recordInto(id, mic, system);
+    noticeToast(`Recording into "${fileOf(note)}"`, notice);
     setMeetingDialog(false);
     editorRef.current?.focus();
     // Only a folder picked in the dialog becomes the new default; accepting
@@ -3090,9 +3121,9 @@ function App() {
         if (recording) throw new Error(`already recording into ${recording.note}; stop it first`);
         const mic = args.mic !== false;
         const system = args.system !== false;
-        const note = await recordInto(String(args.note), mic, system);
-        toast(`An AI tool started recording into "${fileOf(note)}"`);
-        return { note, mic, system };
+        const { note, notice } = await recordInto(String(args.note), mic, system);
+        noticeToast(`An AI tool started recording into "${fileOf(note)}"`, notice);
+        return { note, mic, system, notice };
       }
       case "stop_meeting": {
         if (!recording) throw new Error("no recording is running");

@@ -5,8 +5,8 @@ interface ToastStackProps {
   onDismiss: (id: number) => void;
 }
 
-/** Bottom-right stack, newest at the bottom. Click anywhere on a toast to
- * dismiss it early — there is nothing else to do with one. */
+/** Bottom-right stack, newest at the bottom. Clicking a toast runs its action,
+ * if it has one, and dismisses it. */
 export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
   if (toasts.length === 0) return null;
   return (
@@ -16,8 +16,11 @@ export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
           key={t.id}
           className={`toast toast-${t.kind}`}
           role="status"
-          data-tip="Click to dismiss"
-          onClick={() => onDismiss(t.id)}
+          data-tip={t.action?.tip ?? "Click to dismiss"}
+          onClick={() => {
+            t.action?.run();
+            onDismiss(t.id);
+          }}
         >
           {t.message}
         </div>

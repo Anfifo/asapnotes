@@ -191,7 +191,8 @@ the app opens only while Settings > MCP > Meetings is on (`mcp.meetings: "on"`, 
 by default), at an address and token published in `mcp-state.json` and fresh on
 every launch. The app checks the switch and write access to the meeting note's
 project; a recording an agent starts brings the window up, so the recording chip is
-in view. `stop_meeting` with `transcribe: true` starts the local transcription, and
+in view. `start_meeting` returns `notice`, the line the app wrote into the note, for
+the user to paste into the meeting chat. `stop_meeting` with `transcribe: true` starts the local transcription, and
 the transcript note is linked under the recording line when it finishes.
 
 The helper also answers `code_folders`, which is not an MCP tool: it lists the code

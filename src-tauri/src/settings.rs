@@ -85,6 +85,11 @@ pub struct Settings {
     pub transcription_language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription_model: Option<String>,
+    /// The line a recording start offers for the meeting chat and writes into
+    /// the note, with `{time}` and `{date}` filled in. Absent means the
+    /// shipped wording.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting_notice: Option<String>,
     /// Named sets of projects, workspace name → project names. A view over the
     /// registry: nothing on disk moves, a project may sit in any number of
     /// sets, and "Default" — every project — is implicit, so an absent map
@@ -155,6 +160,7 @@ impl Default for Settings {
             destinations: Destinations::default(),
             transcription_language: None,
             transcription_model: None,
+            meeting_notice: None,
             workspaces: BTreeMap::new(),
             current_workspace: None,
             mcp: Mcp::default(),

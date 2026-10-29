@@ -6,10 +6,15 @@ export interface ToastItem {
   id: number;
   kind: ToastKind;
   message: string;
+  /** Runs on click, before the toast dismisses; `tip` says what it does. */
+  action?: { run: () => void; tip: string };
 }
 
 /** Errors linger — they usually name something the user must redo. */
 const DISMISS_MS: Record<ToastKind, number> = { error: 6000, info: 3000 };
+/** A toast with an action stays long enough to reach for, such as while an
+ * agent that started a recording is still answering. */
+const ACTION_MS = 30000;
 /** Older toasts drop off the top rather than growing a wall of them. */
 const MAX_VISIBLE = 4;
 
@@ -26,11 +31,11 @@ export function useToasts() {
   }, []);
 
   const toast = useCallback(
-    (message: string, kind: ToastKind = "error") => {
+    (message: string, kind: ToastKind = "error", action?: ToastItem["action"]) => {
       const id = nextId.current++;
-      setToasts((ts) => [...ts, { id, kind, message }].slice(-MAX_VISIBLE));
+      setToasts((ts) => [...ts, { id, kind, message, action }].slice(-MAX_VISIBLE));
       // A stale timer for an already-dismissed toast is a harmless no-op.
-      window.setTimeout(() => dismiss(id), DISMISS_MS[kind]);
+      window.setTimeout(() => dismiss(id), action ? ACTION_MS : DISMISS_MS[kind]);
     },
     [dismiss],
   );
