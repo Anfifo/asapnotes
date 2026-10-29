@@ -30,5 +30,4 @@ and React/TypeScript.
 
 ## Links
 
-- [docs/TODO.md](../TODO.md) — hotkey + tray residency work item
 - [2026-08-06-markdown-files-are-the-store.md](2026-08-06-markdown-files-are-the-store.md)

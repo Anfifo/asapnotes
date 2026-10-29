@@ -8,7 +8,7 @@
 Notes need a grouping level (user → project → notes) before there are enough
 of them to drown the flat root. Whatever shape grouping takes constrains storage, future
 cloud sync, and the planned mappings to files living outside the notes root — so the shape
-was decided before code ([TODO item](../TODO.md), and see
+was decided before code (see
 [Markdown files are the store](2026-08-06-markdown-files-are-the-store.md)).
 
 ## Decision

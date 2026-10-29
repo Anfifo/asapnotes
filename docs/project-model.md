@@ -601,8 +601,6 @@ Each step is useful alone and unblocks the next — no step needs the one after 
   filesystem-derived; this doc adds attributes, not a manifest.
 - [External projects linked in place](decisions/2026-08-07-external-projects-linked-in-place.md) —
   becomes the degenerate case of location plus mounts.
-- [TODO.md](TODO.md) — the canvas, settings-rework, virtual-folders, explorer-context-menu,
-  and MCP items that defer here.
 - Key files this will touch: [`src-tauri/src/notes.rs`](../src-tauri/src/notes.rs)
   (resolution, listing, registry read), [`src/paths.ts`](../src/paths.ts) (type lookups),
   [`src/Explorer.tsx`](../src/Explorer.tsx) (mount rows),

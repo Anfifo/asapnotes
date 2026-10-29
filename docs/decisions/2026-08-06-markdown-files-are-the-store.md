@@ -28,5 +28,8 @@ share + live collaboration on a group of notes. The storage choice shapes all of
 
 ## Links
 
-- [docs/TODO.md](../TODO.md) — quick-capture, MCP sidecar, and workspace-model items
+- [Unsaved work lives in shadow drafts](2026-08-06-unsaved-work-lives-in-shadow-drafts.md),
+  [Notes are plain-text files, with features per type](2026-08-09-notes-are-plain-text-files-with-per-type-features.md),
+  [The MCP server shells out to the Rust helper](2026-08-19-the-mcp-server-shells-out-to-the-rust-helper.md),
+  [Workspaces are display-only sets of projects](2026-09-05-workspaces-are-display-only-sets.md)
 - [2026-08-06-resident-tray-and-tauri-stack.md](2026-08-06-resident-tray-and-tauri-stack.md)
