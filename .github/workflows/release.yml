@@ -1,4 +1,4 @@
-# Turns a version tag into a draft GitHub Release with the Windows installers attached.
+# Turns a version tag into a draft GitHub Release with the Windows installer attached.
 # Draft on purpose: the release is looked at before it is published. Tag with the version
 # the manifests carry (`v0.1.0` for version 0.1.0); the action reads the version from
 # tauri.conf.json and names the release after it.
@@ -17,9 +17,9 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm

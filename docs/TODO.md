@@ -27,8 +27,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
         manual run on 2026-10-29 passed every step in 35 min and left a draft `v0.1.0`
         whose engine matches the digest compiled into the app. The app's engine link
         works for others only once the release is published and the repository is
-        public. Actions warns that `actions/checkout@v4` and `actions/setup-node@v4` run
-        on a deprecated Node 20.
+        public.
   - [ ] A winget manifest (`Anfifo.asapnotes`) once a release exists.
   - [ ] Signing: ship unsigned and say so, then apply to SignPath Foundation's free
         open-source signing. The Store is parked (account fee, and MSIX packaging the
