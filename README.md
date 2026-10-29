@@ -8,6 +8,11 @@ Instant-capture markdown notes for Windows. Hit a global keybind, the window is 
 get back to what you were doing — built for the "I need to write this down _now_, I'm in a
 meeting" moment. An MCP server over the same notes lets an AI go over them with you.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/editor-dark.png">
+  <img src="docs/screenshots/editor-light.png" alt="asapnotes with a linked repository's docs open: the explorer shows its decisions and a virtual meetings folder, and the editor shows a markdown note in live preview">
+</picture>
+
 ## How it stays instant
 
 Nothing cold-starts fast enough to trust in a hurry. asapnotes runs as an always-resident tray
@@ -23,21 +28,76 @@ near-instant. Two consequences shape every change:
 
 One `.md` file per note in a plain folder you own — greppable, syncable, editable by anything,
 and trivially exposed to AI tools over MCP. The app is a fast viewport onto your files, not a
-database you must export from. Planned on top (see [docs/decisions/](docs/decisions/README.md)):
-project/workspace grouping including mapping in files that live outside the notes root, and
-later cloud share / live collaboration.
+database you must export from. Projects can also live outside the notes folder (see
+[below](#projects-outside-the-notes-folder)); cloud share and live collaboration are planned
+(see [docs/decisions/](docs/decisions/README.md)).
+
+## Projects outside the notes folder
+
+A project can be any folder on disk. Link a repository and asapnotes edits its `docs/`
+folder in place, so design notes, decisions and TODOs stay in the repository and travel with
+its history.
+
+Notes that belong to a project but not in its repository go in a **virtual folder**. It
+shows inside the project in the explorer, and its files live in a folder of their own that
+the repository never sees. "New virtual folder" creates that folder under the app's data
+(`%APPDATA%\com.anfifo.asapnotes\virtual`; `virtualFoldersRoot` in `settings.json` moves
+it), and "Associate virtual folder" attaches a folder you already have. The default
+location is outside `Documents\asapnotes`, so include it in your backups.
+
+Workspaces group projects for display: switching to one shows only its projects.
 
 ## Status
 
 Working and in daily use, Windows only. What exists today: tray summon on a global hotkey,
-a markdown editor with live preview, tabs, an explorer over projects and attached folders,
-cross-note search, `@`-mention links between notes, a computed project map, a recent-changes
-view, an MCP server over the same notes ([mcp/](mcp/README.md)), and meeting recording
-into the note's assets. What's next lives in [docs/TODO.md](docs/TODO.md); why things are
-the way they are lives in [docs/decisions/](docs/decisions/README.md).
+a markdown editor with live preview, tabs, an explorer over projects, linked repositories and
+virtual folders, cross-note search, `@`-mention links between notes, a computed project map, a
+recent-changes view, an MCP server over the same notes ([mcp/](mcp/README.md)), and meeting
+recording with local transcription. What's next lives in [docs/TODO.md](docs/TODO.md); why
+things are the way they are lives in [docs/decisions/](docs/decisions/README.md).
 
 **No unrequested network connections.** The app never phones home: no telemetry, no
 analytics, no update checks unless you ask for them. You can verify this from the source.
+
+This is a personal project built in the open, with substantial help from AI coding tools.
+Issues and pull requests are welcome; responses come when time allows.
+
+## Working with AI tools
+
+Any AI tool can work on the notes as files. The MCP server in [mcp/](mcp/README.md) gives an
+assistant the notes workflow through the app's rules:
+
+- find, search, list, outline and read notes in every project it can see, linked
+  repositories and virtual folders included;
+- create notes, append to them, rewrite a section, and move them; new notes go where
+  Settings → Where new notes go says;
+- add an item to a project's `TODO.md`, or write a dated entry in its `decisions/`;
+- start and stop a meeting recording in the running app, and transcribe it when it stops.
+
+Access is per project and set in the app: off, read or write. A project that is off does
+not exist over MCP. `writeScope: "current"` limits writes to the project open in the
+app, and meeting control stays off until you turn it on in Settings → MCP. Setup is in
+[mcp/SETUP.md](mcp/SETUP.md).
+
+An optional Claude Code plugin reminds a session that notes exist when it works in a folder
+a project names as its code ([integrations/claude-code/](integrations/claude-code/README.md)):
+
+```text
+/plugin install asapnotes --marketplace Anfifo/asapnotes
+```
+
+## Meetings
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/meeting-dark.png">
+  <img src="docs/screenshots/meeting-light.png" alt="A meeting note in a virtual folder: the recording notice, notes and actions, and links to the recording and its transcript">
+</picture>
+
+Start a recording from the app or from an assistant over MCP, and keep typing. The
+microphone and the system audio go to files next to the note. Transcription runs on your
+machine: the engine and a speech model download once, when you ask, and the transcript
+becomes a note linked under the recording, with timestamps, and with each side labelled
+when both were recorded.
 
 **Meeting recording captures other people.** It records your microphone and your system
 audio to files next to the note, locally, and nothing leaves the machine. Whether you may
@@ -47,22 +107,6 @@ and a notice line it writes into the note when a recording starts and offers to 
 the meeting chat (`meetingNotice` in `settings.json` sets the wording; `{time}` and
 `{date}` are filled in). The notice informs people. Where the law requires their consent,
 asking for it is still yours to do.
-
-This is a personal project built in the open, with substantial help from AI coding tools.
-Issues and pull requests are welcome; responses come when time allows.
-
-## Working with AI tools
-
-Any AI tool can work on the notes as files, or through the MCP server in [mcp/](mcp/README.md)
-with per-project access you set in the app. Settings → Where new notes go sets the folder for
-each kind of new note, and the MCP server's `create_note` follows it.
-
-An optional Claude Code plugin reminds a session that notes exist when it works in a folder
-a project names as its code ([integrations/claude-code/](integrations/claude-code/README.md)):
-
-```text
-/plugin install asapnotes --marketplace Anfifo/asapnotes
-```
 
 ## Network
 
@@ -81,9 +125,15 @@ turn them on.
 
 ## Install
 
-There is no signed installer yet. Build it yourself (see below) or run `npm.cmd run tauri
-build` to produce an installer under `src-tauri/target/release/bundle/`. Windows will show an
-"unrecognized app" warning for unsigned installers; choose "More info" and then "Run anyway".
+Download `asapnotes_<version>_x64-setup.exe` from the
+[latest release](https://github.com/Anfifo/asapnotes/releases/latest). It needs 64-bit
+Windows 10 or 11 and installs for your user account without admin rights. The installer is
+not signed yet (see the [code signing policy](#code-signing-policy)), so Windows shows an
+"unrecognized app" warning; choose "More info" and then "Run anyway".
+
+The app starts with Windows so the summon shortcut, Ctrl+Alt+A by default, always works;
+Settings → Startup turns that off. To build the installer yourself, see
+[Development](#development).
 
 ## Code signing policy
 
