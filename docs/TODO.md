@@ -17,7 +17,7 @@ The AI (or anyone) working on this repo keeps this file current while working:
 ## Next: distribution
 
 - [ ] **Releases, winget, signing, updater** (2026-09-05): `.github/workflows/release.yml`
-      turns a tag into a draft GitHub release with the NSIS and MSI installers. A release
+      turns a tag into a draft GitHub release with the NSIS installer. A release
       bumps the version in `package.json`, `mcp/package.json`,
       `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, then tags `vX.Y.Z`. Left, in
       order:
@@ -37,9 +37,8 @@ The AI (or anyone) working on this repo keeps this file current while working:
         the policy's "planned" sentence rewritten as current.
   - [ ] Installer (2026-10-29): Settings → Startup switches the startup entry, and a
         launch no longer turns it back on after the first one. The NSIS uninstaller
-        already deletes the `Run` value outside updates; the MSI leaves it behind,
-        pointing at a deleted exe. Open: ship NSIS only, or give the MSI a cleanup.
-        Not yet checked in an installed release build.
+        deletes the `Run` value outside updates. Not yet checked in an installed release
+        build.
   - [ ] Updater: `tauri-plugin-updater` reading `latest.json` from the GitHub release,
         signed with a minisign key (private key as a repository secret). Opt-in only: a
         "Check for updates" button that connects on click, and a toggle for a throttled

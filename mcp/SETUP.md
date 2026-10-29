@@ -38,8 +38,8 @@ crate, so expect minutes on a cold one. The binary lands at
 `npm run tauri build` produces an installer that carries the helper, with no extra
 step and no bundle configuration for it: the helper is a second `[[bin]]` of the
 app's own crate, so the release build compiles it and the bundler ships every
-binary the crate builds. Verified by extracting the MSI — `asapnotes-mcp.exe`
-installs beside `asapnotes.exe`.
+binary the crate builds. The generated NSIS script installs `asapnotes-mcp.exe`
+beside `asapnotes.exe`.
 
 ## 2. Check it can see your notes
 

@@ -30,7 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "publisher": "Anfifo",
     "copyright": "Copyright (c) 2026 Anfifo",
     "shortDescription": "Instant-capture markdown notes",
