@@ -137,6 +137,8 @@ Writing:
 | `append_to_note` | Add to a note or a section — **and create a note**, in one call |
 | `create_note`    | A new note in the folder the user set for its kind              |
 | `move_note`      | Move or rename a note; both ends need `write`                   |
+| `start_meeting`  | Record a meeting in the running app, into the meetings folder   |
+| `stop_meeting`   | Stop it, link the files, and optionally transcribe              |
 | `write_settings` | A JSON merge patch, never touching `mcp`                        |
 | `append_todo`    | A correctly shaped TODO item under today's heading              |
 | `new_decision`   | A dated decision entry from the template                        |
@@ -182,6 +184,15 @@ per project; `create_note` takes a file name and a kind and puts it there, and
 `list_projects` shows each project's table. `move_note` refuses while the app holds
 unsaved edits for the note, since the app would save them back to the old id, and
 it does not rewrite links, the same as a move in the app.
+
+**Meetings are recorded by the running app.** `start_meeting`, `stop_meeting` and
+`meeting_status` reach it over a local channel: a named pipe (a socket off Windows)
+the app opens only while Settings > MCP > Meetings is on (`mcp.meetings: "on"`, off
+by default), at an address and token published in `mcp-state.json` and fresh on
+every launch. The app checks the switch and write access to the meeting note's
+project; a recording an agent starts brings the window up, so the recording chip is
+in view. `stop_meeting` with `transcribe: true` starts the local transcription, and
+the transcript note is linked under the recording line when it finishes.
 
 The helper also answers `code_folders`, which is not an MCP tool: it lists the code
 folders of the visible projects for the

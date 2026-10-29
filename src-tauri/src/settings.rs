@@ -125,6 +125,10 @@ pub struct Mcp {
     /// names every machine path on the box — turning it on is a deliberate act.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settings: Option<String>,
+    /// `on` lets an agent start and stop meeting recordings in the running
+    /// app. Absent means off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meetings: Option<String>,
 }
 
 impl Mcp {
@@ -993,6 +997,20 @@ pub fn set_mcp_settings_access(app: AppHandle, grant: String) -> Result<(), Stri
         s.mcp.settings = value;
         Ok(())
     })
+}
+
+/// Whether an agent may start and stop meeting recordings. Turning it on also
+/// opens the control channel, which stays closed until then.
+#[tauri::command]
+pub fn set_mcp_meetings(app: AppHandle, on: bool) -> Result<(), String> {
+    update(&app, |s| {
+        s.mcp.meetings = on.then(|| "on".to_string());
+        Ok(())
+    })?;
+    if on {
+        crate::control::start(&app)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

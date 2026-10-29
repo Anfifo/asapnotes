@@ -12,12 +12,12 @@
 //! read per call; if it ever shows up as latency the fix is an mtime-gated
 //! cache, not a longer-lived grant.
 
-use super::{edits, grants, ids, log, search, sections, store, walk, Roots};
+use super::{control, edits, grants, ids, log, search, sections, store, walk, Roots};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
 /// Every wire name this helper answers to, in the order the docs list them.
-pub const COMMANDS: [&str; 15] = [
+pub const COMMANDS: [&str; 18] = [
     "doctor",
     "list_projects",
     "list_workspaces",
@@ -32,6 +32,9 @@ pub const COMMANDS: [&str; 15] = [
     "move_note",
     "read_settings",
     "write_settings",
+    "start_meeting",
+    "stop_meeting",
+    "meeting_status",
     "code_folders",
 ];
 
@@ -95,6 +98,7 @@ pub fn dispatch(roots: &Roots, command: &str, args: &Value) -> Result<Value, Str
         "move_note" => move_note(roots, args),
         "read_settings" => read_settings(roots),
         "write_settings" => write_settings(roots, args),
+        "start_meeting" | "stop_meeting" | "meeting_status" => meeting(roots, command, args),
         "code_folders" => code_folders(roots),
         other => Err(format!(
             "unknown command \"{other}\"; this helper answers: {}",
@@ -129,6 +133,7 @@ fn doctor(roots: &Roots) -> Result<Value, String> {
             "notesRootProjects": s.mcp.notes_root_grant().as_str(),
             "linkedProjects": s.mcp.linked_grant().as_str(),
             "settings": s.mcp.settings_grant().as_str(),
+            "meetings": if s.mcp.meetings_on() { "on" } else { "off" },
         },
         "writeScope": if s.mcp.pinned_to_current() { "current" } else { "any" },
         "currentProject": state.current_project,
@@ -441,6 +446,47 @@ fn append_to_note(roots: &Roots, args: &Value) -> Result<Value, String> {
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
+/// The id a new note gets: `name` in the destination for its kind, with `ext`
+/// added unless the name already carries a note extension. A named project
+/// has to be one the caller can see: an unknown name would otherwise create a
+/// notes-root folder, which is a new project, and a hidden one answers like
+/// one that isn't there.
+pub fn new_note_id(
+    roots: &Roots,
+    s: &crate::settings::Settings,
+    project: Option<&str>,
+    name: &str,
+    kind: &crate::settings::Kind,
+    ext: &str,
+) -> Result<String, String> {
+    let name = name.trim().trim_matches('/');
+    if name.is_empty() {
+        return Err("a new note needs a name".into());
+    }
+    if let Some(p) = project {
+        let known = grants::visible_projects(roots, s)?
+            .iter()
+            .any(|(info, _)| info.name == p);
+        if !known {
+            return Err(format!(
+                "no such project: {p} (a project whose AI access is off is hidden; the user \
+                 can give it Write access in Settings > MCP > Project access)"
+            ));
+        }
+    }
+    let file = if s.type_for(name).is_some() {
+        name.to_string()
+    } else {
+        format!("{name}.{ext}")
+    };
+    let folder = s.destination(project, kind);
+    Ok(if folder.is_empty() {
+        file
+    } else {
+        format!("{folder}/{file}")
+    })
+}
+
 /// A new note in the folder the user configured for its kind. The caller
 /// names the file; the folder comes from `destinations`, so an agent files
 /// notes where the user files them without knowing the layout.
@@ -448,18 +494,8 @@ fn create_note(roots: &Roots, args: &Value) -> Result<Value, String> {
     use crate::settings::Kind;
     let s = settings(roots)?;
     let state = grants::read_state(roots);
-    let name = str_arg(args, "name")?.trim().trim_matches('/');
+    let name = str_arg(args, "name")?;
     let project = opt_str(args, "project");
-    if let Some(p) = project {
-        // An unknown name would otherwise create a notes-root folder, which is
-        // a new project; a hidden one answers like one that isn't there.
-        let known = grants::visible_projects(roots, &s)?
-            .iter()
-            .any(|(info, _)| info.name == p);
-        if !known {
-            return Err(format!("no such project: {p}"));
-        }
-    }
     let type_id = match opt_str(args, "type") {
         Some(id) => id,
         None => s.default_note_type.as_deref().unwrap_or("markdown"),
@@ -485,18 +521,8 @@ fn create_note(roots: &Roots, args: &Value) -> Result<Value, String> {
         .iter()
         .find(|t| t.id == type_id)
         .ok_or_else(|| format!("no note type with id \"{type_id}\""))?;
-    let file = if s.type_for(name).is_some() {
-        name.to_string()
-    } else {
-        let ext = note_type.extensions.first().map_or("md", String::as_str);
-        format!("{name}.{ext}")
-    };
-    let folder = s.destination(project, &kind);
-    let note = if folder.is_empty() {
-        file
-    } else {
-        format!("{folder}/{file}")
-    };
+    let ext = note_type.extensions.first().map_or("md", String::as_str);
+    let note = new_note_id(roots, &s, project, name, &kind, ext)?;
     let content = opt_str(args, "content").unwrap_or("");
     let result = edits::create(roots, &s, &state, &note, content)?;
     log::record(
@@ -521,6 +547,25 @@ fn move_note(roots: &Roots, args: &Value) -> Result<Value, String> {
         &log::Entry::new("move_note", format!("moved from {from}")).on(to, ""),
     );
     Ok(json!({ "from": from, "to": to }))
+}
+
+/// Recording runs in the app, so these go over the control channel, and the
+/// app checks the meetings switch and the note's grant. A start or stop is
+/// logged with the other writes.
+fn meeting(roots: &Roots, command: &str, args: &Value) -> Result<Value, String> {
+    let out = control::call(roots, command, args)?;
+    if command != "meeting_status" {
+        let summary = match command {
+            "start_meeting" => "started recording".to_string(),
+            _ => format!(
+                "stopped recording after {} s",
+                out["seconds"].as_u64().unwrap_or(0)
+            ),
+        };
+        let note = out["note"].as_str().unwrap_or("");
+        log::record(roots, &log::Entry::new(command, summary).on(note, ""));
+    }
+    Ok(out)
 }
 
 /// The code folders of every project this caller may see, for agent hooks

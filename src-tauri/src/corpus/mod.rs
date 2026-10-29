@@ -13,6 +13,7 @@
 //! A `tauri::` import anywhere under this module is a bug, and
 //! [`tests::no_tauri_in_the_core`] fails the build if one appears.
 
+pub mod control;
 pub mod edits;
 pub mod grants;
 pub mod ids;

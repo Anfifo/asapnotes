@@ -1,3 +1,4 @@
+mod control;
 pub mod corpus;
 mod history;
 pub mod meeting;
@@ -70,7 +71,7 @@ mod desktop {
         }
     }
 
-    fn show_main_window(app: &AppHandle) {
+    pub(crate) fn show_main_window(app: &AppHandle) {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.unminimize();
             let _ = window.show();
@@ -92,6 +93,17 @@ mod desktop {
         if let Ok(roots) = crate::app_paths::roots(app.handle()) {
             let helper = crate::notes::helper_path();
             let _ = crate::corpus::grants::publish(&roots, None, helper.as_deref());
+            // The control channel opens only when meeting control is on; a
+            // previous run's address is cleared, so a helper reads "not
+            // running" rather than trying a pipe that is gone.
+            let meetings =
+                crate::settings::settings(app.handle()).is_ok_and(|s| s.mcp.meetings_on());
+            let _ = crate::corpus::grants::publish_control(&roots, None);
+            if meetings {
+                if let Err(e) = crate::control::start(app.handle()) {
+                    eprintln!("control channel didn't start: {e}");
+                }
+            }
         }
 
         // Every folder outside the notes root that notes can live in — project
@@ -248,6 +260,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         // Parsed settings live here for the process's lifetime.
         .manage(settings::Cache::default())
+        .manage(control::Control::default())
         .invoke_handler(tauri::generate_handler![
             quit,
             set_summon_hotkey,
@@ -260,6 +273,8 @@ pub fn run() {
             settings::set_mcp_grant,
             settings::set_mcp_write_scope,
             settings::set_mcp_settings_access,
+            settings::set_mcp_meetings,
+            control::control_reply,
             notes::list_notes,
             notes::list_projects,
             notes::set_mcp_current_project,

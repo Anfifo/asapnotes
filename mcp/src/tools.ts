@@ -268,6 +268,56 @@ export const TOOLS: ToolDef[] = [
   ),
 
   forward(
+    "start_meeting",
+    "Start recording a meeting in the running asapnotes app, into a meeting " +
+      "note filed in the user's meetings folder (of the project, if given); a " +
+      "note of that name already there is recorded into again. Records the " +
+      "microphone and system audio unless told otherwise; the app window " +
+      "comes up and shows the recording. Needs meeting control on in the app " +
+      "(Settings > MCP > Meetings) and write access to the project. Tell the " +
+      "user it is recording; telling the other participants is theirs to do. " +
+      "Only the user can change access: if this is refused, pass on what the " +
+      "refusal says to switch on.",
+    object(
+      {
+        name: str("Meeting note name, such as 2026-10-29 standup. Becomes name.md."),
+        project: str("Project whose meetings folder it goes in. Omit for none."),
+        mic: bool("Record the microphone. Default true."),
+        system: bool("Record system audio (what the computer plays). Default true."),
+      },
+      ["name"],
+    ),
+    false,
+  ),
+
+  forward(
+    "stop_meeting",
+    "Stop the running recording. The app writes the recording's links into " +
+      "the meeting note. With transcribe true it also starts a local " +
+      "transcription; the transcript becomes a note beside the meeting note, " +
+      "linked under the recording line, and meeting_status shows progress.",
+    object({
+      transcribe: bool("Start a transcription once stopped. Default false."),
+      language: str(
+        'Language spoken, as a code such as en or pt, or "auto". Defaults to ' +
+          "the user's last pick.",
+      ),
+      model: str(
+        'Speech model id: "base", "small" or "large-v3-turbo-q5_0". Defaults to the last pick.',
+      ),
+    }),
+    false,
+  ),
+
+  forward(
+    "meeting_status",
+    "Whether a recording is running (its note and length so far) and whether " +
+      "a transcription is in progress (its note and percent).",
+    object({}),
+    true,
+  ),
+
+  forward(
     "read_settings",
     "The user's settings.json. Off unless the user turns it on, because this " +
       "file names every project location on the machine; the refusal says " +

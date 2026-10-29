@@ -32,6 +32,19 @@ The AI (or anyone) working on this repo keeps this file current while working:
       touches the folder and not after a Glob over its parent; the hook costs about 80 ms
       per tool call, 130-150 ms at session start. _Open:_ check the Settings panel and a
       routed capture in the running app; promote to a decision entry once settled.
+- [ ] **Agents start and stop meeting recordings** (2026-10-29) — an agent asked to
+      record a meeting for a project does the setup itself: `start_meeting` (name,
+      project, mic, system) files the note in the project's meetings folder and starts
+      recording in the running app; `stop_meeting` writes the links and, with
+      `transcribe`, starts the local transcription; `meeting_status` reports both. The
+      app opens a local channel (`control.rs`, named pipe + per-launch token in
+      `mcp-state.json`) only while `mcp.meetings` is on, off by default; it checks the
+      switch and the note's write grant, and brings the window up on a start. A clean
+      open note is now saved after its transcript link goes in, so the file carries it.
+      Checked live: two headless Claude sessions over the MCP server started a
+      system-audio recording into `dummy/meetings/`, then stopped and transcribed it with
+      the Small model; both links landed on disk and a hidden project was refused.
+      _Open:_ the Settings > MCP > Meetings switch is not yet seen in the running app.
 - [ ] **Investigate: an outside move of an open note duplicates it** (2026-10-28) — when
       `move_note` (or any tool) moves a note whose tab is open and saved, the tab keeps the
       old id; the next autosave writes the old path again, and the changed-on-disk guard

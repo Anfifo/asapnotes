@@ -988,6 +988,8 @@ function App() {
     },
     [retagOpen],
   );
+  const saveRef = useRef(save);
+  saveRef.current = save;
 
   /** Move the open note (or retarget the open untitled draft) to a project. */
   const changeProject = useCallback(
@@ -2840,14 +2842,10 @@ function App() {
   const projectMeetings = openProject && routing.projects[openProject]?.destinations?.meeting;
   const meetingDefault = projectMeetings ? `${openProject}/${projectMeetings}` : meetingFolder;
 
-  /** Create (or reopen) the meeting note and start recording into it. A
-   * rejection surfaces inside the dialog, which stays open. */
-  const startMeeting = async (folder: string, name: string, mic: boolean, system: boolean) => {
-    const file = isNoteFile(name) ? name : `${name}.md`;
-    const id = folder ? `${folder}/${file}` : file;
-    if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
-      throw new Error(`"${name}" isn't a valid note name`);
-    }
+  /** Open the meeting note, creating it when no note matches the id in any
+   * case, and start recording into it. Shared by the dialog and an agent's
+   * request; returns the note's id. */
+  const recordInto = async (id: string, mic: boolean, system: boolean) => {
     const lower = id.toLowerCase();
     const note = notes.find((n) => n.name.toLowerCase() === lower)?.name ?? id;
     if (note === id && !notes.some((n) => n.name.toLowerCase() === lower)) {
@@ -2857,6 +2855,18 @@ function App() {
     openFromExplorer(note, true);
     await api.startMeetingRecording(note, mic, system);
     setRecording({ note, startedAt: Date.now() });
+    return note;
+  };
+
+  /** Create (or reopen) the meeting note and start recording into it. A
+   * rejection surfaces inside the dialog, which stays open. */
+  const startMeeting = async (folder: string, name: string, mic: boolean, system: boolean) => {
+    const file = isNoteFile(name) ? name : `${name}.md`;
+    const id = folder ? `${folder}/${file}` : file;
+    if (id.split("/").some((s) => !s || s.startsWith(".") || s.includes("\\"))) {
+      throw new Error(`"${name}" isn't a valid note name`);
+    }
+    await recordInto(id, mic, system);
     setMeetingDialog(false);
     editorRef.current?.focus();
     // Only a folder picked in the dialog becomes the new default; accepting
@@ -2870,19 +2880,20 @@ function App() {
     }
   };
 
-  /** Stop the running recording and write what it made into the meeting note —
-   * through the editor when that note is on screen, straight into the file
-   * when it isn't. */
-  const stopMeeting = async () => {
+  /** Stop the running recording and write what it made into the meeting note
+   * — through the editor when that note is on screen, straight into the file
+   * when it isn't. Returns the note and the length, or null when there was
+   * nothing to stop or the stop failed (said in a toast). */
+  const stopMeeting = async (): Promise<{ note: string; seconds: number } | null> => {
     const rec = recording;
-    if (!rec) return;
+    if (!rec) return null;
     setRecording(null);
     let files: api.MeetingFiles;
     try {
       files = await api.stopMeetingRecording();
     } catch (err) {
       toast(`Couldn't stop the recording — ${errText(err)}`);
-      return;
+      return null;
     }
     const link = (label: string, rel: string) => {
       const target = assetLinkFor(rec.note, rel);
@@ -2903,11 +2914,12 @@ function App() {
         toast(
           `Recording saved, but its links couldn't be written into "${fileOf(rec.note)}" — ${errText(err)}`,
         );
-        return;
+        return null;
       }
     }
     toast(`Recorded ${formatElapsed(files.seconds)} into "${fileOf(rec.note)}"`);
     setRecordingsTick((n) => n + 1);
+    return { note: rec.note, seconds: files.seconds };
   };
 
   // A recording started before this window loaded keeps running in the
@@ -3015,7 +3027,11 @@ function App() {
     try {
       await api.saveNote(transcript, result.markdown);
       if (openRef.current?.id === result.note) {
+        // A buffer with no edits of its own is saved, so the file carries the
+        // link for whatever reads it next; one with edits is left to the user.
+        const clean = !dirtyRef.current;
         editorRef.current?.insertAfterLine(result.line, `\n${line}`);
+        if (clean) await saveRef.current();
       } else {
         const content = await api.readNote(result.note);
         const eol = content.includes("\r\n") ? "\r\n" : "\n";
@@ -3054,6 +3070,65 @@ function App() {
       for (const s of subs) void s.then((unlisten) => unlisten());
     };
   }, [collectTranscript, refreshTxStatus, toast]);
+
+  /** An agent's meeting request, already authorized by the backend: the
+   * meetings switch, and write access to the note. Rebuilt each render so it
+   * sees the current recording and transcription. */
+  const controlRef = useRef<(req: api.ControlRequest) => Promise<unknown>>(async () => null);
+  controlRef.current = async ({ action, args }) => {
+    switch (action) {
+      case "meeting_status":
+        return {
+          recording: recording && {
+            note: recording.note,
+            seconds: Math.round((Date.now() - recording.startedAt) / 1000),
+          },
+          transcribing: txJob && { note: txJob.note, percent: txJob.percent },
+        };
+      case "start_meeting": {
+        if (recording) throw new Error(`already recording into ${recording.note}; stop it first`);
+        const mic = args.mic !== false;
+        const system = args.system !== false;
+        const note = await recordInto(String(args.note), mic, system);
+        toast(`An AI tool started recording into "${fileOf(note)}"`);
+        return { note, mic, system };
+      }
+      case "stop_meeting": {
+        if (!recording) throw new Error("no recording is running");
+        const done = await stopMeeting();
+        if (!done) throw new Error("the app couldn't finish stopping; its window says why");
+        if (args.transcribe !== true) return { ...done, transcribing: false };
+        const language = typeof args.language === "string" ? args.language : txDefaults.language;
+        const model = typeof args.model === "string" ? args.model : txDefaults.model;
+        try {
+          if (!language)
+            throw new Error("say which language is spoken: a code such as en, or auto");
+          // The links may still be only in the editor, and the engine reads
+          // the file.
+          if (openRef.current?.id === done.note) await save();
+          const rec = (await api.listMeetingRecordings()).find((r) => r.note === done.note);
+          if (!rec) throw new Error("the recording's line wasn't found in the note");
+          await api.transcribeMeeting(rec.note, rec.line, language, model);
+          setTxJob({ note: rec.note, line: rec.line, percent: 0 });
+          return { ...done, transcribing: true, language, model };
+        } catch (err) {
+          return { ...done, transcribing: false, transcriptionError: errText(err) };
+        }
+      }
+    }
+  };
+  useEffect(() => {
+    const sub = listen<api.ControlRequest>("app-control", ({ payload }) => {
+      controlRef
+        .current(payload)
+        .then(
+          (value) => api.controlReply(payload.id, true, value ?? null),
+          (err: unknown) => api.controlReply(payload.id, false, errText(err)),
+        )
+        .catch(() => undefined);
+    });
+    return () => void sub.then((unlisten) => unlisten());
+  }, []);
 
   /** Inline creation of a real folder under the clicked heading. */
   const createNamedFolder = async (dir: string, name: string) => {

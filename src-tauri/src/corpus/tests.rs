@@ -1616,7 +1616,10 @@ fn create_note_files_by_the_users_destinations() {
     // new folder.
     for project in ["secret", "nope"] {
         let err = made(json!({ "name": "x", "project": project })).expect_err("absent");
-        assert_eq!(err, format!("no such project: {project}"));
+        assert!(
+            err.starts_with(&format!("no such project: {project} (")),
+            "{err}"
+        );
     }
     assert!(!f.roots.notes.join("nope").exists());
 }

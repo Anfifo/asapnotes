@@ -94,6 +94,14 @@ impl Mcp {
     pub fn settings_grant(&self) -> Grant {
         self.settings.as_deref().map_or(Grant::Off, Grant::parse)
     }
+
+    /// Only an explicit `on` lets an agent start and stop recordings, since a
+    /// recording captures other people.
+    pub fn meetings_on(&self) -> bool {
+        self.meetings
+            .as_deref()
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("on"))
+    }
 }
 
 /// State the app publishes for the sidecar: a file rather than a settings key,
@@ -115,7 +123,22 @@ pub struct State {
     /// read it here so they need no path configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub helper: Option<String>,
+    /// Where the running app takes meeting requests, while meeting control
+    /// is on. A previous run's address fails to connect and reads as the app
+    /// not running.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control: Option<ControlAddress>,
     pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ControlAddress {
+    /// A named pipe on Windows, a socket path elsewhere.
+    pub endpoint: String,
+    /// Proof a caller read this file, which only this user can. Fresh on
+    /// every launch.
+    pub token: String,
 }
 
 pub fn read_state(roots: &Roots) -> State {
@@ -136,6 +159,7 @@ pub fn write_state(roots: &Roots, state: &State) -> Result<(), String> {
 /// Publish where the app is: which project is current, the notes root this
 /// process resolved, and the helper beside it. Called at launch and whenever
 /// the active note changes project, so the helper never has to guess either one.
+/// The control address is the control channel's to set, so it is carried over.
 pub fn publish(
     roots: &Roots,
     current_project: Option<String>,
@@ -149,9 +173,18 @@ pub fn publish(
             helper: helper
                 .filter(|p| p.exists())
                 .map(|p| p.to_string_lossy().into_owned()),
+            control: read_state(roots).control,
             updated_ms: super::now_ms(),
         },
     )
+}
+
+/// Set or clear the control address, keeping everything else published.
+pub fn publish_control(roots: &Roots, control: Option<ControlAddress>) -> Result<(), String> {
+    let mut state = read_state(roots);
+    state.control = control;
+    state.updated_ms = super::now_ms();
+    write_state(roots, &state)
 }
 
 /// This project's grant. An explicit `mcp` on the project entry always wins;
@@ -213,8 +246,8 @@ impl fmt::Display for Denied {
             Denied::Absent { note } => write!(f, "no such note: {note}"),
             Denied::ReadOnly { project } => write!(
                 f,
-                "project \"{project}\" is read-only over MCP; set projects.{project}.mcp to \
-                 \"write\" in settings.json to allow edits"
+                "project \"{project}\" is read-only over MCP; the user can set it to Write in \
+                 Settings > MCP > Project access (projects.{project}.mcp in settings.json)"
             ),
             Denied::OutOfScope { wanted, current } => write!(
                 f,

@@ -72,7 +72,12 @@ export interface McpStatus {
   settingsFile: string;
   settingsFileExists: boolean;
   settingsError: string | null;
-  defaults: { notesRootProjects: string; linkedProjects: string; settings: string };
+  defaults: {
+    notesRootProjects: string;
+    linkedProjects: string;
+    settings: string;
+    meetings: "on" | "off";
+  };
   writeScope: "any" | "current";
   currentProject: string | null;
   grants: Record<string, string>;
@@ -102,6 +107,19 @@ export const setMcpWriteScope = (scope: "any" | "current") =>
  * machine — off unless it is deliberately turned on. */
 export const setMcpSettingsAccess = (grant: string) =>
   invoke<void>("set_mcp_settings_access", { grant });
+/** Whether an agent may start and stop meeting recordings; on also opens the
+ * local channel it does that through. */
+export const setMcpMeetings = (on: boolean) => invoke<void>("set_mcp_meetings", { on });
+
+/** A request an agent sent over the control channel, already authorized by
+ * the backend; the frontend carries it out and answers with `controlReply`. */
+export interface ControlRequest {
+  id: number;
+  action: "start_meeting" | "stop_meeting" | "meeting_status";
+  args: Record<string, unknown>;
+}
+export const controlReply = (id: number, ok: boolean, value: unknown) =>
+  invoke<void>("control_reply", { id, ok, value });
 
 // --- Recent changes: external edits to markdown notes, from the snapshot store ---
 

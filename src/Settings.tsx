@@ -10,6 +10,7 @@ import {
   mcpStatus,
   removeTranscription,
   setMcpGrant,
+  setMcpMeetings,
   setMcpSettingsAccess,
   setMcpWriteScope,
   transcriptionStatus,
@@ -352,6 +353,28 @@ function McpSection() {
               </div>
             </td>
           </tr>
+          <tr>
+            <td>Meetings</td>
+            <td>
+              <div className="segmented" role="group" aria-label="Agents may record meetings">
+                {(
+                  [
+                    [false, "Off"],
+                    [true, "On"],
+                  ] as const
+                ).map(([on, label]) => (
+                  <button
+                    key={label}
+                    className={(status.defaults.meetings === "on") === on ? "active" : undefined}
+                    aria-pressed={(status.defaults.meetings === "on") === on}
+                    onClick={() => apply(setMcpMeetings(on))}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </td>
+          </tr>
         </tbody>
       </table>
       <p className="settings-note">
@@ -363,6 +386,19 @@ function McpSection() {
         <p className="settings-note">
           <span className="mcp-warn">Reading settings.json</span> A sidecar can see every project
           location on this machine. The grants themselves stay out of its reach.
+        </p>
+      )}
+      {status.defaults.meetings === "on" && (
+        <p className="settings-note">
+          <span className="mcp-warn">Recording meetings</span> An agent can start and stop a
+          recording of the microphone and system audio. The window comes up and the recording chip
+          shows whenever one runs; telling the other participants is still on you.{" "}
+          {writable > 0
+            ? `Recordings can go into ${projects
+                .filter(([, g]) => g === "write")
+                .map(([p]) => p)
+                .join(", ")}, the projects with Write access.`
+            : "No project has Write access yet, so an agent can't start one anywhere: set the project to Write above."}
         </p>
       )}
       {error && <p className="settings-note">{error}</p>}

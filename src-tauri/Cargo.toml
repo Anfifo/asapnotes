@@ -57,6 +57,12 @@ sha2 = "0.10"
 # is an add-on the app downloads on request, so a default build and a default
 # install carry none of it. Building it needs cmake, like the Opus codec.
 whisper-rs = { version = "0.16", features = ["log_backend"], optional = true }
+# The local channel an agent uses to start and stop a meeting recording in the
+# running app. Tokio is already Tauri's runtime; these features add its named
+# pipes, and getrandom the per-launch token. Nothing listens until meeting
+# control is turned on.
+tokio = { version = "1", features = ["net", "io-util", "sync", "time"] }
+getrandom = "0.3"
 
 [features]
 transcribe = ["dep:whisper-rs"]
